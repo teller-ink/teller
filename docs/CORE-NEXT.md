@@ -1888,9 +1888,15 @@ mappings natively on `/`.)
   active system can change at runtime and the shim always points at
   whoever is active.
 - **Bare `system` (the merged presentation index) stays closed to
-  packs.** A pack importing the merge it rides is a cycle by
-  construction. `system/<name>` never is: `exports/` is system-tier
-  only, so the dependency arrow only ever points DOWN the merge.
+  pack PRESENTATIONS.** A presentation importing the merge it rides
+  in is a cycle by construction. Sharpened 2026-08-24 (the docs fold
+  found the wording wider than the code): pack PANELS may import bare
+  `system` like any panel code — a panel never rides the presentation
+  index, so no cycle is possible; `PACK_IMPORTS` (presentations) and
+  `PANEL_IMPORTS` (panels, any layer) differ on exactly this point
+  and both are right. `system/<name>` is safe for everyone:
+  `exports/` is system-tier only, so that arrow only ever points DOWN
+  the merge.
 - **A missing export refuses out loud, at load** — a problem-report
   entry and a labeled render-site refusal naming all three parties:
   "wiw-guidebook needs `creation` from wiw, which this version doesn't
@@ -2310,8 +2316,18 @@ install-floor fallback (§M-6b). Tests 719 → 756 across the day.
 - Assistant residue: sub-band closing invisible in band-only phrasing
   (`MoveFacts` carries the inches); same-named zones merge in
   crossings; TEL-5's readable combat log still renders for nobody.
-- Aim/Dodge arming flag: "flat numeric cost" arms both; a `once`/`arms`
-  flag on the action record would split them (system edit, one line).
+- Aim/Dodge arming flag: ~~"flat numeric cost" arms both~~ — DONE
+  2026-08-24: `arms: true` on the action record; the system says what
+  arms, a cost's shape never did.
+- Token-as-zone (found by the docs fold, 2026-08-24): the old world
+  let a placement carry an `effect` so a token IS environmental ground
+  that moves with a physical mini; the new placement has `shape`/`rot`
+  but no effect — painted `zones` are the only environmental ground.
+  Recorded in BATTLEMAP.md too.
+- Door 2 residue, restated by the fold: `systemFrom` requires a
+  hand-written `sys_` id and never mints one (a `pak_` is minted on
+  first sweep); two authors can still collide. Consistent with Door 2
+  standing open — but §M's prose reads more settled than the code is.
 
 **Tier 3 — deliberate, recorded so nobody re-finds them as bugs:**
 
