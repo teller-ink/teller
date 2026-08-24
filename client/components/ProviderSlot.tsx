@@ -82,11 +82,29 @@ function ProposalWords({ proposal }: { proposal: unknown }) {
       {p.rationale && (
         <p className="text-[11px] leading-snug text-stone-500">{p.rationale}</p>
       )}
+      {p.target && (
+        <p className="font-mono text-[11px] text-stone-500">
+          aimed at <span className="text-stone-300">{p.target}</span>
+        </p>
+      )}
       {p.roll && (p.roll.dice || p.roll.for) && (
         <p className="font-mono text-[11px] text-stone-400">
           {p.roll.dice && <span className="text-amber-300">{p.roll.dice}</span>}
           {p.roll.for && <span className="ml-1.5 text-stone-500">{p.roll.for}</span>}
         </p>
+      )}
+      {/* The FRONT bookend: the attempt, stopping at the instant of
+          contact. It is drawn like the narration because it is the same
+          kind of thing — words for the table rather than a brief for
+          the Warden — and the narration afterwards continues from where
+          this one stops. */}
+      {p.preface && (
+        <blockquote className="mt-2 border-l-2 border-amber-700/60 pl-3">
+          <span className="font-mono text-[9px] uppercase tracking-widest text-stone-600">
+            read aloud — the attempt
+          </span>
+          <p className="font-serif text-[17px] leading-relaxed text-amber-50">{p.preface}</p>
+        </blockquote>
       )}
       {/* The one part meant to be SPOKEN gets the serif and the rule —
           the old app's bookend, kept, because everything above it is a
@@ -112,6 +130,7 @@ export function ProviderSlot({
   again,
   placeholder,
   payload,
+  onProposed,
   onDismiss,
   children,
 }: {
@@ -135,6 +154,13 @@ export function ProviderSlot({
   placeholder?: string;
   /** Whatever this surface knows that the host's snapshot won't carry. */
   payload?: () => Record<string, unknown>;
+  /**
+   * What came back, handed on so teller's own half of the card can use
+   * it — the words already read aloud are the one fact the SERVER
+   * cannot assemble, because they only ever existed on this screen.
+   * Nothing is written anywhere; it is state on a card either way.
+   */
+  onProposed?: (proposals: Answer[]) => void;
   /** The ✕. Clearing a proposal is this box's; putting the action back is the caller's. */
   onDismiss?: () => void;
   /**
@@ -162,7 +188,10 @@ export function ProviderSlot({
     api<{ proposals: Answer[] }>(`/api/propose/${point.replace(/^propose\./, '')}`, {
       body: { payload: { ...(payload?.() ?? {}), ...(said ? { intent: said } : {}) } },
     })
-      .then((out) => setAnswers(out.proposals))
+      .then((out) => {
+        setAnswers(out.proposals);
+        onProposed?.(out.proposals);
+      })
       .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
   };
@@ -197,6 +226,7 @@ export function ProviderSlot({
             onClick={() => {
               setAnswers(undefined);
               setError(undefined);
+              onProposed?.([]);
               onDismiss?.();
             }}
           >

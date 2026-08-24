@@ -265,7 +265,17 @@ const stepPip = (n: number, label: string) => (
  * already worked out plus whatever the Warden adds; what comes back is
  * words on a screen and nothing else (rule 1).
  */
-function ReadItOut({ summary }: { summary: () => string }) {
+function ReadItOut({
+  summary,
+  action,
+  spoken,
+}: {
+  summary: () => string;
+  /** What was actually run — the armed thing's own name. */
+  action: string;
+  /** The words already read aloud, when a proposal offered any. */
+  spoken?: string;
+}) {
   const provided = useProvided('propose.narrate');
   const [said, setSaid] = useState('');
   const [busy, setBusy] = useState(false);
@@ -279,7 +289,17 @@ function ReadItOut({ summary }: { summary: () => string }) {
     setBusy(true);
     setError(undefined);
     api<{ proposals: { proposal?: unknown; error?: string }[] }>('/api/propose/narrate', {
-      body: { payload: { outcome: line() } },
+      // The outcome is teller's arithmetic; the other two are the
+      // front bookend and what was actually run. Everything else — who
+      // is in armour, what ground they stand in, what happened three
+      // rounds ago — the host assembles, because it holds it.
+      body: {
+        payload: {
+          outcome: line(),
+          action,
+          ...(spoken ? { preface: spoken } : {}),
+        },
+      },
     })
       .then((out) =>
         setWords(
@@ -376,6 +396,7 @@ export function Exchange({
   conditionCap,
   costCounter,
   round,
+  spoken,
   onWrite,
 }: {
   /** The acting entity, resolved. */
@@ -402,6 +423,8 @@ export function Exchange({
   /** The counter an action's cost comes out of — the `use` record's word. */
   costCounter?: string;
   round: number;
+  /** The preface a proposal offered, if one did — the narration continues from it. */
+  spoken?: string;
   onWrite: (entityId: string, edit: EntryWrite) => Promise<unknown>;
 }) {
   /** Everyone picked, in the order they were picked. One deep, unless it's AOE. */
@@ -1241,7 +1264,7 @@ export function Exchange({
 
           {/* 3 — anything teller couldn't know, then the words. Absent
               unless something provides them. */}
-          <ReadItOut summary={summary} />
+          <ReadItOut summary={summary} action={armed.name} spoken={spoken} />
         </div>
       )}
     </div>

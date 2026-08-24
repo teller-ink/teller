@@ -40,6 +40,7 @@
 
 import { useEffect, useRef, useState, type PointerEvent as PointerEvt } from 'react';
 import type { Entity } from '../../core/entity.ts';
+import type { TurnProposal } from '../../core/registry.ts';
 import { pendingEvents } from '../../core/frenzy.ts';
 import { api } from '../lib/api.ts';
 import { rollPool, tallyFaces, type DiceRecord } from '../lib/dice.ts';
@@ -217,6 +218,8 @@ function RunnerTool() {
   const [draft, setDraft] = useState('');
   /** What the thing ON STAGE is about to do. Cleared when the stage changes. */
   const [armed, setArmed] = useState<Armed | undefined>(undefined);
+  /** The words a proposal offered to read aloud — the narration's front bookend. */
+  const [spoken, setSpoken] = useState<string | undefined>(undefined);
   /**
    * A DETOUR: which row the DM clicked to look at, if it isn't the one
    * acting (Brian, 2026-08-20 — "switch which thing I'm looking at
@@ -905,7 +908,25 @@ function RunnerTool() {
                       ? { intent: [armed.name, armed.note].filter(Boolean).join(' — ') }
                       : {}
                   }
-                  {...(armed ? { onDismiss: () => setArmed(undefined) } : {})}
+                  // The preface is the ONE fact the host cannot
+                  // assemble for the narration afterwards: it never
+                  // existed anywhere but on this screen. Caught here,
+                  // handed down, and gone the moment the card clears.
+                  onProposed={(answers) =>
+                    setSpoken(
+                      answers
+                        .map((a) => (a.proposal as TurnProposal | undefined)?.preface)
+                        .find((p): p is string => Boolean(p)),
+                    )
+                  }
+                  {...(armed
+                    ? {
+                        onDismiss: () => {
+                          setArmed(undefined);
+                          setSpoken(undefined);
+                        },
+                      }
+                    : {})}
                 >
                   {armed && (
                     // Keyed on what was armed, so arming something else
@@ -931,6 +952,7 @@ function RunnerTool() {
                       conditionCap={conditionCap}
                       costCounter={use.data?.costCounter}
                       round={turn.data!.round}
+                      spoken={spoken}
                       onWrite={writeEntry}
                     />
                   )}
