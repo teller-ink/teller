@@ -178,6 +178,29 @@ describe("a screen's life", () => {
     expect(reused.status).toBe(404);
   });
 
+  it('a seat files its OWN roll and nobody else\'s', async () => {
+    const own = session.create({ name: 'Barrett', lists: {} }, 'console');
+    const other = session.create({ name: 'Sal', lists: {} }, 'console');
+    const seat = await adoptScreen('seat', { entityId: own.id });
+    const roll = { pool: '2B', faces: ['hit'], total: 1 };
+
+    const mine = await call('POST', '/api/rolls', {
+      display: seat.id,
+      body: { ...roll, by: own.id, byName: 'Barrett', for: 'Used Pistol — Short' },
+    });
+    expect(mine.status).toBe(200);
+
+    // Somebody else's dice, and dice belonging to nobody at all.
+    expect(
+      (await call('POST', '/api/rolls', { display: seat.id, body: { ...roll, by: other.id } }))
+        .status,
+    ).toBe(401);
+    expect((await call('POST', '/api/rolls', { display: seat.id, body: roll })).status).toBe(401);
+
+    const events = await call('GET', `/api/events?entity=${own.id}`, { key: true });
+    expect(events.body.some((e: any) => e.kind === 'dice.rolled')).toBe(true);
+  });
+
   it('a seat edits its one entity and nobody else', async () => {
     const own = session.create({ name: 'Barrett', lists: {} }, 'console');
     const other = session.create({ name: 'Sal', lists: {} }, 'console');

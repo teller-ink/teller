@@ -9,13 +9,18 @@
 // itself counts down (ammo's rounds, an ability's uses), and the
 // chamber-select-plus-trigger for anything `use` prices.
 
+import { useState } from 'react';
+import { acrossGround, bandsOn, type Band } from '../../../core/bands.ts';
+import type { CarryDecl, CarryLoad } from '../../../core/carry.ts';
 import type { Amendment } from '../../../core/effects.ts';
 import type { Entity, Entry, Ref } from '../../../core/entity.ts';
 import { ledgerOf, sayLedger, shortOf, type Price } from '../../../core/spend.ts';
 import type { DiceRecord } from '../../lib/dice.ts';
 import { writeChildEntry, writeRef } from '../../lib/refs.ts';
 import { SheetPanel } from '../sheet/SheetPanel.tsx';
+import { CarryControl } from './Carry.tsx';
 import { Reticle } from './Reticle.tsx';
+import { RollDoor } from './RollDoor.tsx';
 import { StatRow } from './Track.tsx';
 import type { CurrencyRecord, UseRecord } from './types.ts';
 
@@ -129,6 +134,7 @@ function CounterRow({
 
 export function ItemTile({
   characterId,
+  person,
   child,
   fill = false,
   use,
@@ -147,8 +153,14 @@ export function ItemTile({
   armed = [],
   spent = [],
   onToggleAction,
+  bands = [],
+  carry,
+  over = [],
+  icons,
 }: {
   characterId: string;
+  /** The one carrying it — carry states are refs on the PERSON (§K). */
+  person?: Entity;
   child: Entity;
   /** Stretch to the shelf's height (mounted glass); natural height held. */
   fill?: boolean;
@@ -186,7 +198,20 @@ export function ItemTile({
   armed?: string[];
   spent?: string[];
   onToggleAction?: (name: string) => void;
+  /** The system's range ladder — what this thing's printed bands ARE. */
+  bands?: Band[];
+  /** The system's carry states, if it declared any. */
+  carry?: CarryDecl;
+  /** The states this person is carrying too much in — the tile says so. */
+  over?: CarryLoad[];
+  /** Face name → glyph, for the dice the band buttons open. */
+  icons?: Record<string, string>;
 }) {
+  // Which band button opened the dice, if one did. UI state and nothing
+  // more: nothing is written until the door's own squeeze.
+  const [aimed, setAimed] = useState<{ band: string; pool: string; across: boolean } | undefined>(
+    undefined,
+  );
   const chamberedRef = child.refs?.chambered as Ref | undefined;
   const chambered = ammoPool.find((a) => a.id === chamberedRef?.id);
   const pool = poolEntryOf(child);
@@ -197,6 +222,19 @@ export function ItemTile({
     (s) => !isPriceTag(String(s.value ?? ''), currency),
   );
   const bodyRows = costEntry ? stats.filter((s) => s !== costEntry) : stats;
+
+  // WHAT THIS THING REACHES — one printed stat per rung of the system's
+  // ladder, in the ladder's order (`core/bands.ts`). A thing printed for
+  // no rung reaches nothing and keeps the single verb trigger it always
+  // had: an ability is used, not aimed.
+  const reach = bandsOn(stats, bands);
+  // A round is fired ACROSS ground. A thing printed only for the rung
+  // you're standing in has nothing to chamber — the ladder says which
+  // rungs are which, so no weapon needs a flag saying it shoots.
+  const shoots = reach.some(({ band }) => acrossGround(band));
+  /** What the table actually rolls here — amended if anything amended it. */
+  const poolOf = (entry: Entry) =>
+    amended?.get(entry.name.toLowerCase())?.value ?? String(entry.value ?? '');
 
   const price = numberOf(costEntry);
   const fireable = Boolean(onFireCost) && Boolean(use) && costEntry !== undefined && price > 0;
@@ -254,6 +292,26 @@ export function ItemTile({
     ...(use?.costCounter ? { [use.costCounter]: available ?? Infinity } : {}),
   });
 
+  /** One round off whatever is chambered — the loaded thing counts its own (§K). */
+  const burnRound = () => {
+    if (!chambered) return;
+    const roundsHere = poolEntryOf(chambered);
+    if (!roundsHere) return;
+    writeChildEntry(characterId, chambered.id, roundsHere.list, roundsHere.entry.name, {
+      value: Math.max(0, numberOf(roundsHere.entry) - 1),
+    });
+  };
+
+  /**
+   * ONE squeeze: the ledger this tile drew, off the counters it named,
+   * plus the round if the shot crossed ground. `onFireCost` burns the
+   * armed locks, so nothing here has to remember to.
+   */
+  const squeeze = (across: boolean) => {
+    onFireCost?.(ledger);
+    if (across) burnRound();
+  };
+
   return (
     <SheetPanel title={child.name} fill={fill} className="w-full">
       <div className={`flex flex-col gap-1 ${fill ? 'min-h-0 flex-1' : ''}`}>
@@ -287,7 +345,7 @@ export function ItemTile({
               cost the tile a whole extra row of height for a control
               that reads as one gesture. */}
           <div className="flex flex-wrap items-center gap-2 pt-1">
-          {arming && use?.consumesKind && (
+          {arming && use?.consumesKind && (reach.length === 0 || shoots) && (
             <select
               className="h-9 min-w-0 flex-1 basis-32 rounded-md border border-stone-700 bg-stone-900 px-2 text-[0.75rem] text-stone-200 focus:border-stone-500 focus:outline-none"
               value={chambered?.id ?? ''}
@@ -336,23 +394,67 @@ export function ItemTile({
               );
             })}
 
-          {fireable && (
+          {/* ONE BUTTON PER RUNG this thing is printed for, replacing the
+              single verb trigger it used to wear (2026-08-24). The old
+              one asked "use this?" and left the table to work out which
+              handful that meant; a band button says what it reaches and
+              what it rolls there, and opens the dice rather than
+              spending on the spot. A thing printed for no rung — an
+              ability, a jar of pills — keeps the plain trigger below. */}
+          {arming &&
+            Boolean(onFireCost) &&
+            reach.map(({ band, entry }) => {
+              const rolls = poolOf(entry);
+              return (
+                <button
+                  key={band.name}
+                  type="button"
+                  className="flex h-9 shrink-0 items-center gap-1.5 rounded-md border-2 px-2.5 font-mono text-[0.7rem] font-bold tracking-wider transition-colors active:bg-stone-800 disabled:opacity-35"
+                  style={{
+                    borderColor: 'var(--sheet-accent, #f59e0b)',
+                    color: 'var(--sheet-accent, #f59e0b)',
+                  }}
+                  disabled={short.length > 0}
+                  onClick={() =>
+                    setAimed({ band: band.name, pool: rolls, across: acrossGround(band) })
+                  }
+                  aria-label={`${verb} ${child.name} at ${band.name}${
+                    band.world ? ` (${band.world})` : ''
+                  }: ${rolls}, spending ${sayLedger(ledger)}${
+                    short.length ? ` (not enough ${short.join(', ')})` : ''
+                  }`}
+                  title={band.world}
+                >
+                  <span className="uppercase">{band.name}</span>
+                  <span className="opacity-80">{rolls}</span>
+                </button>
+              );
+            })}
+
+          {aimed && (
+            <RollDoor
+              who={characterId}
+              whoName={person?.name ?? child.name}
+              what={child.name}
+              band={aimed.band}
+              pool={aimed.pool}
+              dice={dice}
+              icons={icons}
+              ledger={ledger}
+              short={short}
+              spends={aimed.across && chambered ? `one ${chambered.name}` : undefined}
+              onFire={() => squeeze(aimed.across)}
+              onClose={() => setAimed(undefined)}
+            />
+          )}
+
+          {fireable && reach.length === 0 && (
             <button
               type="button"
               className="flex h-9 shrink-0 items-center justify-center rounded-md border-2 px-3 font-mono text-sm font-bold tracking-wider transition-colors active:bg-stone-800 disabled:opacity-35"
               style={{ borderColor: 'var(--sheet-accent, #f59e0b)', color: 'var(--sheet-accent, #f59e0b)' }}
               disabled={short.length > 0}
-              onClick={() => {
-                onFireCost?.(ledger);
-                if (chambered) {
-                  const roundsHere = poolEntryOf(chambered);
-                  if (roundsHere) {
-                    writeChildEntry(characterId, chambered.id, roundsHere.list, roundsHere.entry.name, {
-                      value: Math.max(0, numberOf(roundsHere.entry) - 1),
-                    });
-                  }
-                }
-              }}
+              onClick={() => squeeze(true)}
               aria-label={`${verb} ${child.name}${
                 armedCost > 0 ? ` with ${armed.join(' and ')}` : ''
               }: spend ${sayLedger(ledger)}${
@@ -376,6 +478,21 @@ export function ItemTile({
             </button>
           )}
           </div>
+
+          {/* Where this thing is carried — worn, in hand, put away. A
+              select rather than a row of toggles because the states are
+              exclusive and the system may declare any number of them;
+              and quiet, because choosing where your knife lives is not
+              the interesting part of a fight. */}
+          {carry && person && (
+            <CarryControl
+              person={person}
+              child={child}
+              decl={carry}
+              over={over}
+              onSpend={onFireCost}
+            />
+          )}
 
           {/* Chips, because a tag is a word that is either there or not.
               In the pinned cluster with everything else, so a tile that

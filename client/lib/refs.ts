@@ -68,6 +68,34 @@ export function writeRef(
 }
 
 /**
+ * Flip a ref slot on the PERSON rather than on something they carry —
+ * where a thing is carried (§K: worn, wielded, put away are refs on the
+ * one doing the carrying, never a state written onto the thing).
+ *
+ * Same door and the same race as the child writes above: a whole-entity
+ * PUT, so two screens moving two different things at once can clobber
+ * each other, and both halves stay ordinary values a person can fix.
+ *
+ * SEVERAL SLOTS AT ONCE, on purpose: taking a thing out of one hand and
+ * putting it in the other is one edit, and doing it as two PUTs would
+ * leave a moment where the thing was in both places — the second write
+ * reading a person the first had already changed.
+ */
+export function writeOwnRefs(
+  entityId: string,
+  edits: Record<string, Ref | Ref[] | null>,
+): Promise<Entity> {
+  return patchEntity(entityId, (stored) => {
+    const refs = { ...(stored.refs ?? {}) };
+    for (const [slot, ref] of Object.entries(edits)) {
+      if (ref === null || (Array.isArray(ref) && !ref.length)) delete refs[slot];
+      else refs[slot] = ref;
+    }
+    return Object.keys(refs).length ? { ...stored, refs } : { ...stored, refs: undefined };
+  });
+}
+
+/**
  * Toggle one ref out of / into an ordered slot (`refs.upgrades`) by id
  * — fit adds it, unfit removes it, order otherwise preserved.
  */

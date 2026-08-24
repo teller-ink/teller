@@ -5,15 +5,20 @@
 // gone is the per-screen shop/notch machinery, which isn't part of
 // this port.
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { bandsIn } from '../../../core/bands.ts';
+import { carryIn } from '../../../core/carry.ts';
 import type { Entity, Entry } from '../../../core/entity.ts';
 import type { Price } from '../../../core/spend.ts';
 import { useAmendments } from '../../lib/amend.ts';
 import { firedArmed, toggleArmed, useArmed } from '../../lib/armed.ts';
 import type { DiceRecord } from '../../lib/dice.ts';
+import { useSystemFaces } from '../../lib/presentations.ts';
 import { usePanelNote } from '../../lib/rules.ts';
+import { dialFace } from '../../panels/blocks.tsx';
 import type { BlockCtx, Glass } from '../../panels/render.tsx';
 import { BigGauge, boxable, Tally } from '../Counters.tsx';
+import { carryOver } from './Carry.tsx';
 import { ItemTile } from './ItemTile.tsx';
 import { Pocket } from './Purse.tsx';
 import type { CurrencyRecord, ScreenDecl, UseRecord } from './types.ts';
@@ -88,6 +93,7 @@ export function CarriedScreen({
   // door below, or React counts a different number of them per render.
   const [kind, setKind] = useState('');
   const note = usePanelNote();
+  useSystemFaces(); // a dialled counter's face arrives url-loaded, async
 
   const entity = ctx.entity as Entity | undefined;
   const use = ctx.records.use as UseRecord | undefined;
@@ -98,6 +104,12 @@ export function CarriedScreen({
   // nowhere (§8). Asked for before the no-entity door below, like every
   // other hook.
   const amendments = useAmendments(children, dice);
+  // The system's own two declarations this screen reads: what a thing
+  // reaches (the range ladder) and how a thing is carried. Both are
+  // memoised because both are parsed out of records that arrive whole
+  // on every stack change.
+  const bands = useMemo(() => bandsIn(ctx.records.bands), [ctx.records.bands]);
+  const carry = useMemo(() => carryIn(ctx.records.carry), [ctx.records.carry]);
   // The turn's armed moves, and the refill that releases their locks.
   // The balance is read here because it's the CHARACTER's counter, not
   // any one weapon's.
@@ -110,6 +122,10 @@ export function CarriedScreen({
   if (!entity) return <p className="p-4 text-sm text-stone-500">no entity to show</p>;
 
   const currency = ctx.records.currency as CurrencyRecord | undefined;
+  // What's carrying too much — computed against ALL the children, not
+  // this screen's slice: hands are full whichever screen you're looking
+  // at, and a rifle two tabs away is still in them.
+  const over = carryOver(entity, children, carry);
   const icons = (ctx.records.icons as Record<string, string> | undefined) ?? {};
   const wanted = new Set((screen.kinds ?? []).map((k) => k.toLowerCase()));
   const held = children.filter((c) => {
@@ -188,9 +204,18 @@ export function CarriedScreen({
   // put every declared counter on the big gauge.
   const gauges = tallies.map(({ entry, list }) => {
     const onWrite = (v: number) => ctx.write?.({ list, name: entry.name, value: v });
+    // DECLARATION BEATS INFERENCE (§D's resolution, 2026-08-24): a
+    // counter the system dialled draws as that dial — the hand of cards
+    // it asked for — and only an undialled one falls to the shape
+    // heuristic beneath, which is what teller does when nobody said.
+    // Before this, `boxable` caught the Ace tally first and a declared
+    // `cards` never got a look in.
+    const Dial = dialFace(ctx, entry);
     return (
       <div key={entry.name} className={`flex flex-col gap-2 ${tileWidth(ctx.glass)}`}>
-        {boxable(entry) ? (
+        {Dial ? (
+          <Dial entry={entry} note={note(entry.name)} onSet={onWrite} fill={ctx.glass === 'mounted'} />
+        ) : boxable(entry) ? (
           <Tally entry={entry} note={note(entry.name)} onWrite={onWrite} />
         ) : (
           <BigGauge entry={entry} onWrite={onWrite} />
@@ -221,7 +246,12 @@ export function CarriedScreen({
       <div key={item.id} className={`flex flex-col gap-2 ${tileWidth(ctx.glass)}`}>
         <ItemTile
           characterId={entity.id}
+          person={entity}
           child={item}
+          bands={bands}
+          carry={carry}
+          over={over}
+          icons={icons}
           fill={mounted}
           use={use}
           arming={armed}

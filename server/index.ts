@@ -2230,8 +2230,21 @@ export async function handleApi(
   // exactly where the Warden put it and only the history is thinner.
 
   if (method === 'POST' && head === 'rolls' && !a) {
-    if (!canDm(auth)) return denied();
-    const record = toRollRecord(await bodyOf(req));
+    const bodyRaw = await bodyOf(req);
+    // A SEAT files its OWN rolls, and only its own — the same shape the
+    // turn door already takes for a score (`op.op === 'score'`, above):
+    // the DM may file anything, and a seat may say what its one
+    // character's dice showed. Firing a weapon is the first thing a
+    // player does that the log should keep, and a record nobody but the
+    // Warden may write is a record of half the table (rule 3, rule 7 —
+    // authority is role-derived, and a seat's role covers its entity).
+    if (!canDm(auth)) {
+      const seat = auth.display;
+      const own =
+        adopted(seat) && seat.role === 'seat' && String(bodyRaw.by ?? '') === seat.params.entityId;
+      if (!own) return denied();
+    }
+    const record = toRollRecord(bodyRaw);
     if (!record) return reply(400, { error: 'a roll needs its pool' });
     session.campaign.append(record.by ?? null, actorOf(auth), 'dice.rolled', record);
     session.changed('events');

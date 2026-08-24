@@ -5,7 +5,8 @@
 // Counters (Big/Ledger/Rows), the sheet chrome and the Grit cylinder —
 // without touching the block names or the BlockCtx seam.
 
-import { useEffect, useState, type ComponentType } from 'react';
+import { useEffect, useMemo, useState, type ComponentType } from 'react';
+import { carryIn } from '../../core/carry.ts';
 import type { Entity, Entry } from '../../core/entity.ts';
 import type { Amendment } from '../../core/effects.ts';
 import type { PanelBlock } from '../../core/panels.ts';
@@ -17,6 +18,8 @@ import { CounterStepper } from '../components/Vitals.tsx';
 import { TagSection } from '../components/TagSection.tsx';
 import { BigGauge, LedgerRow, SkillRow, stepValue } from '../components/Counters.tsx';
 import { SheetPanel } from '../components/sheet/SheetPanel.tsx';
+import { cardable, CardsFloor } from '../components/CardsFloor.tsx';
+import { useWornAmendments } from '../lib/amend.ts';
 import { presentationOf, useSystemFaces } from '../lib/presentations.ts';
 import { IncludeBlock, registerBlock, Refusal, RenderBlock, type BlockCtx } from './render.tsx';
 import { CarriedScreen } from '../components/items/Screen.tsx';
@@ -86,6 +89,45 @@ type StatusFace = ComponentType<{
  */
 function dialable(entry: Entry): boolean {
   return typeof entry.max === 'number' && entry.max > 0 && entry.max <= 12;
+}
+
+/**
+ * TELLER'S OWN DIAL CONTROLS — the registry §D's contact log describes,
+ * where the cylinder sat while it was teller furniture and where `cards`
+ * has been waiting for a body ("`cards` awaits its control the same
+ * way"). The cylinder has since moved to the pack (§M-3, the book's
+ * face rides with the book); a fan of playing cards is nobody's face,
+ * so it stayed.
+ *
+ * A floor control declares its OWN fitness rather than being gated by
+ * `dialable` — that is §L's owed fix, taken here for the controls
+ * teller ships, because a hand of eight and a ring of twelve are not
+ * bounded by the same number and never were.
+ */
+type DialControl = { face: CylinderFace; fits: (entry: Entry) => boolean };
+
+const FLOOR_DIALS: Record<string, DialControl> = {
+  cards: { face: CardsFloor, fits: cardable },
+};
+
+/**
+ * What draws a dialled counter — the resolution §D settled, in one
+ * place: `dials[name]` names a control, the SYSTEM's face answers first,
+ * teller's floor answers second, and an unknown word falls through to
+ * whatever the arrangement asked for.
+ *
+ * The DECLARATION BEATS THE INFERENCE, which is the half that was
+ * missing: a counter the system dialled draws as that dial even where a
+ * caller has a shape heuristic of its own (tick boxes for a small
+ * capped counter). The heuristic is what teller does when nobody said.
+ */
+export function dialFace(ctx: BlockCtx, entry: Entry): CylinderFace | undefined {
+  const word = (dialOf(ctx, entry) ?? '').trim();
+  if (!word) return undefined;
+  const supplied = presentationOf<CylinderFace>(word);
+  if (supplied) return dialable(entry) ? supplied : undefined;
+  const floor = FLOOR_DIALS[word.toLowerCase()];
+  return floor?.fits(entry) ? floor.face : undefined;
 }
 
 /** 'skills' → 'Skills'. The one heading this file supplies rather than reads off a pack. */
@@ -163,7 +205,7 @@ export function pinsOf(ctx: BlockCtx, e: Entity | undefined, entry: Entry): Entr
  * (`SeatChrome.tsx`).
  */
 export function shaped(ctx: BlockCtx, e: Entity | undefined, entry: Entry): boolean {
-  return pinsOf(ctx, e, entry).length > 0 || (dialOf(ctx, entry) === 'cylinder' && dialable(entry));
+  return pinsOf(ctx, e, entry).length > 0 || Boolean(dialFace(ctx, entry));
 }
 
 function filterEntries(entries: Entry[], filter: unknown, names?: unknown): Entry[] {
@@ -370,6 +412,11 @@ function SheetListBlock({
 }) {
   useSystemFaces(); // re-render when the system module lands (url-loaded, async)
   const note = usePanelNote();
+  // WHAT'S WORN, folded into the stats it changes (§K's `refs.worn`,
+  // `client/lib/amend.ts`). Computed here and stored nowhere: the
+  // printed 0 stays the stored value and the reading is the reading.
+  const carry = useMemo(() => carryIn(ctx.records.carry), [ctx.records.carry]);
+  const worn = useWornAmendments(e, carry, ctx.records.dice as DiceRecord | undefined);
   const shown = entries.filter((entry) => shaped(ctx, e, entry));
   if (!shown.length) return null;
   return (
@@ -387,6 +434,7 @@ function SheetListBlock({
               entry={entry}
               pinned={pinned}
               note={note(entry.name)}
+              amended={worn}
               onSet={(v) => write(entry.name, { value: v })}
             />
           ) : (
@@ -397,7 +445,7 @@ function SheetListBlock({
             />
           );
         }
-        const Dial = presentationOf<CylinderFace>(dialOf(ctx, entry) ?? '');
+        const Dial = dialFace(ctx, entry);
         return Dial ? (
           <Dial
             key={entry.name}
@@ -498,9 +546,7 @@ registerBlock('list', (block, ctx) => {
           // which is one face's constraint wearing the seam's clothes.
           // Kept as-is because it's what shipped; the honest fix is a
           // face declaring its own fitness, and it is still owed.
-          const Dial = dialable(entry)
-            ? presentationOf<CylinderFace>(dialOf(ctx, entry) ?? '')
-            : undefined;
+          const Dial = dialFace(ctx, entry);
           return Dial ? (
             <Dial
               key={entry.name}

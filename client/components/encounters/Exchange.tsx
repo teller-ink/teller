@@ -39,7 +39,7 @@
 // the same reason. Not atomic, and better for saying so: a half-applied
 // exchange leaves ordinary values a stepper can fix.
 
-import { useRef, useState, type ComponentType } from 'react';
+import { useRef, useState } from 'react';
 import { findEntry, numberOf, type Entity, type Entry } from '../../../core/entity.ts';
 import { FRENZY, SPENT, effectiveList } from '../../../core/frenzy.ts';
 import {
@@ -67,29 +67,10 @@ import {
   type DiceRecord,
 } from '../../lib/dice.ts';
 import { btn, btnPrimary } from '../../lib/ui.ts';
-import { DiceFloor, type DicePoolProps } from '../DiceFloor.tsx';
-import { presentationOf, useSystemFaces } from '../../lib/presentations.ts';
+import { DicePool } from '../Dice.tsx';
 import { useProvided } from '../ProviderSlot.tsx';
 import { StatusChip } from './TemplateSheet.tsx';
 import { RangeToTarget } from './Range.tsx';
-
-/**
- * The dice grid, SUMMONED rather than imported (§L phase 3.5).
- *
- * teller used to ship the pool face itself and this file reached for it
- * directly, which meant the WiW runner drew teller's dice even though
- * the system carried its own. `DicePool` is the system's — the `dice`
- * record is system data and the face that draws it is vocabulary — so
- * it arrives by name off the active system, and `DiceFloor` is what
- * happens when nobody supplies one: the same recording instrument with
- * no game in it. Every call site below is unchanged, which is the
- * point — the seam is one component wide.
- */
-function DicePool(props: DicePoolProps) {
-  useSystemFaces(); // re-render when the system module lands (url-loaded, async)
-  const Face = presentationOf<ComponentType<DicePoolProps>>('DicePool');
-  return Face ? <Face {...props} /> : <DiceFloor {...props} />;
-}
 
 /** One touched entry — everything a surface may say about a list. */
 export type EntryWrite = {

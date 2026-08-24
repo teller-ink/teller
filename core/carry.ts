@@ -46,6 +46,16 @@ export type CarryState = {
   hands?: number;
   /** The book's own sentence, shown when this state is over its limit. */
   rule?: string;
+  /**
+   * A thing carried HERE changes the one carrying it — armour worn
+   * raises a Defense, a coat in a saddlebag does not.
+   *
+   * It is declared rather than assumed because "worn" is a word, not a
+   * mechanic: teller must not decide that one of a system's states is
+   * the special one. A system that says nothing amends nothing, which
+   * is exactly what a system with no armour wants.
+   */
+  amends?: boolean;
   /** What moving a thing INTO this state costs, mid-fight. */
   swap?: { counter: string; amount: number; as?: string };
 };
@@ -88,6 +98,7 @@ export function carryIn(raw: unknown): CarryDecl | undefined {
     if (hands !== undefined) state.hands = hands;
     const rule = String(r.rule ?? '').trim();
     if (rule) state.rule = rule;
+    if (r.amends === true) state.amends = true;
     const swap = asRecord(r.swap);
     const counter = String(swap.counter ?? '').trim();
     const amount = countIn(swap.amount);
@@ -201,6 +212,23 @@ export function overIn(
   return (decl?.states ?? [])
     .map((state) => loadIn(person, state, items, decl))
     .filter((load) => load.over);
+}
+
+/**
+ * Every carried thing that changes the one carrying it, in declared
+ * state order — the ids, for a reading to look their effects up.
+ *
+ * Order is the caller's promise as ever (`amendStats`): the states
+ * declare it, so a system that layers a shirt under a coat says so by
+ * the order it lists them in.
+ */
+export function amendingIn(
+  person: Entity | undefined,
+  decl: CarryDecl | undefined,
+): string[] {
+  return (decl?.states ?? [])
+    .filter((state) => state.amends)
+    .flatMap((state) => heldIn(person, state.name));
 }
 
 /**

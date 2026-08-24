@@ -21,6 +21,7 @@
 // the ordinary slot (rule 1).
 
 import { useMemo } from 'react';
+import { amendingIn, type CarryDecl } from '../../core/carry.ts';
 import { amendStats, type Amendment, type Fitting } from '../../core/effects.ts';
 import type { Entity, Ref } from '../../core/entity.ts';
 import type { Template } from '../../core/stamp.ts';
@@ -103,14 +104,51 @@ export function useAmendments(
   }, [data, children, faces]);
 }
 
-// WHAT DOESN'T LIVE HERE YET, and why (2026-08-24, Brian, from the
-// Guidebook): a person's own stats amended by their gear — Defense over
-// a breastplate. The arithmetic is ready (`amendStats` already reports
-// its working, `Amendment.steps`), and the reading is drawn (the pinned
-// stat opens a breakdown with an innate line waiting for modifier
-// lines). What's missing is the only thing that decides which gear
-// counts: the book keys the modifier on WORN, not on carried — one
-// piece of armor at a time, weapons wielded or holstered or stored —
-// and nothing in the data expresses carry state yet. Applying the
-// effects of everything CARRIED would have shipped a coat in a
-// saddlebag defending its owner. The wiring arrives with `refs.worn`.
+/**
+ * A PERSON's own stats, amended by what they're wearing — Defense over
+ * a breastplate.
+ *
+ * The arithmetic is the same one a weapon's pools go through, and that
+ * is the point: a fitting is a thing attached to another thing, and a
+ * coat is attached to you. What decides which gear counts is the only
+ * new part, and it is DECLARED, not guessed — a carry state saying
+ * `amends` (`core/carry.ts`). Applying the effects of everything
+ * CARRIED would have shipped a coat in a saddlebag defending its owner.
+ *
+ * NO TYPE FILTER, deliberately: anything worn that bears an effect
+ * counts. A charm, a hat, a mechanical arm — the system said the state
+ * amends and the catalogue said what the thing does, and teller has no
+ * business also holding an opinion about which KIND of thing is
+ * allowed to matter.
+ *
+ * Stats are read across every list the person has, because a pinned
+ * name names an entry and never a list (`pins`) — Defense lives under
+ * `stats` here and could live anywhere on the next system.
+ */
+export function useWornAmendments(
+  person: Entity | undefined,
+  carry: CarryDecl | undefined,
+  dice?: DiceRecord,
+): Map<string, Amendment> {
+  const { data } = useLive(loadFittings, [], { on: [...DECLARED, 'templates'] });
+  const faces = dice?.faces;
+  return useMemo(() => {
+    const out = new Map<string, Amendment>();
+    if (!person || !data || !faces || !Object.keys(faces).length) return out;
+    const worn = amendingIn(person, carry);
+    if (!worn.length) return out;
+    const held = new Map((person.children ?? []).map((c) => [c.id, c]));
+    const fittings: Fitting[] = [];
+    for (const id of worn) {
+      const child = held.get(id);
+      const from = child ? refsIn(child, 'from')[0] : undefined;
+      const template = data.get(from?.id ?? id);
+      const effects = template?.effects ?? [];
+      if (!effects.length) continue;
+      fittings.push({ name: child?.name || template?.name || '', effects });
+    }
+    if (!fittings.length) return out;
+    const stats = Object.values(person.lists).flat();
+    return amendStats(stats, fittings, faces);
+  }, [data, person, carry, faces]);
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  amendingIn,
   carryIn,
   handsOf,
   heldIn,
@@ -16,7 +17,7 @@ import type { Entity } from './entity.ts';
 // particular game, this file has stopped testing what it means to.
 const DECL = carryIn({
   states: [
-    { name: 'pelt', label: 'wearing', limit: 1, rule: 'One pelt at a time.' },
+    { name: 'pelt', label: 'wearing', limit: 1, amends: true, rule: 'One pelt at a time.' },
     {
       name: 'paws',
       label: 'in paw',
@@ -147,6 +148,22 @@ describe('loadIn / overIn — reporting, never refusing', () => {
     const decl = carryIn({ states: [{ name: 'paws' }] });
     const held = person({ paws: [{ id: 'club', name: 'club' }, { id: 'stick', name: 'stick' }] });
     expect(overIn(held, ITEMS, decl)).toEqual([]);
+  });
+});
+
+describe('amendingIn — what changes the one carrying it', () => {
+  const carrying = person({
+    pelt: { id: 'pelt-a', name: 'pelt-a' },
+    paws: [{ id: 'club', name: 'club' }],
+  });
+
+  it('is only the states that said they amend', () => {
+    expect(amendingIn(carrying, DECL)).toEqual(['pelt-a']);
+  });
+
+  it('is nothing when no state claims it — a system with no such notion', () => {
+    expect(amendingIn(carrying, carryIn({ states: [{ name: 'paws' }] }))).toEqual([]);
+    expect(amendingIn(undefined, DECL)).toEqual([]);
   });
 });
 
