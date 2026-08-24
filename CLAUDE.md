@@ -34,34 +34,32 @@ result lands somewhere a human can overrule it, and the table's ruling
 beats the book's. What it must never do is decide something nobody can
 change.
 
-## CORE-NEXT (this branch): the rebuild is real — read its doc first
+## The rebuild is the app now — `docs/CORE-NEXT.md` is the model
 
-**On `feat/core-next` the canonical model is `docs/CORE-NEXT.md`**, and
-the new world lives in `core/` + `server/` + `client/` (node:sqlite
-direct, `node server/index.ts --data ~/.teller-next`). The SERVER runs
-unbundled; the CLIENT is React, bundled (`pnpm client:build` →
-`server/dist`, preferred over `server/public` when present; §E
-extended — the ladder). The old world (`worker/`, `src/`, the Stack
-section below) keeps running as REFERENCE — its components are the
-visual bar the new client is held to — and retires when this merges;
-where the two disagree, the doc wins. Supersessions to know before
-editing:
+**The canonical data model and its decision record live in
+`docs/CORE-NEXT.md`** — read the relevant section (§M above all)
+before touching anything it covers; where this file and that doc
+disagree, the doc wins. The old world (`worker/`, `src/`, `host/`)
+was FOLDED on 2026-08-24 after a three-way adversarial parity audit
+(recorded in CORE-NEXT's "fold-gate audit" section): deleted, not
+archived — git history before `feat/core-next`'s merge is where its
+reference lives. Standing supersessions that postdate parts of this
+file's rules:
 
-- **Single runtime.** The dual-runtime "one codebase, two runtimes"
-  story below is the old world's; the new server is Node only and
-  Cloudflare is a brochure (§16).
+- **Single runtime.** The server is Node only (≥24, `node:sqlite`
+  direct); Cloudflare is a brochure (§16) — the landing page, never
+  the place anyone plays.
 - **No builtin plugins, ever** (Brian, 2026-08-18). teller ships with
   zero; `examples/plugins/` is source a person copies onto their own
-  shelf and enables by hand. The assistant is plugin №1, not a feature.
-- **Rule 2's shape sharpened**: fields/counters/tags became `lists` of
-  entries; what a list MEANS is a system-layer kind declaration
-  (`core/kind.ts`), and "tags is kind zero" in ARCHITECTURE.md is
-  superseded (§2 — there is no un-kinded bucket).
-- Auth, pairing, the turn order and the seat have PORTED — the old
-  implementations under `worker/` are history, not the spec.
-
-The full fold of this file happens when the branch merges and
-`worker/` dies; until then this section is the seam.
+  shelf and enables by hand. The assistant is plugin №1, not a
+  feature.
+- **Rule 2's shape sharpened**: fields/counters/tags became `lists`
+  of entries; what a list MEANS is a system-layer kind declaration
+  (`core/kind.ts`) — there is no un-kinded bucket.
+- **Systems, packs, panels and plugins are FILES on the shelf**
+  (§M) — swept folders under the data dir, versioned by their own
+  json, trusted one human toggle each. The `systems` database table
+  is history.
 
 ## Relationship to the-shed-next
 
@@ -79,47 +77,59 @@ references because strangers can now read it.
 
 ## Stack
 
-Single package (no workspace): Vite + React + Tailwind v4 +
-`@cloudflare/vite-plugin`. `worker/` serves the SPA (`src/`) as static
-assets plus the `/api/*` routes; `CampaignDO` holds live session state;
-a SQL database holds durable data.
+Single package (no workspace), one app, two halves:
 
-**One codebase, two runtimes, and no fork.** The same built bundle runs
-on Cloudflare Workers and on Node. The Cloudflare coupling was only ever
-three things — `env.ASSETS.fetch`, one `crypto.subtle` call, and the
-Durable Object — so `host/*.mjs` supplies each of them against
-`node:sqlite` and the local disk: `d1.mjs`, `r2.mjs`, `durable.mjs`,
-`assets.mjs`. **Keep route handlers runtime-agnostic or this dies.** No
-`env.` API that only one runtime has, reached for directly from a route.
+- **`server/` + `core/`** — the host. Node ≥24, unbundled, `node:sqlite`
+  direct; `node server/index.ts` runs it, `bin/teller` → `server/cli.ts`
+  wraps it. `core/` is the kernel (storage, merge, stamp, effects,
+  bands, carry, bundle); `server/` is the doors, the stream, auth, the
+  plugin bridge, geometry.
+- **`client/`** — React, bundled (`pnpm client:build` via
+  `vite.client.config.ts` → `server/dist`, preferred over
+  `server/public` when present). Tailwind v4 scans `client/**` ONLY —
+  shelf code never gets its utilities (§L's landmine; layout in shelf
+  files rides inline `style`).
 
-The local runtime is the one that matters (`bin/teller` → `host/cli.mjs`):
+Beside them: **`defaults/`** ships with the install and loads as the
+floor layer (panels, and the starter system — §M-6/§M-6b; nothing is
+ever seeded into the data dir), and **`examples/`** is source a person
+copies onto their own shelf (plugins, the starter system's authoring
+copy).
 
-- `teller host [path]` — serve this table. `--data` (default `~/.teller`)
-  or a bare path, so a campaign can live on a stick you carry.
-- `teller key` / `teller where` / `teller version`.
+The CLI (`bin/teller`):
 
-Data lives in `~/.teller/`: `teller.db`, `books/` (PDFs named by content
-hash), `packs/` (pack archives and authoring folders, named by minted
-id or by their author), `art/` (installed pack art, keyed
-`art/<pak_id>/…`), `map/`, `dm.key`.
+- `teller host [path]` — serve this table. `--data` (default
+  `~/.teller`) or a bare path, so a campaign can live on a stick you
+  carry. Default port 4526. A pre-fold `~/.teller` (old `teller.db`
+  shape) is refused loudly with the way through.
+- `teller key` / `teller where` / `teller plugins` / `teller version`.
 
-- `pnpm dev` — Vite dev server (port 4525) with the worker + local D1/DO.
-- `pnpm db:migrate:local` / `db:migrate:remote` — D1 migrations. The host
-  applies the same `migrations/` on boot.
-- `pnpm typecheck` / `pnpm build` / `pnpm pack` (release tarball via
-  `scripts/pack.mjs` — prints the url + sha256 the tap's formula needs).
+Data lives in `~/.teller/` — the SHELF: `shelf.db` (machine state:
+displays, trust, settings), `campaigns/*.db` (one SQLite file per
+campaign — the campaign IS the file, §11), `systems/`, `packs/`,
+`plugins/`, `panels/` (the table's own layer), `books/` (PDFs named
+`bok_` + content hash), `art/` (installed under `art/<id>/…`), `map/`,
+`dm.key`. Folders are swept on boot and on demand (`POST
+/api/shelf/sweep`); the sweep is version-gated — bump the json or it
+won't reinstall — and shelf CODE recompiles on restart.
+
+- `pnpm client:dev` — client dev server against a running host.
+- `pnpm typecheck` (two projects: root = core+server, client) /
+  `pnpm test` (vitest; core/server/scripts/examples — client wiring is
+  deliberately untested, §L) / `pnpm pack` (release tarball via
+  `scripts/pack.mjs` — prints the url + sha256 the tap's formula
+  needs).
 - Releasing: bump `package.json` version → `pnpm pack` → `gh release
   create vX.Y.Z build/teller-X.Y.Z.tar.gz` → paste the printed fields
   into `Formula/teller.rb` in `teller-ink/homebrew-tap`. Users install
   with `brew install teller-ink/tap/teller`.
-- Secrets: `DM_KEY` (`.dev.vars` locally; on a host, `~/.teller/dm.key`,
-  minted on first run). Optionally `~/.teller/assistant.json`
-  (`{ url?, key?, model, style? }`) wires up the assistant (TEL-85);
-  absent means no assistant and no button — never a nag.
+- Secrets: exactly one — `~/.teller/dm.key`, minted on first run
+  (rule 7). The assistant is a plugin with its own config on the
+  shelf; absent means no assistant and no button — never a nag.
 
-The Cloudflare deployment still exists (worker `teller`, D1 `teller`, R2
-`teller-maps`, custom domain) and is where the landing page will live.
-It is no longer where play happens.
+The Cloudflare deployment still exists and is where the landing page
+will live (§16 — a brochure). It is not where play happens, and no
+play-path code may depend on it.
 
 ## Design docs — read before touching their subject
 
@@ -184,11 +194,15 @@ whether teller may do arithmetic.
 spell slots are all just counters, and no game-specific column has ever
 been needed.*
 
-The character model is: `fields` (key/label/value), `counters`
-({name, current, max}), `tags`, `notes`. HP, spell slots, Prestige, ammo,
-ki — ALL are counters. Conditions are tags. Do not add a game-specific
-column or type (no `hp`, no `spellSlots`). Counters can belong to a
-character or to the campaign (party resources).
+The model is: an ENTITY carrying named `lists` of named entries (a
+value, an optional ceiling, or neither), `refs`, and children — and
+what a list MEANS is a system-layer kind declaration (`core/kind.ts`),
+never a teller column. HP, spell slots, Prestige, ammo, ki — all
+entries; conditions are entries in a statuses list; Defense is an
+entry (stored 0 when that's the truth — §M-8, absent reads as zero).
+Do not add a game-specific column or type (no `hp`, no `spellSlots`).
+Entries can belong to a character or to the campaign's root entity
+(party resources).
 
 ### 3. Every mutation appends to the event log
 
@@ -222,7 +236,8 @@ Three separate things, and only the first is absolute:
 
 - **The repo, and teller itself, carry nobody's book. Absolute.** No
   spell descriptions, no stat blocks, no prose lifted from a book, in
-  `src/`, `worker/`, `host/`, docs or templates. `packs/*` is
+  `core/`, `server/`, `client/`, `defaults/`, `examples/`, docs or
+  templates. `packs/*` is
   gitignored to enforce it (everything but the README — a pack is a
   folder now, and a rule naming only `*.json` would have let one walk
   in). teller is presentation and bookkeeping
@@ -306,11 +321,14 @@ entry's free-text `meta`. All three were found in one day, all three
 type-checked, and all three were invisible until something needed to
 read them back. When a value is doing two jobs, split it.
 
-Templates live in the **`systems` table** (migration 0007), not in code.
-`worker/templates.ts` is a *seed* — `seedSystems` inserts with `INSERT
-OR IGNORE`, so a counter someone renamed survives the next reboot
-(rule 1). A system added by a person and a system that shipped with
-teller are the same kind of thing and neither outranks the other.
+A system lives as **files on the shelf** (`~/.teller/systems/<name>/`
+— `system.json` plus sibling json slots, `presentations/`, `exports/`,
+`panels/`), swept in like everything else. The starter system ships
+with the INSTALL as a per-id fallback floor (§M-6b) — never seeded
+into the data dir, so nothing goes stale and nothing resurrects over
+an edit. A system added by a person and the one that shipped with
+teller are the same kind of thing and neither outranks the other: a
+shelf system restating the id wins outright (rule 1).
 
 ### 4a. A pack is the unit of content — and a file, with its own identity
 
@@ -367,7 +385,10 @@ no registry, no ids handed out by anyone.
 
 **The shelf folder IS the authoring copy** (2026-08-15). Edit
 `~/.teller/packs/<name>/bestiary.json` in place, bump `version` in
-`pack.json`, and the ten-second sweep installs it — no copy, no upload.
+`pack.json`, and the sweep installs it (boot, or `POST
+/api/shelf/sweep` from the console — the old ten-second timer is gone;
+the sweep is version-gated, so an unbumped edit won't reinstall) — no
+copy, no upload.
 The repo's `packs/` holds only the format README; everything else under
 it is gitignored (`packs/*`), because whatever a pack carries, it is
 never repo content (rule 4).
@@ -441,10 +462,12 @@ so the dumbest panel in the room needs no keyboard.
 Roles a screen can be assigned:
 - `console` — the DM console, with all the authority that implies.
   `params.pane` narrows it to one slice; one pane per panel is the
-  digital DM screen. The pane list is **`src/lib/panes.ts`, and only
-  there** — the console renders from it and the Displays panel offers it
-  when assigning. A pane the console can show but nobody can be assigned
-  to is a pane that doesn't exist.
+  digital DM screen. Panes are the merged panels filtered by subject
+  (**`client/lib/panes.ts`** is the one seam) — the console renders
+  from it and the Screens tool offers it when assigning. A pane the
+  console can show but nobody can be assigned to is a pane that
+  doesn't exist. Panels appear in exactly ONE console dropdown — this
+  one; a seat takes role + character and nothing else (§M-5a).
 - `table` — the table TV renderer (passive, player-safe).
   **The table is the GROUND, nothing else**: the active scene
   full-bleed (+ grid overlay), or idle branding. No bookkeeping, no
@@ -492,7 +515,11 @@ sheet's blocks do not fit one bar and never will. Deciding what earns a
 place on the FIRST screen is the design work; the rest is arrangement.
 
 **Two families of glass, and only one question tells them apart** —
-is it MOUNTED or HELD? (See `wide` in `src/views/SeatView.tsx`.) Mounted
+is it MOUNTED or HELD? (Plus one derived fact inside mounted: the
+STRIP, ratio ≥ 2.5 — the rail; an iPad is mounted but not the strip,
+and collapsing the two gave the iPad the rail's sideways pan once
+already. See `isStrip()` in `client/components/items/Screen.tsx`.)
+Mounted
 glass — rail panel, table TV, a propped tablet — has plentiful width and
 FIXED height, because nobody flicks a screwed-down panel and a shared
 screen must show everything at once: so it never scrolls — and never
@@ -532,9 +559,11 @@ client.** Two consequences that have already bitten:
   releases one.** Exhaust the pool and every later request on that
   origin queues forever — it presents as "everything disconnected". HTTPS
   hides this completely, which is why it survived months of hosted
-  play. Keep it to **one stream per resource per tab** with a subscriber
-  set (`src/lib/use-session.ts`); never let component count set socket
-  count.
+  play. Keep it to **one stream per display slot** with a subscriber
+  set and leader election (`client/lib/use-session.ts`); never let
+  component count set socket count. When the stream drops, passive
+  glass wears the reconnecting pill — silently-stale is the worst
+  failure a shared screen has.
 
 ### 7. Auth: one key, and assignments — no accounts, no other secrets
 
@@ -586,7 +615,7 @@ the requirement is genuinely cross-device or cross-table, not before.
 **The stream is authenticated, by ticket.** An `EventSource` can't send
 headers, so anything that must be named in a URL gets a short-lived HMAC
 ticket signed with the one key over subject + expiry
-(`worker/tickets.ts`) — same trick for a book's bytes in an iframe. The
+(`server/auth.ts`) — same trick for a book's bytes in an iframe. The
 signature covers the *presented* expiry, so a client can't extend its
 own. Watching requires being a screen the DM adopted; a ticket
 identifies, it never grants a power the assignment didn't already have.
@@ -599,14 +628,13 @@ int-vs-boolean bugs across two engines.*
 
 Promote a blob key to a column only when a query needs it. Raw database
 rows never cross the API boundary — per-resource serializers in
-`worker/db.ts` (`toCampaign`, `toCharacter`) parse/coerce — so a route
-never sees an integer where it wanted a boolean, whichever engine
-answered.
+`core/store.ts` parse/coerce on the way out and normalise on the way
+in — so a route never sees an integer where it wanted a boolean.
 
-The mirror of that rule lives in `host/d1.mjs`, which normalises what
-goes *in*: D1 quietly accepts a JS boolean as a bind parameter and
-`node:sqlite` throws, so the shim converts. Two engines, one contract —
-keep both edges honest and route code never learns which is running.
+The two-engines half of this rule (D1 vs `node:sqlite`, and the shim
+that kept them honest) died with the fold — one engine now, but the
+serializer discipline it taught stays: both edges of the store are
+where coercion lives, and route code never touches a raw row.
 
 ### 9. What lives on the host, and what travels
 
@@ -653,7 +681,7 @@ the price of the IP line being structural. And a `.story` is only
 runnable by someone who has the packs it names, exactly as it has always
 been for books.
 
-Bundle rules that follow from this (`worker/bundle.ts`, `worker/import.ts`):
+Bundle rules that follow from this (`core/bundle.ts`, `server/story.ts`):
 
 - **Sections, not types** — a bundle declares what it contains, so a
   system-only pack and a whole campaign are the same file format.
@@ -672,7 +700,7 @@ Bundle rules that follow from this (`worker/bundle.ts`, `worker/import.ts`):
 - **Import layers onto a running table** rather than replacing it, and
   on a collision the **stored value wins** (rule 1 again — an import is
   a proposal, not an authority). For packs that rule has a name and a
-  home: `PackOrigin` in `worker/packs.ts`. An upload is intent and
+  home: pack origin handling in `core/packs-shelf.ts`. An upload is intent and
   replaces; a file appearing on disk or a pack arriving inside something
   else is a proposal, and may install or upgrade but never clobber.
 - A book or pack that's referenced but absent is reported as missing,
@@ -686,7 +714,8 @@ Bundle rules that follow from this (`worker/bundle.ts`, `worker/import.ts`):
   second one. The **character builder shipped 2026-08-13** (TEL-75, a
   deliberate un-deferral): creation is COMPOSITION over the pack's
   `trades`/`creation` data — the console dialog and the rail builder
-  ("what's yer trade?") drive the same `src/lib/creation.ts`, every
+  ("what's yer trade?") drive the same engine (the system's
+  `exports/creation.ts`, imported as `system/creation` — §M-4a), every
   step writes ordinary fields/counters/items, and a `draft` flag is
   the only trace until the last step clears it (rule 1 throughout).
 - Remote seats and hybrid tables — a player joining over the network,
