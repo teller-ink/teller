@@ -301,6 +301,53 @@ describe('GET /api/public', () => {
     ).toBe(400);
   });
 
+  // A movement record names a token that may be standing behind the
+  // screen, so the record is DM material by construction. Nothing
+  // player-facing reads the log at all — and that is exactly the kind
+  // of fact that stays true until somebody adds a convenience endpoint,
+  // so it is pinned here rather than assumed.
+  it('a hidden token’s step lands in the log and never in a watcher’s hands', async () => {
+    await call('PUT', '/api/campaign/refs', { key: true, body: { board: boardId } });
+    session.putBoardState(
+      boardId,
+      {
+        placements: [
+          { id: 'plc_a', entityId: barrett, u: 0.1, v: 0.5 },
+          { id: 'plc_b', label: 'the ambush', u: 0.8, v: 0.5, hidden: true },
+        ],
+      },
+      'console',
+    );
+    session.putBoardState(
+      boardId,
+      {
+        placements: [
+          { id: 'plc_a', entityId: barrett, u: 0.1, v: 0.5 },
+          { id: 'plc_b', label: 'the ambush', u: 0.3, v: 0.5, hidden: true },
+        ],
+      },
+      'console',
+    );
+
+    const dm = await call('GET', '/api/events?limit=20', { key: true });
+    const moved = dm.body.filter((e: { kind: string }) => e.kind === 'token.moved');
+    expect(moved).toHaveLength(1);
+    expect(moved[0].payload).toMatchObject({ byName: 'the ambush', hidden: true });
+
+    // The passive snapshot carries no history at all, so the step is
+    // not there to be stripped — and the hidden placement is gone from
+    // it the way it has always been.
+    const table = await passiveScreen();
+    const snapshot = await call('GET', '/api/public', { display: table });
+    expect(snapshot.status).toBe(200);
+    expect(JSON.stringify(snapshot.body)).not.toContain('ambush');
+    expect(JSON.stringify(snapshot.body)).not.toContain('token.moved');
+
+    // And the log itself is not a door a screen at the table may open.
+    expect((await call('GET', '/api/events', { display: table })).status).toBe(401);
+    expect((await call('GET', '/api/events', {})).status).toBe(401);
+  });
+
   it('board-state answers the DM fully and a watcher safely', async () => {
     session.putBoardState(
       boardId,
