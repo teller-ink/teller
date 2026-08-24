@@ -1,7 +1,11 @@
 {
   "id": "plg_7ec543dd0e9a",
   "name": "Assistant",
-  "version": 1,
+  "version": 2,
   "provides": ["propose.turn", "propose.narrate"],
-  "needs": ["network: the model endpoint in its config"]
+  "needs": [
+    "read:entities — every combatant's sheet, so it can see who is hurt and what they are holding",
+    "read:board — where everyone is standing, and how far apart",
+    "network: the model endpoint in its config"
+  ]
 }
