@@ -2199,6 +2199,68 @@ N/A"; absence is the number zero, and a delta lands on it normally.
 The result is a stored value like any other (rule 1): if zero was the
 wrong base, the Warden types over the outcome.
 
+### The fold-gate audit — 2026-08-24, three adversarial passes
+
+Before retiring the old world, three independent auditors (client
+surfaces, server contract, docs-promises) tried to refute "everything
+is ported." They succeeded — and everything they found in Tier 1
+(table correctness) was FIXED the same day: deploy-as-reset with
+one-row undo + missing-foes-named, upgrade/ammo `effects` amending
+pools at the point of use, the Aim armed reticle as a generic
+`use.actions` consumer, measured range-to-target in the exchange flow,
+the reconnecting pill on passive glass, the campaign notice (shared
+glass, presets from a `notices` declaration — never the kernel's
+words), handouts on the board view, and the starter system as an
+install-floor fallback (§M-6b). Tests 719 → 756 across the day.
+
+**Tier 2 — real, queued, post-fold is fine:**
+
+- One-press `table/clear` (old: delete all NPCs + tokens + order rows).
+- Campaign DELETE and a dedicated rename door.
+- The notch/deeds ritual + weapon history faces ("isn't part of this
+  port" — client/components/items file headers say so).
+- Party resources: a console editor + board pin for root-entity
+  counters (old BoardView pinned them; no located new surface).
+- The ten-second sweep (now boot/manual-only; books dropped mid-session
+  are invisible until a sweep is pressed).
+- Entity duplicate door; `GET /api/health`.
+- Camera overlay (TEL-77): the `rnd/camera` solver survived, nothing
+  renders it, the console→table broadcast door is gone.
+- Seat preview / true-size rig (old SeatPreview + SizeFrame).
+- Encounters panel can't STAGE placements (u/v/hidden) or per-foe
+  overrides — deploy honors staged data; nothing authors it yet.
+- Assistant residue: sub-band closing invisible in band-only phrasing
+  (`MoveFacts` carries the inches); same-named zones merge in
+  crossings; TEL-5's readable combat log still renders for nobody.
+- Aim/Dodge arming flag: "flat numeric cost" arms both; a `once`/`arms`
+  flag on the action record would split them (system edit, one line).
+
+**Tier 3 — deliberate, recorded so nobody re-finds them as bugs:**
+
+- Six runtime seat layouts → panels-as-files (per-player runtime CHOICE
+  is gone; a different arrangement is now an authoring act).
+- Book/pack installs are filesystem+sweep only, no upload doors —
+  deliberate posture, but it means an iPad-console DM cannot add a
+  book remotely. Revisit if it hurts.
+- Assistant + store are plugins; an old-world `assistant.json` is NOT
+  migrated; a fresh install has neither until enabled.
+- Undo deliberately cannot step back board/fog writes (new undo is
+  broader everywhere else; board writes log the fact without a before).
+- Combat resolution is N entry writes, not the old atomic `/resolve` —
+  partial-apply over flaky LAN is representable now; accepted.
+- Vitality-glow thresholds (0.5/0.25) hardcoded in the kernel where the
+  old world declared them per-system — doctrine drift to fix when
+  state-suggestion derivation gets built.
+- Campaign notices are session-ephemeral (die with the server) — a
+  break announcement is over when the table is.
+
+**Unswept residue** (audits ran static-only; nobody proved these
+either way): old-`.story`/`.tell` → new import round-trip; ticket TTL
+parity; handout-upload file roots vs `/files/` serving roots; store
+purchase arithmetic vs old `worker/items.ts` field-by-field; public
+redaction field-by-field against a live payload; BadgeView and
+BookReader fine-detail parity; the sha-256 display handle's URL role.
+
 ### Still open from `ARCHITECTURE.md`
 
 - **Door 2** — system identity is a hand-chosen slug; mint `sys_`.
