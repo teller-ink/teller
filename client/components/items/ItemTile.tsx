@@ -206,13 +206,16 @@ export function ItemTile({
   //
   // Only an action with a PRICE can be armed, and that is the whole
   // filter: deduct-at-fire is the mechanism, so a move whose cost the
-  // system didn't state has nothing to ride along on. The declaration
-  // lists what the turn's moves ARE (eight of them, most priced by what
-  // you do with them — a Move costs by the distance, an Improvise by
-  // the Warden); the ones carrying a flat number are the ones a trigger
-  // can pay for. The rest are reference, and reference doesn't wear a
-  // reticle.
-  const armable = actions.filter((a) => typeof a.cost === 'number' && a.cost > 0);
+  // system didn't state has nothing to ride along on — but a flat cost
+  // alone isn't consent to arm (2026-08-24, Brian: a priced defensive
+  // move would inherit the once-per-turn lock it doesn't have). The
+  // SYSTEM says which of its actions ride a trigger, with `arms: true`
+  // on the action record — the mechanic stated as data, never inferred
+  // from the shape of a cost. The rest are reference, and reference
+  // doesn't wear a reticle.
+  const armable = actions.filter(
+    (a) => a.arms === true && typeof a.cost === 'number' && a.cost > 0,
+  );
   const armedCost = armable
     .filter((a) => armed.includes(a.name))
     .reduce((n, a) => n + a.cost, 0);

@@ -23,7 +23,7 @@ export type UseRecord = {
   verb?: string;
   verbs?: Record<string, string>;
   costs?: { field: string; counter: string }[];
-  actions?: { name: string; cost: number; text?: string }[];
+  actions?: { name: string; cost: number; text?: string; arms?: boolean }[];
 };
 
 /** `/api/stack/record/currency` — the purse's denominations. */
