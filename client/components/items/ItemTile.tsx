@@ -22,7 +22,7 @@ import { CarryControl } from './Carry.tsx';
 import { Reticle } from './Reticle.tsx';
 import { RollDoor } from './RollDoor.tsx';
 import { StatRow } from './Track.tsx';
-import type { CurrencyRecord, UseRecord } from './types.ts';
+import type { ActionDecl, CurrencyRecord, UseRecord } from './types.ts';
 
 function numberOf(entry: Entry | undefined): number {
   return typeof entry?.value === 'number' ? entry.value : 0;
@@ -193,7 +193,7 @@ export function ItemTile({
    */
   amended?: Map<string, Amendment>;
   /** The system's per-turn moves (`use.actions`) — armed here, paid at fire. */
-  actions?: { name: string; cost: number; text?: string; arms?: boolean }[];
+  actions?: ActionDecl[];
   /** Which of them are armed, and which are used up until the counter refills. */
   armed?: string[];
   spent?: string[];
@@ -443,6 +443,17 @@ export function ItemTile({
               ledger={ledger}
               short={short}
               spends={aimed.across && chambered ? `one ${chambered.name}` : undefined}
+              // What's armed rides along and is SAID there — an armed
+              // move's own grant (a die thrown again) applies to this
+              // handful, and the reticle that lit it is on a tile the
+              // door is covering.
+              granted={armable
+                .filter((a) => armed.includes(a.name))
+                .map((a) => ({
+                  name: a.name,
+                  ...(a.text ? { text: a.text } : {}),
+                  ...(a.reroll ? { reroll: a.reroll } : {}),
+                }))}
               onFire={() => squeeze(aimed.across)}
               onClose={() => setAimed(undefined)}
             />

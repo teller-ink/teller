@@ -1473,6 +1473,21 @@ them arrives as data:
   now accepts a SEAT filing its own roll, the same shape the turn door
   already takes for a score.
 
+- **An armed move's GRANT is said where it applies, and carried out
+  where teller may** (added 2026-08-24, Brian). The door names what's
+  armed — a chip per move, wearing the system's own words — and a move
+  that lets you throw a die again says so with a NUMBER on the action
+  record (`reroll: 1`), never by anyone reading its prose: the same
+  grant is written twice, once for a person and once for the surface,
+  and parsing the first is the mechanics-in-text bug §I is named after.
+  Over real dice the grant stays a HINT (you throw the die in your hand
+  and retype the face — there is nothing for teller to do); over dice
+  teller threw it becomes a button per die, spent once, and declining
+  is the default. The reroll rides into the record honestly
+  (`RollRecord.rerolls` — what it was, what it became, what granted
+  it), because a pool that quietly improved between the throw and the
+  record is a history that lies to the one reader who can't ask.
+
 Gaps flagged, deliberately not invented: **throwable-to-Short** exists
 only as pack prose ("melee weapons can be thrown to Short Range"), so a
 melee weapon offers only the rungs it prints — a per-weapon flag would

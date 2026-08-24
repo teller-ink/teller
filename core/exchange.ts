@@ -246,6 +246,26 @@ export function proposeSeverity(input: SeverityInput): { value: number; note?: s
 // of these are RECORDS: they never write a value, they say what
 // happened to the values the entry door already moved.
 
+/**
+ * ONE DIE THROWN AGAIN — what it was showing, what it became, and what
+ * let it happen.
+ *
+ * Recorded rather than swallowed (rule 3): a pool that quietly improved
+ * between the throw and the record is a history that lies, and the
+ * reader most likely to be misled by it is the one that can't ask —
+ * an assistant reading the log later. `by` names the armed move that
+ * granted the throw, so the log says WHY the second face is the one
+ * that counts.
+ */
+export type Reroll = {
+  /** Which die, by its place in the pool. */
+  at: number;
+  was: string;
+  became: string;
+  /** The armed action that granted it, in the system's own words. */
+  by?: string;
+};
+
 export type RollRecord = {
   /** Who threw them. */
   by?: string;
@@ -259,6 +279,12 @@ export type RollRecord = {
   unit?: string;
   /** What it was for — 'Strangle damage', 'Bark Watcher 1 defense'. */
   for?: string;
+  /**
+   * Any die thrown again, in the order it happened. `faces` is what
+   * FINALLY showed — the honest total is the one the table played on —
+   * and this is how it got there.
+   */
+  rerolls?: Reroll[];
   round?: number;
 };
 
@@ -310,6 +336,19 @@ const str = (raw: unknown): string | undefined => {
 };
 const num = (raw: unknown): number => (typeof raw === 'number' && Number.isFinite(raw) ? raw : 0);
 
+/** The rerolls half — a face that changed, and nothing that didn't. */
+function rerollsIn(raw: unknown): Reroll[] {
+  return (Array.isArray(raw) ? raw : [])
+    .map((r) => (r && typeof r === 'object' ? (r as Record<string, unknown>) : {}))
+    .filter((r) => str(r.was) && str(r.became))
+    .map((r) => ({
+      at: Math.round(num(r.at)),
+      was: str(r.was)!,
+      became: str(r.became)!,
+      ...(str(r.by) ? { by: str(r.by)! } : {}),
+    }));
+}
+
 /** Forgiving read, strict write — the same posture as `toEntity`. */
 export function toRollRecord(raw: unknown): RollRecord | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
@@ -325,6 +364,7 @@ export function toRollRecord(raw: unknown): RollRecord | undefined {
     ...(str(r.byName) ? { byName: str(r.byName)! } : {}),
     ...(str(r.unit) ? { unit: str(r.unit)! } : {}),
     ...(str(r.for) ? { for: str(r.for)! } : {}),
+    ...(rerollsIn(r.rerolls).length ? { rerolls: rerollsIn(r.rerolls) } : {}),
     ...(num(r.round) > 0 ? { round: Math.round(num(r.round)) } : {}),
   };
 }

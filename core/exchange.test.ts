@@ -206,6 +206,36 @@ describe('the records — forgiving read, strict write', () => {
     });
   });
 
+  it('keeps a die thrown again — what it was, what it became, and what let it', () => {
+    expect(
+      toRollRecord({
+        pool: '2G',
+        faces: ['hit', 'blank'],
+        total: 1,
+        rerolls: [
+          { at: 1, was: 'spur', became: 'blank', by: 'Squint' },
+          { at: '2', was: 'hit' },
+          { junk: true },
+        ],
+      }),
+    ).toEqual({
+      pool: '2G',
+      faces: ['hit', 'blank'],
+      total: 1,
+      // The half-written ones are dropped whole: a reroll that can't say
+      // what changed is not a smaller reroll, it's noise.
+      rerolls: [{ at: 1, was: 'spur', became: 'blank', by: 'Squint' }],
+    });
+  });
+
+  it('carries no rerolls key at all when nothing was thrown again', () => {
+    expect(toRollRecord({ pool: '1B', faces: ['hit'], total: 1, rerolls: [] })).toEqual({
+      pool: '1B',
+      faces: ['hit'],
+      total: 1,
+    });
+  });
+
   it('refuses a roll with no pool, and survives junk', () => {
     expect(toRollRecord({ faces: ['hit'] })).toBeUndefined();
     expect(toRollRecord(undefined)).toBeUndefined();

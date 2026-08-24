@@ -23,8 +23,30 @@ export type UseRecord = {
   verb?: string;
   verbs?: Record<string, string>;
   costs?: { field: string; counter: string }[];
-  actions?: { name: string; cost: number; text?: string; arms?: boolean }[];
+  actions?: {
+    name: string;
+    cost: number;
+    text?: string;
+    arms?: boolean;
+    /**
+     * How many dice this move lets you throw again. STRUCTURAL on
+     * purpose: the same grant is written in the action's own `text`
+     * ("Reroll 1 die in your next Attack"), and reading a mechanic out
+     * of prose is the recurring bug this model exists to end (§I). The
+     * text is what a person reads; this is what the surface acts on,
+     * and an action that declares no number gets a name chip and no
+     * button.
+     */
+    reroll?: number;
+  }[];
 };
+
+/**
+ * One of the system's per-turn moves, as declared — read off `use`
+ * rather than restated, so a tile and the door it opens are looking at
+ * the same row.
+ */
+export type ActionDecl = NonNullable<UseRecord['actions']>[number];
 
 /** `/api/stack/record/currency` — the purse's denominations. */
 export type CurrencyRecord = {
