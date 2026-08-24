@@ -7,7 +7,7 @@
       "runtimeArgs": [
         "server/index.ts",
         "--data",
-        "/Users/briancorbin/.teller-next",
+        "/Users/briancorbin/.teller",
         "--campaign",
         "the-unlikely-duo"
       ],
@@ -16,13 +16,20 @@
     {
       "name": "client-dev",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["client:dev"],
+      "runtimeArgs": [
+        "client:dev"
+      ],
       "port": 4527
     },
     {
       "name": "client-dev-4528",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["client:dev", "--", "--port", "4528"],
+      "runtimeArgs": [
+        "client:dev",
+        "--",
+        "--port",
+        "4528"
+      ],
       "port": 4528
     }
   ]

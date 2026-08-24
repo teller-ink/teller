@@ -21,16 +21,18 @@ import { boot } from './index.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-// The new world has been living in `~/.teller-next` while the old one
-// still holds `~/.teller`, and the two databases are not the same shape.
-// THE FOLD FLIPS THIS to `~/.teller`, when `worker/` and `host/` die and
-// there is only one thing that could have written that folder. Until
-// then, pointing the new server at the old data dir would open a
-// stranger's database, so it points here.
-const DEFAULT_DATA = join(homedir(), '.teller-next');
+// THE FOLD FLIPPED THIS (2026-08-24). The rebuild lived in
+// `~/.teller-next` while the old world still held `~/.teller`; with
+// `worker/` and `host/` gone there is only one thing that could have
+// written this folder, and it gets the honest name back. A pre-fold
+// `~/.teller` written by the OLD app is a different database shape —
+// boot refuses a strange db loudly rather than guessing; move it aside
+// and bring your `~/.teller-next` here.
+const DEFAULT_DATA = join(homedir(), '.teller');
 
-// The new world's own port. The old CLI's was 4525; running both at once
-// during the fold is a normal afternoon, so they don't collide.
+// The port survives the fold unchanged: every screen at a table
+// bookmarks this address (rule 6 — one url per table), and a fold that
+// silently moved the table would strand every bookmark and kiosk.
 const DEFAULT_PORT = 4526;
 
 const HELP = `
@@ -123,6 +125,18 @@ export async function main(argv: string[]) {
       const port = Number(flag(opts, 'port') || process.env.TELLER_PORT || DEFAULT_PORT);
       if (!Number.isInteger(port) || port < 1 || port > 65535) {
         throw new Error(`${flag(opts, 'port')} is not a port`);
+      }
+      // The pre-fold guard the comment on DEFAULT_DATA promises: a
+      // `teller.db` with no `shelf.db` beside it is the OLD app's data
+      // dir — a different database shape. Opening it would read as an
+      // empty shelf over a folder full of somebody's campaigns, so
+      // refuse out loud with the way through instead of guessing.
+      if (existsSync(join(data, 'teller.db')) && !existsSync(join(data, 'shelf.db'))) {
+        throw new Error(
+          `${data} holds a pre-fold teller database (teller.db). ` +
+            `This version keeps a different shape (shelf.db + campaigns/). ` +
+            `Move the old folder aside (e.g. ${data}-legacy), or point --data somewhere else.`,
+        );
       }
       mkdirSync(data, { recursive: true });
       console.log('\n  teller\n');
