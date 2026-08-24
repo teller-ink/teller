@@ -291,6 +291,92 @@ export type Effect =
  * true and they are true about different questions: what a purse HOLDS
  * is the reading, and what a save must not thicken is the stored.
  */
+// ---------------------------------------------------------------------
+// `read:board` — the fight's GROUND, measured.
+//
+// The registry owns this shape for the same reason it owns
+// `TurnProposal`: a consumer must be able to read a position or a range
+// without knowing which host measured it. `server/geometry.ts` is the
+// implementation; the law it implements is docs/BATTLEMAP.md.
+//
+// Two things about it are contract, not convenience. Every distance
+// arrives ALREADY MEASURED, in the board's own true inches — nobody
+// downstream does trigonometry on normalized coordinates, because a
+// reader asked to derive a fact will eventually derive it wrong. And
+// there is no empty answer: absence is `{ present: false, why }`, a
+// sentence, because "no board this fight" is something a proposer must
+// be told rather than left to infer from a missing key.
+//
+// It is a DM-facing slice — hidden tokens are reported as hidden rather
+// than stripped — so it may only reach a door the server already gated
+// at `dm`, and only the console's own proposal path otherwise.
+
+/** One token, as the geometry sees it. Every number here was measured. */
+export type TokenFacts = {
+  placementId?: string;
+  entityId?: string;
+  name: string;
+  /** Behind the screen. Kept, not stripped — this rides a DM-gated need. */
+  hidden: boolean;
+  /** Map space, 0..1 — the stored truth, passed on so nothing is hidden by summarising. */
+  u: number;
+  v: number;
+  /** Grid cell [col, row], when the board's grid is calibrated. */
+  cell?: [number, number];
+  sizeInches?: number;
+  /** Painted zones whose cells this token stands in, by the zone's own word. */
+  inZones?: string[];
+  /** Painted zones one cell away — adjacency, not entry. */
+  nearZones?: string[];
+  /** True for the token the distances were measured from. */
+  acting?: boolean;
+  /** Straight-line distance from the acting token, in the board's true inches. */
+  awayInches?: number;
+  /** The same distance in 1-inch grid squares, when the grid is calibrated. */
+  awaySquares?: number;
+};
+
+export type ZoneFacts = {
+  /** The painted layer's own word — 'fire', 'water', whatever was painted. */
+  name: string;
+  cells: number;
+  hidden: boolean;
+  /** Tokens standing in it, by name. */
+  standingIn: string[];
+};
+
+/**
+ * The fight's ground, or the reason there isn't any.
+ *
+ * `present: false` is a first-class answer with a sentence attached,
+ * because "no board this fight" is a thing a proposer must be TOLD
+ * rather than left to notice.
+ */
+export type BoardFacts =
+  | { present: false; why: string }
+  | {
+      present: true;
+      board: {
+        id: string;
+        name: string;
+        /** The map's true width in the room, in inches. Absent means uncalibrated. */
+        widthInches?: number;
+        heightInches?: number;
+      };
+      /** How distances are expressed, said out loud so nothing is guessed. */
+      units: string;
+      /** 1-inch squares across and down, when the grid could be calibrated. */
+      grid?: { cols: number; rows: number };
+      /** Why there is no grid, when there isn't one. */
+      gridless?: string;
+      /** The token every `awayInches` was measured FROM, by name. */
+      measuredFrom?: string;
+      /** Why nothing was measured, when the acting creature has no token. */
+      unmeasured?: string;
+      tokens: TokenFacts[];
+      zones: ZoneFacts[];
+    };
+
 export type TableSnapshot = {
   campaign: { slug: string; name: string; rootId: string };
   declarations: Record<string, { merged: unknown[]; own: unknown[] }>;
@@ -298,6 +384,8 @@ export type TableSnapshot = {
   records: Record<string, Record<string, unknown>>;
   /** The campaign root's children — everyone and everything at the top level. */
   entities?: { stored: unknown; reading: unknown }[];
+  /** Where everyone is standing, measured — or why there is nowhere. `read:board`. */
+  board?: BoardFacts;
 };
 
 /**
@@ -312,7 +400,7 @@ export type TableSnapshot = {
  */
 export type Need = {
   verb: 'read' | 'write';
-  /** 'declarations' | 'templates' | 'records' | 'entities' | 'entries' | 'log', plus whatever a later point adds. */
+  /** 'declarations' | 'templates' | 'records' | 'entities' | 'board' | 'entries' | 'log', plus whatever a later point adds. */
   subject: string;
   /** The one slot, when the need names one. Absent means the subject whole. */
   slot?: string;

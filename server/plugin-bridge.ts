@@ -40,6 +40,7 @@
 import type { Entity } from '../core/entity.ts';
 import type { LoadedPlugin } from '../core/plugins.ts';
 import { grants, type DoorRequest, type DoorResult, type Effect, type Need, type TableSnapshot } from '../core/registry.ts';
+import { fightGeometry } from './geometry.ts';
 import { adopted, canDm, type Auth } from './auth.ts';
 import type { Session } from './session.ts';
 
@@ -89,6 +90,15 @@ export function snapshotFor(session: Session, needs: Need[]): TableSnapshot {
       out.templates[need.slot] = session.loaded.templates(need.slot);
     } else if (need.subject === 'records' && need.slot) {
       out.records[need.slot] = session.loaded.record(need.slot);
+    } else if (need.subject === 'board') {
+      // The ground, measured here rather than described here: whoever
+      // asked gets inches and cells, not coordinates to do sums on.
+      // Whose turn it is comes out of the turn order, so a door that
+      // reads the board reads it from the acting creature's point of
+      // view without having to say so.
+      const turn = session.turnState();
+      const acting = turn.turn === null ? undefined : turn.order[turn.turn];
+      out.board = fightGeometry(session, acting?.entityId);
     } else if (need.subject === 'entities') {
       // Both readings of every top-level entity, because both are true
       // about different questions: a purse is what the READING holds,
