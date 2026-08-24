@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { discoverPlugins, loadPlugins, providersOf } from './plugins.ts';
+import { discoverPlugins, enablePlugin, loadPlugins, providersOf } from './plugins.ts';
 import { openShelf, type Shelf } from './store.ts';
 
 let dir: string;
@@ -146,5 +146,70 @@ describe('loading — only what a human enabled, only points the registry knows'
       /failed to import.*boom/,
     );
     expect(problems.map((p) => p.problem).join(' | ')).toMatch(/no host\.mjs/);
+  });
+});
+
+// ENABLEMENT IS CONSENT TO A LIST (§15).
+//
+// A plugin on the shelf is a file its author edits, so the needs it
+// declares can widen after a human agreed to the old ones. That is the
+// one way the enable gate can fail — quietly, by honouring a wider
+// claim under an older yes — so it fails loudly instead.
+describe('the enable gate remembers WHAT was agreed to', () => {
+  const wants = ['read:entities — the sheets'];
+
+  it('records the needs as written, and clears them when trust is taken back', () => {
+    author('echo', { ...echo, needs: wants }, ECHO_HOST);
+    enablePlugin(dir, shelf, 'plg_echo', true);
+    expect(shelf.pluginTrust('plg_echo')?.wants).toEqual(wants);
+    enablePlugin(dir, shelf, 'plg_echo', false);
+    expect(shelf.pluginTrust('plg_echo')?.wants).toBeUndefined();
+  });
+
+  it('refuses to run a plugin that now wants more than it was enabled for', async () => {
+    author('echo', { ...echo, needs: wants }, ECHO_HOST);
+    enablePlugin(dir, shelf, 'plg_echo', true);
+    expect((await loadPlugins(dir, shelf)).loaded).toHaveLength(1);
+
+    // The author adds a line. Nobody agreed to this one.
+    author('echo', { ...echo, needs: [...wants, 'write:log — quietly'] }, ECHO_HOST);
+    const { loaded, problems } = await loadPlugins(dir, shelf);
+    expect(loaded).toEqual([]);
+    expect(problems[0].problem).toMatch(/wants more than it was enabled for/);
+    expect(problems[0].problem).toContain('write:log — quietly');
+
+    // Saying yes again is what fixes it — and only a human does that.
+    enablePlugin(dir, shelf, 'plg_echo', true);
+    expect((await loadPlugins(dir, shelf)).loaded).toHaveLength(1);
+  });
+
+  it('lets a plugin drop a need without asking again', async () => {
+    author('echo', { ...echo, needs: [...wants, 'write:log — quietly'] }, ECHO_HOST);
+    enablePlugin(dir, shelf, 'plg_echo', true);
+    author('echo', { ...echo, needs: wants }, ECHO_HOST);
+    const { loaded, problems } = await loadPlugins(dir, shelf);
+    expect(problems).toEqual([]);
+    expect(loaded).toHaveLength(1);
+  });
+
+  it('grandfathers a row enabled before this was recorded — and says so every boot', async () => {
+    author('echo', { ...echo, needs: wants }, ECHO_HOST);
+    // The old spelling: enabled, with nothing written down about what for.
+    shelf.setPluginEnabled('plg_echo', true);
+    const { loaded, problems } = await loadPlugins(dir, shelf);
+    // It runs — taking a table's plugins away over a bookkeeping change
+    // would be the wrong failure — but it is never silent about it.
+    expect(loaded).toHaveLength(1);
+    expect(problems[0].problem).toMatch(/enabled before teller recorded what it wants/);
+    expect(problems[0].problem).toContain('read:entities — the sheets');
+
+    enablePlugin(dir, shelf, 'plg_echo', true);
+    expect((await loadPlugins(dir, shelf)).problems).toEqual([]);
+  });
+
+  it('says nothing about a plugin that wants nothing', async () => {
+    author('echo', echo, ECHO_HOST);
+    shelf.setPluginEnabled('plg_echo', true);
+    expect((await loadPlugins(dir, shelf)).problems).toEqual([]);
   });
 });

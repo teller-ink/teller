@@ -686,6 +686,11 @@ CREATE TABLE IF NOT EXISTS plugins (
   id         TEXT PRIMARY KEY,
   enabled    INTEGER NOT NULL DEFAULT 0,
   config     TEXT,
+  -- The needs, AS WRITTEN, that a human was shown when they said yes.
+  -- Enablement is consent to a specific list (§15); without recording
+  -- the list, a plugin could widen what it touches after the fact and
+  -- the agreement would silently cover it.
+  wants      TEXT,
   updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS settings (
@@ -993,21 +998,39 @@ export class Shelf {
   // discovers; only a human enables" is structural instead of polite
   // (§15). Config generalises `assistant.json`: one blob per plugin id.
 
-  pluginTrust(id: string): { enabled: boolean; config: unknown } | undefined {
+  pluginTrust(id: string): {
+    enabled: boolean;
+    config: unknown;
+    /** What was on screen when the human said yes; undefined for a row from before this was recorded. */
+    wants?: string[];
+  } | undefined {
     const row = this.#db
       .prepare('SELECT * FROM plugins WHERE id = ?')
       .get(id) as Row | undefined;
     if (!row) return undefined;
-    return { enabled: row.enabled === 1, config: parseJson(row.config) };
+    const agreed = parseJson(row.wants);
+    const out: { enabled: boolean; config: unknown; wants?: string[] } = {
+      enabled: row.enabled === 1,
+      config: parseJson(row.config),
+    };
+    if (Array.isArray(agreed)) out.wants = agreed.map((w) => String(w));
+    return out;
   }
 
-  setPluginEnabled(id: string, enabled: boolean): void {
+  /**
+   * Say yes (or take it back), recording WHAT was agreed to.
+   *
+   * `wants` is the needs list as the human read it. Disabling clears the
+   * record, because the next yes is a new agreement about whatever the
+   * manifest says by then.
+   */
+  setPluginEnabled(id: string, enabled: boolean, wants?: string[]): void {
     this.#db
       .prepare(
-        `INSERT INTO plugins (id, enabled, updated_at) VALUES (?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at`,
+        `INSERT INTO plugins (id, enabled, wants, updated_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled, wants = excluded.wants, updated_at = excluded.updated_at`,
       )
-      .run(id, enabled ? 1 : 0, now());
+      .run(id, enabled ? 1 : 0, enabled && wants ? JSON.stringify(wants) : null, now());
   }
 
   setPluginConfig(id: string, config: unknown): void {
@@ -1340,6 +1363,11 @@ export function openShelf(dataDir: string): Shelf {
   // the error when it already exists is the only signal SQLite gives.
   try {
     db.exec('ALTER TABLE displays ADD COLUMN position INTEGER');
+  } catch {
+    // already there
+  }
+  try {
+    db.exec('ALTER TABLE plugins ADD COLUMN wants TEXT');
   } catch {
     // already there
   }

@@ -40,7 +40,7 @@ import { dirname, join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { loadPlugins } from '../core/plugins.ts';
+import { enablePlugin, loadPlugins } from '../core/plugins.ts';
 import { createCampaign, openShelf } from '../core/store.ts';
 import type { Entity } from '../core/entity.ts';
 import { serve } from './index.ts';
@@ -227,7 +227,7 @@ beforeEach(async () => {
   // a human enabled it. Nothing here is a special case for the store —
   // this is copying a folder in and ticking a box.
   cpSync(STORE_SRC, join(dir, 'plugins', 'store'), { recursive: true, preserveTimestamps: true });
-  shelf.setPluginEnabled(STORE, true);
+  enablePlugin(dir, shelf, STORE, true);
 
   const over = join(dir, 'plugins', 'overreach');
   mkdirSync(over, { recursive: true });
@@ -250,7 +250,7 @@ beforeEach(async () => {
       }),
     };`,
   );
-  shelf.setPluginEnabled(OVERREACH, true);
+  enablePlugin(dir, shelf, OVERREACH, true);
 
   const campaign = createCampaign(dir, 'duo', 'The Unlikely Duo');
   campaign.save(

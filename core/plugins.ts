@@ -312,6 +312,28 @@ function compilePane(
 }
 
 /**
+ * Say yes to a plugin — the one door enablement goes through.
+ *
+ * It exists so that ENABLING and RECORDING WHAT WAS AGREED TO cannot
+ * drift apart: the console, the CLI and anything later all say yes the
+ * same way, and the needs written down are the ones that were on
+ * screen. Disabling clears the record; the next yes is a new agreement
+ * about whatever the manifest says by then.
+ */
+export function enablePlugin(
+  dataDir: string,
+  shelf: Shelf,
+  id: string,
+  enabled: boolean,
+): { wants: string[] } {
+  const wants =
+    discoverPlugins(dataDir, shelf).found.find((f) => f.manifest.id === id)?.manifest
+      .wants ?? [];
+  shelf.setPluginEnabled(id, enabled, wants);
+  return { wants };
+}
+
+/**
  * Import every ENABLED plugin and wire its provides to the registry.
  * Missing entry file, a throw on import, a provide against no point —
  * each is a problem in the report and never a crash: a broken plugin
@@ -325,6 +347,37 @@ export async function loadPlugins(
   const loaded: LoadedPlugin[] = [];
   for (const { dir, manifest, enabled } of found) {
     if (!enabled) continue;
+
+    // ENABLEMENT IS CONSENT TO A LIST, not to a folder name. A plugin
+    // on the shelf is an ordinary file its author edits, so the needs
+    // it declares can widen after somebody agreed to the old ones — and
+    // a wider claim honoured under an older yes is the enable gate
+    // failing quietly, which is the one way this gate can fail. So it
+    // fails LOUDLY instead: the trust row records what was on screen,
+    // and a plugin that now wants more than that does not load until a
+    // human agrees again.
+    //
+    // A row from before teller recorded anything is grandfathered — it
+    // predates the question and refusing it would take the table's
+    // plugins away over a bookkeeping change — but it says so, every
+    // boot, until somebody enables it again and the list is written
+    // down.
+    const agreed = shelf.pluginTrust(manifest.id)?.wants;
+    if (agreed) {
+      const widened = manifest.wants.filter((want) => !agreed.includes(want));
+      if (widened.length) {
+        problems.push({
+          dir,
+          problem: `wants more than it was enabled for — ${widened.join('; ')} — so it is not running; enable it again to agree`,
+        });
+        continue;
+      }
+    } else if (manifest.wants.length) {
+      problems.push({
+        dir,
+        problem: `was enabled before teller recorded what it wants; it currently wants ${manifest.wants.join('; ')} — enable it again to record your agreement`,
+      });
+    }
 
     // The DECLARED half first, and separately: a plugin may be all
     // panes and no host module (a surface over teller's own doors is a
