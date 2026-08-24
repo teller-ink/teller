@@ -29,6 +29,7 @@ import { Zones } from '../components/board/Zones.tsx';
 import type { Placement, Zone } from '../components/board/model.ts';
 import { DECLARED, PUBLIC, useLive } from '../lib/use-session.ts';
 import { useWakeLock } from '../lib/use-wake-lock.ts';
+import { ConnectionHint } from '../components/ConnectionHint.tsx';
 import { chipsOf, kinds, type KindDef } from './passive.ts';
 
 // The painted ground and the shaped tokens arrive inside `state`, which
@@ -293,6 +294,13 @@ export function TableView({
 
   return (
     <main className="relative h-dvh overflow-hidden bg-black" onClick={toggleFullscreen}>
+      {/* The one thing the ground ever says about itself. It is a
+          STATUS the screen wears, not bookkeeping and not a control
+          (rule 6, and the same class as the identify flash) — a table
+          TV quietly showing a five-minute-old fight is the failure this
+          exists to make visible. The table still draws no notice and no
+          button. */}
+      <ConnectionHint />
       <img
         key={mapKey}
         src={mapUrl}
@@ -394,6 +402,7 @@ function IdleTable() {
       className="relative flex h-dvh flex-col items-center justify-center gap-2 overflow-hidden bg-black"
       onClick={toggleFullscreen}
     >
+      <ConnectionHint />
       <h1 className="font-serif text-6xl text-stone-700">teller</h1>
       <p className="text-stone-600">the table awaits a map…</p>
     </main>

@@ -41,9 +41,20 @@ import { useEffect, useRef, useState } from 'react';
 import { displaySlot, getSlips } from './api.ts';
 
 type Listener = (what: string) => void;
+type Status = (connected: boolean) => void;
 
 const listeners = new Set<Listener>();
 const identifyListeners = new Set<() => void>();
+/**
+ * Who wants to know whether the wire is up.
+ *
+ * The stream's health is the one thing about the stream a SURFACE has
+ * to know: a passive screen quietly showing a five-minute-old number is
+ * the worst failure this program has, because nothing about it looks
+ * wrong. So the state is published here rather than kept private to the
+ * retry loop — the old app's `ConnectionHint` seam, restored.
+ */
+const statusListeners = new Set<Status>();
 
 const CHECK_MS = 2_500;
 /** Longer than the server's 25s ping, so a leader whose socket is
@@ -60,6 +71,10 @@ let opening = false;
 let retry: ReturnType<typeof setTimeout> | null = null;
 let delay = FIRST_MS;
 let wasDown = false;
+/** Optimistic at load, exactly as the old app was: a screen that has
+ *  not finished opening its socket yet is not a screen in trouble, and
+ *  a pill that flashes on every boot is a pill nobody reads. */
+let up = true;
 let role: Role = 'direct';
 let channel: BroadcastChannel | null = null;
 let watch: ReturnType<typeof setInterval> | null = null;
@@ -74,12 +89,25 @@ const leaderKey = () => `teller.stream.leader.${scope()}`;
 
 type Relay =
   | { kind: 'nudge'; what: string }
+  /** The leader's wire, up or down. A follower has no socket of its own
+   *  to judge by, and a follower's screen is just as passive. */
+  | { kind: 'status'; connected: boolean }
   /** A tab adopted, so the screen's identity changed under the leader's
    *  feet: whoever holds the socket must go back for fresh slips. */
   | { kind: 'reset' };
 
 function alive(): boolean {
-  return listeners.size + identifyListeners.size > 0;
+  return listeners.size + identifyListeners.size + statusListeners.size > 0;
+}
+
+/** Publish the wire's health to this tab, and — from the leader — to the rest. */
+function tellStatus(connected: boolean, relay = true): void {
+  if (relay && role === 'leader') {
+    channel?.postMessage({ kind: 'status', connected } satisfies Relay);
+  }
+  if (up === connected) return;
+  up = connected;
+  for (const fn of statusListeners) fn(connected);
 }
 
 /** Can this browser pool at all? Old engines get a socket per tab. */
@@ -157,6 +185,7 @@ function open(): void {
       source = es;
       es.onopen = () => {
         delay = FIRST_MS;
+        tellStatus(true);
         // Coming back from a drop, nobody knows what was missed while
         // the wire was down — so say "everything" once, to this tab and
         // to anyone listening to it.
@@ -179,6 +208,7 @@ function open(): void {
       };
       es.onerror = () => {
         wasDown = true;
+        tellStatus(false);
         es.close();
         if (source === es) source = null;
         opening = false;
@@ -188,6 +218,7 @@ function open(): void {
     .catch(() => {
       opening = false;
       wasDown = true;
+      tellStatus(false);
       schedule();
     });
 }
@@ -204,6 +235,11 @@ function lead(): void {
   const was = role;
   role = 'leader';
   stamp();
+  // Said on every election beat, not only on a change: a tab that
+  // becomes a follower has no socket to judge by and no idea what it
+  // missed, so the standing answer converges in one beat rather than
+  // waiting for the wire to next do something.
+  channel?.postMessage({ kind: 'status', connected: up } satisfies Relay);
   if (was !== 'leader') open();
 }
 
@@ -260,6 +296,10 @@ function ensureStream(): void {
       }
       return;
     }
+    if (relay.kind === 'status') {
+      if (role === 'follower') tellStatus(relay.connected, false);
+      return;
+    }
     if (role === 'follower') deliver(relay.what);
   };
   watch = setInterval(elect, CHECK_MS);
@@ -275,6 +315,7 @@ function teardown(): void {
   channel = null;
   pooling = false;
   role = 'direct';
+  up = true;
   hangUp();
 }
 
@@ -325,6 +366,27 @@ export function onNudge(fn: Listener, on?: string[]): () => void {
   };
 }
 
+/**
+ * Is the wire up? — the one fact a surface may render about the stream.
+ *
+ * Optimistic until proven otherwise (see `up`), and a FOLLOWER reports
+ * its leader's answer, because a follower's screen is exactly as stale
+ * as the socket it isn't holding.
+ */
+export function useConnection(): boolean {
+  const [connected, setConnected] = useState(up);
+  useEffect(() => {
+    setConnected(up);
+    statusListeners.add(setConnected);
+    ensureStream();
+    return () => {
+      statusListeners.delete(setConnected);
+      teardown();
+    };
+  }, []);
+  return connected;
+}
+
 /** Subscribe to the identify flash. */
 export function onIdentify(fn: () => void): () => void {
   identifyListeners.add(fn);
@@ -370,6 +432,7 @@ const VOCABULARY = [
   'handout',
   'identify',
   'notes',
+  'notice',
   'plugins',
   'reload',
   'sync',
@@ -396,7 +459,15 @@ export const PLUGIN_WORD = 'plugin';
  */
 export const DECLARED = ['plugins'];
 export const PROVIDED = ['plugins'];
-export const PUBLIC = ['board', 'boards', 'handout', 'templates', 'entities', 'turn'];
+export const PUBLIC = [
+  'board',
+  'boards',
+  'handout',
+  'notice',
+  'templates',
+  'entities',
+  'turn',
+];
 
 function wanted(want: string[], what: string): boolean {
   if (want.includes(what)) return true;

@@ -42,6 +42,7 @@ import { paneToPanel, pluginCtx, showing } from '../../lib/panes.ts';
 import { DECLARED, onNudge, PLUGIN_WORD, PROVIDED } from '../../lib/use-session.ts';
 import { useOptimistic, writeEntry, type EntryEdit } from '../../lib/entry.ts';
 import { entriesOf, shaped } from '../../panels/blocks.tsx';
+import { ConnectionHint } from '../ConnectionHint.tsx';
 import { PanelCollection, PanelSurface, type BlockCtx, type Glass } from '../../panels/render.tsx';
 import type { ScreenDecl } from '../items/types.ts';
 import { useTurnCall } from './TurnCall.tsx';
@@ -405,6 +406,7 @@ export function SeatChrome({
   if (draftPanel) {
     return (
       <PanelCollection panels={panels}>
+        <ConnectionHint />
         <div className={`flex min-h-0 flex-col ${mounted ? 'h-full overflow-hidden' : 'min-h-full'}`}>
           <PanelSurface
             panel={draftPanel}
@@ -422,6 +424,12 @@ export function SeatChrome({
 
   return (
     <PanelCollection panels={panels}>
+      {/* Outside the frame on purpose: the five seams are the author's
+          to theme (§M-5a) and this is not one of them — it is teller
+          saying its own wire is down, which a theme must not be able to
+          quiet. Fixed-position, so where it sits in the tree costs the
+          layout nothing. */}
+      <ConnectionHint />
       <SeatFrame glass={glass} accent={accent}>
         <NoteBanner
           note={passed.notes[0]}
