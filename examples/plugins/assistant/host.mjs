@@ -124,7 +124,32 @@ function away(t) {
   return `${measured} — ${t.awayBand.name}${t.awayBand.world ? ` (${t.awayBand.world})` : ''}`;
 }
 
-/** A combatant's line in the order — measured facts, every one labelled. */
+/**
+ * Is this entry a NUMBER-ish fact or a PARAGRAPH?
+ *
+ * The distinction has to exist somewhere, and this is the cheapest
+ * honest place: a speed, a size, a pool and a coin count all fit in a
+ * breath; a description, a behaviour note and a creature's signature
+ * feature are prose, and prose in a roster line is how an 881-character
+ * run gets built one field at a time. Prose is not dropped — it is
+ * already printed above, in blocks, under its own heading, which is the
+ * whole reason the sheet is rendered that way.
+ */
+function terse(value) {
+  const said = String(value);
+  return !said.includes('\n') && said.length <= 24;
+}
+
+/**
+ * A combatant's line in the order — measured facts, every one labelled.
+ *
+ * A ROSTER LINE, deliberately: who, how hurt, what is on them, how fast
+ * they go, how far off they are. Not a sheet. The one time this file's
+ * ancestor let a line grow into everything it knew, a creature's
+ * signature move ended up buried at the tail of it and got proposed
+ * past for three rounds — so anything that reads as prose stays in the
+ * blocks above, where a reader can find it by its heading.
+ */
 function combatantLine(e) {
   const bits = [];
   if (typeof e.score === 'number') bits.push(`rolled ${e.score}`);
@@ -132,7 +157,7 @@ function combatantLine(e) {
   // Everything with a value and no ceiling — a speed, a printed band, a
   // pool. This is what a move is priced against, and it used to be
   // dropped on the floor between the vitals and the held things.
-  for (const s of e.stats ?? []) bits.push(`${s.name} ${s.value}`);
+  for (const s of e.stats ?? []) if (terse(s.value)) bits.push(`${s.name} ${s.value}`);
   if (e.held?.length) bits.push(`holding ${e.held.join(', ')}`);
   const gap = away(e);
   if (gap) bits.push(`${gap} away`);
