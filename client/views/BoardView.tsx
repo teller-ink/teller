@@ -19,8 +19,10 @@ import {
   type PublicSnapshot,
 } from '../lib/api.ts';
 import { DECLARED, PUBLIC, useLive } from '../lib/use-session.ts';
+import { useArtMap } from '../lib/art.ts';
 import { useWakeLock } from '../lib/use-wake-lock.ts';
 import { sectionLabel } from '../lib/ui.ts';
+import { ConnectionHint } from '../components/ConnectionHint.tsx';
 import { barsOf, chipLabel, chipsOf, kinds, type KindDef } from './passive.ts';
 
 /** A foe's state in a word — where its number stands, never the number. */
@@ -81,12 +83,23 @@ export function BoardView() {
   useWakeLock();
   const snapshot = useLive<PublicSnapshot>(publicSnapshot, [], { on: PUBLIC });
   const defs = useLive<KindDef[]>(kinds, [], { on: DECLARED });
+  // The handout the console is showing, ticketed. The board draws it
+  // too, exactly as the old app did (src/views/BoardView.tsx): a table
+  // without a dedicated art frame is the ordinary table, and losing the
+  // WANTED poster because nobody owns a spare tablet is not a policy.
+  const handout = snapshot.data?.handout ?? null;
+  const art = useArtMap(handout ? { it: handout.key } : undefined).it;
 
   if (!snapshot.data) {
-    return <main className="p-8 text-stone-500">opening the books…</main>;
+    return (
+      <main className="p-8 text-stone-500">
+        <ConnectionHint />
+        opening the books…
+      </main>
+    );
   }
 
-  const { campaign, roster, turn } = snapshot.data;
+  const { campaign, roster, turn, notice } = snapshot.data;
   const kd = defs.data ?? [];
   const names = new Map(roster.map((e) => [e.id, e.name]));
   const party = roster.filter((e) => e.side === 'party');
@@ -99,9 +112,37 @@ export function BoardView() {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-3xl flex-col gap-8 p-8">
+      <ConnectionHint />
       <header className="text-center">
         <h1 className="font-serif text-4xl text-stone-300">{campaign.name}</h1>
       </header>
+
+      {/* THE ROOM'S OWN LINE. Rendered, never dismissed — this glass
+          has no controls and the console takes it down (rule 6). */}
+      {notice && (
+        <div className="animate-pulse rounded-2xl bg-amber-700 p-6 text-center font-serif text-5xl text-stone-950 shadow-lg shadow-amber-900/50">
+          {notice.text}
+        </div>
+      )}
+
+      {handout && art && (
+        <div className="fixed inset-0 z-40 flex flex-col items-center justify-center gap-5 bg-stone-950/95 p-8 backdrop-blur-sm">
+          {/* The notice comes WITH it, the old app's own arrangement:
+              an overlay that covered the board used to cover the one
+              line the room was told to read. */}
+          {notice && (
+            <p className="animate-pulse rounded-2xl bg-amber-700 px-8 py-3 text-center font-serif text-4xl text-stone-950">
+              {notice.text}
+            </p>
+          )}
+          <img
+            src={art}
+            alt={handout.name}
+            className="max-h-[75vh] max-w-full rounded-xl object-contain shadow-2xl"
+          />
+          <p className="font-serif text-3xl text-stone-200">{handout.name}</p>
+        </div>
+      )}
 
       {turn.order.length > 0 && (
         <section className="space-y-2">
