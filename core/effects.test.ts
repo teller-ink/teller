@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { Entity } from './entity.ts';
+import type { Entity, Entry } from './entity.ts';
 import {
   affordable,
   amendPool,
+  amendStats,
+  describePoolEffect,
+  effectTarget,
+  toPoolEffects,
   costWrites,
   describeEffect,
   isRefusal,
@@ -301,5 +305,189 @@ describe('the honest edges', () => {
     expect(describeEffect(menu('Acquire').effect)).toContain('relic');
     expect(describeEffect(menu('From the future').effect)).toContain('teleport');
     expect(describeEffect(undefined)).toContain('by hand');
+  });
+});
+
+// ---------------------------------------------------------------------
+// Fittings — a thing bolted onto another thing, and a thing loaded into
+// it. Still no system's words: the fixture's weapon has bands called
+// "Near Reach" and "Far Reach", and the fittings name them themselves.
+
+const weapon: Entry[] = [
+  { name: 'Vigour', value: 4 },
+  { name: 'Near Reach', value: '3R' },
+  { name: 'Far Reach', value: '2R1W' },
+  { name: 'Make', value: 'Worn' },
+];
+
+describe('amendStats — what the fittings work out', () => {
+  it('adds to the band the effect names, and names what did it', () => {
+    const out = amendStats(
+      weapon,
+      [{ name: 'Bite +1R', effects: [{ op: 'add', dice: '1R', range: 'Near Reach' }] }],
+      faces,
+    );
+    expect(out.get('near reach')).toEqual({
+      name: 'Near Reach',
+      printed: '3R',
+      value: '4R',
+      by: ['Bite +1R'],
+    });
+    // Every other stat is absent, so a caller renders what it stored.
+    expect(out.get('far reach')).toBeUndefined();
+    expect(out.size).toBe(1);
+  });
+
+  it('amends per band — one fitting never leaks into the others', () => {
+    const out = amendStats(
+      weapon,
+      [
+        { name: 'Bite', effects: [{ op: 'add', dice: '1R', range: 'Near Reach' }] },
+        { name: 'Reach', effects: [{ op: 'add', dice: '2W', range: 'Far Reach' }] },
+      ],
+      faces,
+    );
+    expect(out.get('near reach')?.value).toBe('4R');
+    expect(out.get('far reach')?.value).toBe('2R3W');
+  });
+
+  it('stacks upgrades and what is chambered, in the order it is given', () => {
+    const out = amendStats(
+      weapon,
+      [
+        { name: 'Bite', effects: [{ op: 'add', dice: '1R', range: 'Near Reach' }] },
+        { name: 'Bite Again', effects: [{ op: 'add', dice: '2R', range: 'Near Reach' }] },
+        {
+          name: 'Hot Load',
+          effects: [{ op: 'convert', from: 'R', to: 'W', count: 2, range: 'Near Reach' }],
+        },
+      ],
+      faces,
+    );
+    // 3R +1R +2R = 6R, then two of them exchanged: the round is the last
+    // thing that happens to a pool before it's rolled.
+    expect(out.get('near reach')).toEqual({
+      name: 'Near Reach',
+      printed: '3R',
+      value: '4R2W',
+      by: ['Bite', 'Bite Again', 'Hot Load'],
+    });
+  });
+
+  it('a band the weapon has not got is simply not modified', () => {
+    const out = amendStats(
+      weapon,
+      [{ name: 'Scope', effects: [{ op: 'add', dice: '1R', range: 'Orbit' }] }],
+      faces,
+    );
+    expect(out.size).toBe(0);
+  });
+
+  it('never lands on a stat that is a number or a word', () => {
+    const out = amendStats(
+      weapon,
+      [
+        { name: 'Lighten', effects: [{ op: 'add', dice: '1R', range: 'Vigour' }] },
+        { name: 'Polish', effects: [{ op: 'add', dice: '1R', range: 'Make' }] },
+      ],
+      faces,
+    );
+    expect(out.size).toBe(0);
+  });
+
+  it('a fitting that changed nothing is credited with nothing', () => {
+    const out = amendStats(
+      weapon,
+      [
+        {
+          name: 'Dud',
+          effects: [{ op: 'convert', from: 'W', to: 'R', count: 1, range: 'Near Reach' }],
+        },
+      ],
+      faces,
+    );
+    expect(out.size).toBe(0);
+  });
+
+  it('a person’s choice of band beats the effect’s own word for it', () => {
+    const out = amendStats(
+      weapon,
+      [
+        {
+          name: 'Bite',
+          range: 'Far Reach',
+          effects: [{ op: 'add', dice: '1R', range: 'Near Reach' }],
+        },
+      ],
+      faces,
+    );
+    expect(out.get('far reach')?.value).toBe('3R1W');
+    expect(out.get('near reach')).toBeUndefined();
+  });
+
+  it('an effect with no band at all lands nowhere rather than guessing', () => {
+    const out = amendStats(weapon, [{ name: 'Vague', effects: [{ op: 'add', dice: '1R' }] }], faces);
+    expect(out.size).toBe(0);
+  });
+
+  it('without a declared die, nothing is a pool and nothing is amended', () => {
+    const out = amendStats(
+      weapon,
+      [{ name: 'Bite', effects: [{ op: 'add', dice: '1R', range: 'Near Reach' }] }],
+      {},
+    );
+    expect(out.size).toBe(0);
+  });
+});
+
+describe('effectTarget — the author’s word for a band', () => {
+  it('an exact name wins, whatever its punctuation and case', () => {
+    expect(effectTarget(weapon, 'near reach')?.name).toBe('Near Reach');
+    expect(effectTarget(weapon, "Near-Reach")?.name).toBe('Near Reach');
+  });
+
+  it('a short key still finds the stat the sheet prints', () => {
+    // A catalogue that files its bands as "near"/"far" — the old
+    // world's field KEYS, which the printed label is a longer form of.
+    expect(effectTarget(weapon, 'near')?.name).toBe('Near Reach');
+    expect(effectTarget(weapon, 'far')?.name).toBe('Far Reach');
+  });
+
+  it('ambiguity matches nothing — amending the wrong band beats no band never', () => {
+    const both: Entry[] = [
+      { name: 'Reach One', value: '1R' },
+      { name: 'Reach Two', value: '2R' },
+    ];
+    expect(effectTarget(both, 'reach')).toBeUndefined();
+    expect(effectTarget(both, '')).toBeUndefined();
+    expect(effectTarget(both, undefined)).toBeUndefined();
+  });
+});
+
+describe('toPoolEffects — the forgiving read', () => {
+  it('keeps what parses and drops what cannot mean anything', () => {
+    expect(
+      toPoolEffects([
+        { op: 'add', dice: '1R', range: 'near' },
+        { op: 'add' },
+        { op: 'convert', from: 'R', to: 'W', count: 2 },
+        { op: 'convert', from: 'R', count: 2 },
+        { op: 'teleport', dice: '1R' },
+        'nonsense',
+      ]),
+    ).toEqual([
+      { op: 'add', dice: '1R', range: 'near' },
+      { op: 'convert', from: 'R', to: 'W', count: 2 },
+    ]);
+    expect(toPoolEffects(undefined)).toEqual([]);
+  });
+});
+
+describe('describePoolEffect — generated, so it can name the chosen band', () => {
+  it('says what it does in the terms of the pool it lands on', () => {
+    expect(describePoolEffect({ op: 'add', dice: '2R' }, 'Far Reach')).toBe('Far Reach +2R');
+    expect(
+      describePoolEffect({ op: 'convert', from: 'R', to: 'W', count: 1 }, 'Near Reach'),
+    ).toBe('Near Reach 1R → 1W');
   });
 });
