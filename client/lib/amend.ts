@@ -102,3 +102,15 @@ export function useAmendments(
     return out;
   }, [data, children, faces]);
 }
+
+// WHAT DOESN'T LIVE HERE YET, and why (2026-08-24, Brian, from the
+// Guidebook): a person's own stats amended by their gear — Defense over
+// a breastplate. The arithmetic is ready (`amendStats` already reports
+// its working, `Amendment.steps`), and the reading is drawn (the pinned
+// stat opens a breakdown with an innate line waiting for modifier
+// lines). What's missing is the only thing that decides which gear
+// counts: the book keys the modifier on WORN, not on carried — one
+// piece of armor at a time, weapons wielded or holstered or stored —
+// and nothing in the data expresses carry state yet. Applying the
+// effects of everything CARRIED would have shipped a coat in a
+// saddlebag defending its owner. The wiring arrives with `refs.worn`.

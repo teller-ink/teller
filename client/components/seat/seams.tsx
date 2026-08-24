@@ -46,6 +46,24 @@ type Records = Record<string, Record<string, unknown>>;
 export type SeatHeaderProps = {
   /** The subject, resolved. Absent while it's still loading. */
   entity?: Entity;
+  /**
+   * The order's call, ALREADY DRAWN by its own seam — teller hands the
+   * header the rendered `TurnCall` and asks it to find room in the
+   * bar's own run (Brian, 2026-08-24: on deck was a separate block to
+   * the right of the header, and on a 515px strip the bar has no width
+   * to give a chip that says two words).
+   *
+   * The seam contract stays honest because the FACTS still arrive
+   * through `TurnCall` — the header hosts the affordance, it never
+   * re-derives whose turn it is, and a header that drops the slot is a
+   * theme suppressing a delivery affordance, which §M-5a already
+   * allows. What it must never do is draw its own idea of the order.
+   *
+   * The ring is unaffected: it is absolutely positioned against the
+   * FRAME, so nesting the call inside the bar leaves "you're up" ringing
+   * the whole seat exactly as before.
+   */
+  turn?: ReactNode;
   /** This screen's own name (rule 7 — a seat belongs to a person). */
   seatName?: string;
   /** The merged records: `accents`, `use`, `dials`, `portraits`, … */
@@ -212,7 +230,7 @@ function countOf(entry: { value?: number | string } | undefined): number {
  * only the fallback. The chips still come from `use` — that's the
  * system's own word for what a turn costs.
  */
-export function HeaderFloor({ entity, seatName, records, glass, write }: SeatHeaderProps) {
+export function HeaderFloor({ entity, seatName, records, glass, write, turn }: SeatHeaderProps) {
   const mounted = glass === 'mounted';
   const accent = entity?.type
     ? ((records.accents?.[entity.type] as string | undefined) ?? '#f59e0b')
@@ -239,7 +257,10 @@ export function HeaderFloor({ entity, seatName, records, glass, write }: SeatHea
     ];
   });
 
-  if (!entity && !player) return null;
+  // Nothing to plate, but the fight may still be asking something of
+  // this seat — the call is teller's, not the plate's, and it doesn't
+  // wait for a name to load.
+  if (!entity && !player) return turn ? <>{turn}</> : null;
 
   if (!mounted) {
     return (
@@ -252,12 +273,15 @@ export function HeaderFloor({ entity, seatName, records, glass, write }: SeatHea
           <Plate name={entity?.name} trade={entity?.type} accent={accent} mounted={mounted} />
           <span className="h-px flex-1" style={{ background: `${accent}55` }} />
         </div>
-        {(player || chips.length > 0) && (
+        {(player || chips.length > 0 || turn) && (
           <div className="flex items-center justify-between gap-3">
             <span className="min-w-0 truncate text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">
               {player}
             </span>
-            <div className="flex shrink-0 items-center gap-3">{chips}</div>
+            <div className="flex shrink-0 items-center gap-3">
+              {turn}
+              {chips}
+            </div>
           </div>
         )}
       </div>
@@ -280,8 +304,12 @@ export function HeaderFloor({ entity, seatName, records, glass, write }: SeatHea
 
       <Plate name={entity?.name} trade={entity?.type} accent={accent} mounted={mounted} />
 
+      {/* The right-hand run: the rule, then the order's call, then the
+          turn's wallet. Inside the bar's own border, so a two-word chip
+          costs the strip nothing it wasn't already spending. */}
       <div className="flex min-w-0 items-center gap-3">
         <span className="h-px flex-1" style={{ background: `${accent}55` }} />
+        {turn}
         {chips}
       </div>
     </div>

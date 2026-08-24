@@ -7,6 +7,7 @@
 
 import { useEffect, useState, type ComponentType } from 'react';
 import type { Entity, Entry } from '../../core/entity.ts';
+import type { Amendment } from '../../core/effects.ts';
 import type { PanelBlock } from '../../core/panels.ts';
 import { api, fileUrl } from '../lib/api.ts';
 import { card, sectionLabel } from '../lib/ui.ts';
@@ -48,6 +49,15 @@ type HealthFace = ComponentType<{
   onSet: (next: number) => void;
   note?: string;
   fill?: boolean;
+  /**
+   * THE SEAM, declared and not yet fed: what the entity's own WORN gear
+   * works out for a pinned stat, by the stat's lower-cased name — the
+   * same `Amendment` a weapon's pools wear. Nothing passes it today
+   * because nothing in the data says what's worn (see
+   * `client/lib/amend.ts`); the face already draws the breakdown its
+   * lines will land in.
+   */
+  amended?: Map<string, Amendment>;
 }>;
 
 /** One row of the system's `statuses` declaration — the mechanic, never the prose. */
@@ -115,12 +125,32 @@ export function entryNamed(e: Entity | undefined, name: string): Entry | undefin
   return undefined;
 }
 
-/** The entries the system pinned to this counter — Defense, for WiW Health. */
+/**
+ * The entries the system pinned to this counter — a stat that reads
+ * beside a gauge rather than in the list it lives in.
+ *
+ * A PINNED NAME ALWAYS READS, and it reads ZERO when the entity holds
+ * nothing for it (§M-8, "absent is zero": absence is the number, not
+ * "untracked"). A declaration that says this stat belongs beside this
+ * counter is saying the slot exists for everyone the system runs; an
+ * entity that never wrote a value has the base value, which is 0, and a
+ * dash in its place claimed a stat the arithmetic uses simply wasn't
+ * there.
+ *
+ * The reading is synthesized, never stored: storage stays sparse and
+ * nothing writes a 0 into an entity or a template. A person typing over
+ * the slot materializes the stat the ordinary way (rule 1) — the write
+ * door is the same one every other entry uses.
+ *
+ * Which stat this is, is the system's word (`pins`), never teller's.
+ */
 export function pinsOf(ctx: BlockCtx, e: Entity | undefined, entry: Entry): Entry[] {
   const names = (ctx.records.pins?.[entry.name] as string[] | undefined) ?? [];
-  return names
-    .map((n) => entryNamed(e, n))
-    .filter((x): x is Entry => x !== undefined);
+  return names.map((n) => {
+    const held = entryNamed(e, n);
+    if (held && held.value !== undefined && held.value !== '') return held;
+    return { ...(held ?? {}), name: held?.name ?? n, value: 0 };
+  });
 }
 
 /**

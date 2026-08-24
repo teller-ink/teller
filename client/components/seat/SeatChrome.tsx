@@ -438,34 +438,34 @@ export function SeatChrome({
           glass={glass}
         />
 
-        {/* Identity and the order's call, side by side on mounted glass
-            (a fixed 515px has no row to spare) and stacked on held (a
-            phone can afford the line). The ring TurnCall draws is
-            absolute and costs neither. */}
-        <div className={mounted ? 'flex shrink-0 items-center gap-3' : 'flex shrink-0 flex-col gap-1.5'}>
-          <div className={mounted ? 'min-w-0 flex-1' : 'contents'}>
-            <Header
-              entity={shown}
-              seatName={seatName}
-              records={records}
+        {/* Identity and the order's call, in ONE bar: the call is drawn
+            by its own seam and handed to the header, which finds it a
+            place in its own run (Brian, 2026-08-24 — it used to sit
+            beside the header and take width off a 515px strip for the
+            sake of two words). The ring TurnCall draws is absolute
+            against the frame, so it still rings the whole seat. */}
+        <Header
+          entity={shown}
+          seatName={seatName}
+          records={records}
+          glass={glass}
+          write={(edit) => void ctx.write?.(edit)}
+          turn={
+            <TurnCall
+              up={call.up}
+              onDeck={call.onDeck}
+              rolling={call.rolling}
+              {...(typeof call.entry?.score === 'number' ? { myScore: call.entry.score } : {})}
+              {...(call.entry
+                ? {
+                    submitScore: (score: number) =>
+                      scoreEntry(call.entry!.id, score).then(() => call.reload()),
+                  }
+                : {})}
               glass={glass}
-              write={(edit) => void ctx.write?.(edit)}
             />
-          </div>
-          <TurnCall
-            up={call.up}
-            onDeck={call.onDeck}
-            rolling={call.rolling}
-            {...(typeof call.entry?.score === 'number' ? { myScore: call.entry.score } : {})}
-            {...(call.entry
-              ? {
-                  submitScore: (score: number) =>
-                    scoreEntry(call.entry!.id, score).then(() => call.reload()),
-                }
-              : {})}
-            glass={glass}
-          />
-        </div>
+          }
+        />
 
         {draftRefusal && (
           <p className="shrink-0 px-2 text-xs text-amber-400/90">{draftRefusal}</p>
