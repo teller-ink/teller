@@ -1435,6 +1435,63 @@ how CARRIED items behave:
   standings are entries in a ladder-named list, off-default storage
   via the `steps` kind's resting rung.
 
+**CARRY STATES LANDED 2026-08-24** — where a thing is, what that
+changes, and what it costs to change it. Four pieces, and every rule in
+them arrives as data:
+
+- **A carry state is a ref ON THE PERSON** (`refs.worn`, `refs.wielded`,
+  `refs.holstered`), which is §K's own law applied one level out:
+  containment is refs, and "held" is containment. The vocabulary is the
+  system's `carry` record (`core/carry.ts`) — states with a count limit
+  or a HANDS budget, the stat a thing prices itself in
+  (`handsStat`/`hands`), the kinds that are carried at all, which state
+  `amends` its carrier, and what a swap into a state costs. teller
+  enforces nothing: a state over its budget is REPORTED on the tiles in
+  it, in the system's own sentence, and the swap price is a one-tap
+  proposal that debits through the ordinary entry door.
+- **The hands budget is doing the work of three printed rules.** "One
+  weapon unless you're dual-wielding pistols" and "two-handed gear pairs
+  with nothing" are the same arithmetic once a thing says how many hands
+  it takes — so the declaration needs no exception list, and the shelf's
+  catalogue grew a `Hands` stat on the things that take two.
+- **Defense reads what's WORN** — the seam `client/lib/amend.ts` left
+  open, wired: an amending state's items contribute their template
+  effects to the CARRIER's stats through the same `amendStats` a
+  weapon's pools go through, and the plate's popover shows the ledger
+  ("0 innate · Defense +1G Basic Armor"). No type filter: anything worn
+  and effect-bearing counts. Core learned one thing to make it work —
+  **zero is the EMPTY pool**, so a printed `0` can be amended at all.
+- **A weapon's trigger became one button per BAND** (`core/bands.ts` —
+  the ladder moved here from `server/geometry.ts`, one parser for one
+  declaration). The rungs a thing reaches are its printed stats matched
+  to the system's `bands` by the same name-matching effects use, and
+  **a rung that begins away from you is one you reach across** — which
+  is what tells a knife from a pistol without any weapon carrying a
+  flag. Pressing one opens the dice (`DicePool`, summoned, `DiceFloor`
+  beneath — extracted from the runner rather than copied), records a
+  `dice.rolled`, and spends the ledger exactly once. `POST /api/rolls`
+  now accepts a SEAT filing its own roll, the same shape the turn door
+  already takes for a score.
+
+Gaps flagged, deliberately not invented: **throwable-to-Short** exists
+only as pack prose ("melee weapons can be thrown to Short Range"), so a
+melee weapon offers only the rungs it prints — a per-weapon flag would
+be teller guessing. And **ammo-vs-weapon compatibility** ("don't shoot
+arrows from a shotgun") is nowhere in the data; the chamber select is
+scoped to weapons that reach across ground and no further. Both want an
+optional pack field before either can be honest.
+
+**The `cards` control got its body** (2026-08-24), which §D's contact
+log had been waiting on: teller ships a small registry of FLOOR dial
+controls, each declaring its own fitness, and `dialFace()` is the one
+resolution — the system's face first, teller's floor second, the
+arrangement's `as` after that. **A declared dial now beats a shape
+heuristic**: the Ace tally was being caught by `boxable` and drawn as
+tick boxes although the system had asked for a hand of cards. What
+`shaped()` decides is deliberately NOT generalized — that is which
+counters earn a place on the printed sheet, a different question from
+what a dial draws as.
+
 ### L · The library conflation — SETTLED in principle (2026-08-19, Brian), migration phased
 
 "StatusPanel, HealthPanel, DicePool, Vitals… those are NOT generic
