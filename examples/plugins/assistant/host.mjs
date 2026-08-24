@@ -20,32 +20,51 @@
 //
 // Neither configured — every call quietly proposes nothing.
 //
-// WHAT IT ASKS FOR, and why it grew (v2): `read:entities` and
-// `read:board`. The first version declared no needs at all, so
-// `propose.turn` handed it the round, the order and one sheet — and it
-// answered real questions with "the snapshot gives no map, no positions
-// and no ranges" about a fight teller had coordinates and a calibrated
-// board for. Everything below is FORMATTING those facts; the measuring
-// is the host's (`server/geometry.ts`), because a reader asked to derive
-// a distance will eventually derive it wrong. Changing what a plugin
-// asks for means agreeing to it again — the enable gate is consent to a
-// list, not to a folder.
+// WHAT IT ASKS FOR, and why it keeps growing (v3): `read:entities`,
+// `read:board`, `read:records`, `read:log`. Each one was added the day
+// an answer went wrong for want of it, and every one of those failures
+// is the SAME failure — a fact teller held and did not pass on is a
+// fact the reader invents:
 //
-// Nothing here knows any game's words: lists, children and painted
-// ground render under whatever the records call them.
+//   * v1 declared nothing, and answered "the snapshot gives no map, no
+//     positions and no ranges" about a fight teller had coordinates and
+//     a calibrated board for. → `read:entities`, `read:board`.
+//   * v2 was handed measured inches and the system's band NAMES were
+//     nowhere, so it said "the snapshot gives no inch value for the
+//     bands — I am assuming" in the middle of a fight, and never once
+//     considered moving, because nothing told it a step could be
+//     bought. → `read:records` (the bands, the space rules, the menu of
+//     actions), and every distance now arrives converted.
+//   * A creature was handed a held target and no cause for it, made one
+//     up, and played the turn off the invention. → `read:log`.
 //
-// Both provides are PROPOSERS (registry contract): a snapshot in,
-// words out, and playing any of it is the DM's act. `premises` is the
-// honesty mechanism — every assumption the suggestion leans on gets
-// surfaced for the DM to check at a glance, because the snapshot is
-// only as fresh as the last thing somebody typed.
+// Changing what a plugin asks for means agreeing to it again — the
+// enable gate is consent to a list, not to a folder.
+//
+// FORMATTING IS SALIENCE, and it is not a style note. This file's
+// ancestor joined every field into one run with ` · `, and a creature's
+// signature move ended up buried at the tail of an 881-character line.
+// It cost a real play: the fight's turning point was in the prompt the
+// whole time and got proposed past for three rounds. Presence is not
+// salience — headings and line breaks are how a fact is FINDABLE, and
+// nothing below may be collapsed into a run to save space.
+//
+// Nothing here knows any game's words: lists, children, bands, painted
+// ground and the action menu all render under whatever the records call
+// them.
+//
+// Both provides are PROPOSERS (registry contract): a snapshot in, words
+// out, and playing any of it is the DM's act. `premises` is the honesty
+// mechanism — every assumption the suggestion leans on gets surfaced
+// for the DM to check at a glance, because the snapshot is only as
+// fresh as the last thing somebody typed.
 
 import { execFile } from 'node:child_process';
 
 const DEFAULT_URL = 'https://api.anthropic.com/v1/messages';
 const DEFAULT_MODEL = 'claude-sonnet-5';
 
-/** One entry, as a line: `Health: 5/10`, `Band: Melee`, or a bare held thing. */
+/** One entry, as a line: `Health: 5/10`, `Speed: Normal`, or a bare held thing. */
 function entryLine(e) {
   if (e.value === undefined && e.max === undefined) return e.name;
   if (e.max === undefined) return `${e.name}: ${e.value}`;
@@ -77,19 +96,47 @@ function sheet(entity, depth = 0) {
   return lines.join('\n');
 }
 
+/**
+ * How this creature ACTS, wherever whoever wrote it happened to put it.
+ *
+ * A heuristic over entry names and nothing more — no schema, no
+ * declared slot, no game's word. A sheet that says nothing about
+ * temperament says so, and the proposer is told to admit the inference
+ * rather than quietly make one.
+ */
+function profileOf(entity) {
+  for (const entries of Object.values(entity?.lists ?? {})) {
+    for (const e of entries ?? []) {
+      if (/profile|behavio|tactic|demeanor|temperament/i.test(String(e.name))) {
+        if (e.value !== undefined) return String(e.value);
+      }
+    }
+  }
+  return undefined;
+}
+
+/** `3.2" — Short (up to 30 yards)`: the evidence and the vocabulary, together. */
+function away(t) {
+  if (t?.awayInches === undefined) return undefined;
+  const measured =
+    `${t.awayInches}"` + (t.awaySquares === undefined ? '' : ` / ${t.awaySquares} sq`);
+  if (!t.awayBand) return measured;
+  return `${measured} — ${t.awayBand.name}${t.awayBand.world ? ` (${t.awayBand.world})` : ''}`;
+}
+
 /** A combatant's line in the order — measured facts, every one labelled. */
 function combatantLine(e) {
   const bits = [];
   if (typeof e.score === 'number') bits.push(`rolled ${e.score}`);
   for (const v of e.vitals ?? []) bits.push(`${v.name} ${v.value}/${v.max}`);
+  // Everything with a value and no ceiling — a speed, a printed band, a
+  // pool. This is what a move is priced against, and it used to be
+  // dropped on the floor between the vitals and the held things.
+  for (const s of e.stats ?? []) bits.push(`${s.name} ${s.value}`);
   if (e.held?.length) bits.push(`holding ${e.held.join(', ')}`);
-  if (e.awayInches !== undefined) {
-    bits.push(
-      e.awaySquares === undefined
-        ? `${e.awayInches}" away`
-        : `${e.awayInches}" away (${e.awaySquares} squares)`,
-    );
-  } else if (e.onBoard === false) bits.push('no token on the board');
+  const gap = away(e);
+  if (gap) bits.push(`${gap} away`);
+  else if (e.onBoard === false) bits.push('no token on the board');
   return `${e.acting ? '>> ' : '   '}${e.name}${bits.length ? ` — ${bits.join(' · ')}` : ''}`;
 }
 
@@ -123,11 +170,7 @@ function ground(board) {
       [
         t.name + (t.acting ? ' (acting)' : ''),
         t.cell ? `${t.cell[0]},${t.cell[1]}` : '—',
-        t.awayInches === undefined
-          ? t.acting
-            ? '—'
-            : 'not measured'
-          : `${t.awayInches}"` + (t.awaySquares === undefined ? '' : ` / ${t.awaySquares} sq`),
+        away(t) ?? (t.acting ? '—' : 'not measured'),
         [...(t.inZones ?? []), ...(t.nearZones ?? []).map((z) => `near ${z}`)].join(', ') || '—',
         t.hidden ? 'hidden' : 'visible',
       ].join(' | '),
@@ -146,6 +189,208 @@ function ground(board) {
     );
   }
   return lines;
+}
+
+/**
+ * Everyone in the fight who has no token.
+ *
+ * The board above IS the whole world to a reader, so anyone in the
+ * order without a placement does not exist to it — not as a threat, not
+ * as a target, not as a body in the way. In play that meant three
+ * creatures spent a round reasoning about a clearing holding two people
+ * while five stood in it, and every answer was correctly derived from
+ * half a battlefield. The failure is invisible in the output; nothing
+ * about a confident answer says the board was short. So say the absence
+ * out loud.
+ */
+function unplaced(order) {
+  const missing = (order ?? []).filter((e) => e.onBoard === false).map((e) => e.name);
+  if (!missing.length) return [];
+  return [
+    '',
+    '# In this fight but not on the map',
+    'Position unknown — not absent.',
+    ...missing.map((m) => `- ${m}`),
+    'Do not assume these are far off, or that they cannot reach you. If where they stand would change the turn, say so in premises.',
+  ];
+}
+
+/**
+ * WHAT A DISTANCE MEANS, and what a turn costs — the system's own law,
+ * in the system's own words.
+ *
+ * Nothing here is teller's opinion about any game. `bands` is a ladder
+ * of rungs somebody declared, `space` is a paragraph somebody wrote,
+ * and the action menu is the same record the console prices a turn
+ * from. A system that declares none of it gets none of it, and the
+ * proposer is told plainly that the ladder is missing rather than left
+ * to invent one.
+ */
+function law(records) {
+  if (!records) return ['(this assistant was not granted the system’s records)'];
+  const lines = [];
+  const bands = Array.isArray(records.bands) ? records.bands : [];
+  if (bands.length) {
+    lines.push('This system measures reach in BANDS. Every distance above carries both spellings:');
+    for (const b of bands) {
+      const from = b.from ?? 0;
+      const span =
+        b.to === undefined ? `${from}" and out` : from === 0 ? `under ${b.to}"` : `${from}" to ${b.to}"`;
+      lines.push(`- ${b.name}: ${span}${b.world ? ` — ${b.world}` : ''}`);
+    }
+  } else {
+    lines.push('This system declares no range bands, so a distance is only ever a measurement.');
+  }
+  if (records.space) lines.push('', String(records.space));
+
+  const use = records.use ?? {};
+  const actions = Array.isArray(use.actions) ? use.actions : [];
+  if (actions.length) {
+    lines.push(
+      '',
+      `What a turn can be spent on — the whole menu, each with what it costs${
+        use.costCounter ? ` in ${use.costCounter}` : ''
+      }:`,
+    );
+    for (const a of actions) {
+      lines.push(`- ${a.name}${a.cost === undefined ? '' : ` (${a.cost})`}: ${a.text ?? ''}`.trimEnd());
+    }
+  }
+
+  const defenses = records.defenses ?? {};
+  const named = Object.entries(defenses);
+  if (named.length) {
+    lines.push('', 'What being protected is worth here:');
+    for (const [name, worth] of named) lines.push(`- ${name}: ${worth}`);
+  }
+  return lines;
+}
+
+/**
+ * What happens when a condition lands on somebody who already has it.
+ *
+ * teller has known this as long as the records have existed and was
+ * keeping it to itself, so the reader guessed — and stated the guess as
+ * a premise about a condition it had itself stacked the round before.
+ * Said as rules rather than arithmetic: the number is teller's to work
+ * out, but whether a second helping is worth anything changes what a
+ * creature chooses to do.
+ */
+function conditions(records) {
+  const declared = Array.isArray(records?.statuses) ? records.statuses : [];
+  if (!declared.length) return [];
+  const lines = [
+    '',
+    '# Conditions this system declares',
+    'A condition landing on someone who already has it takes the HIGHER severity, unless the condition says otherwise.',
+  ];
+  for (const s of declared) {
+    const notes = [];
+    if (s.relief) notes.push(`shaken off with ${s.relief}`);
+    if (s.uncapped) notes.push('has no ceiling — it keeps climbing');
+    if (typeof s.cap === 'number') notes.push(`caps at ${s.cap}`);
+    lines.push(`- ${s.name}${notes.length ? ` — ${notes.join('; ')}` : ''}`);
+  }
+  return lines;
+}
+
+/**
+ * What already happened, oldest first — and where the conditions above
+ * came from.
+ *
+ * Conditions are not free-floating facts. Something PUT them there,
+ * usually recently, sometimes this very creature, and a creature
+ * holding someone should know it is holding them rather than deduce
+ * that somebody must be. What each line PAID is here for the same
+ * reason: what a turn could afford last round is how a creature judges
+ * what it can afford this one.
+ */
+function happened(history) {
+  if (!Array.isArray(history)) return [];
+  if (!history.length) return ['', '# What has already happened', 'Nothing recorded yet this fight.'];
+  const paid = (spend) => {
+    const lines = Array.isArray(spend) ? spend : [];
+    if (!lines.length) return '';
+    // A zero is a POSITIVE fact — this cost nothing — and saying it as
+    // "0" invites it to be read as a missing number.
+    return ` (spent ${lines
+      .map((s) =>
+        s.amount === 0
+          ? `${s.on ?? 'it'} cost no ${s.counter}`
+          : `${s.amount} ${s.counter}${s.on ? ` on ${s.on}` : ''}`,
+      )
+      .join(', ')})`;
+  };
+  const one = (r) => {
+    const round = r.round ? `round ${r.round}: ` : '';
+    if (r.kind === 'dice.rolled') {
+      return `${round}${r.byName ?? 'somebody'} rolled ${r.pool}${
+        r.faces?.length ? ` — ${r.faces.join(', ')}` : ''
+      } for ${r.total}${r.unit ? ` ${r.unit}` : ''}${r.for ? ` (${r.for})` : ''}`;
+    }
+    const by = r.byName ?? 'somebody';
+    const caught = Array.isArray(r.targets) ? r.targets : [];
+    if (!caught.length) return `${round}${by} — ${r.action}${paid(r.spend)}`;
+    // A crowd reads as ONE thing that happened, because it was one
+    // thing: an area action rolls once and lands on everybody.
+    const said = caught.map((t) => {
+      const hit = t.damage > 0 ? `${t.damage} damage` : 'no damage';
+      const blocked = t.blocked > 0 ? `, ${t.blocked} blocked` : '';
+      const vital = t.vital ? ` (${t.vital.name} ${t.vital.from} → ${t.vital.to})` : '';
+      const left = t.statuses?.length
+        ? `, leaving ${t.statuses.map((s) => `${s.name} ${s.severity}`).join(' and ')}`
+        : '';
+      return `${t.targetName ?? t.target} — ${hit}${blocked}${vital}${left}`;
+    });
+    return `${round}${by} used ${r.action} on ${said.join('; ')}${paid(r.spend)}`;
+  };
+  return [
+    '',
+    '# What has already happened (oldest first — this is where the conditions above came from)',
+    ...history.map((r) => `- ${one(r)}`),
+  ];
+}
+
+/**
+ * The whole table, in the order the old implementation settled on and
+ * for the reasons it settled on it: what the creature IS, how it acts,
+ * where everybody stands, who isn't on the map, what a distance and a
+ * step MEAN here, how conditions behave, whose turn it is, and what has
+ * already happened.
+ */
+function table(snapshot) {
+  const acting = snapshot?.acting;
+  const board = snapshot?.board;
+  const self = board?.present ? board.tokens?.find((t) => t.acting) : undefined;
+  const profile = profileOf(acting);
+  return [
+    '# The acting creature, as its sheet reads right now',
+    'Its children are the things it can DO — each with its own numbers.',
+    sheet(acting),
+    ...(self?.hidden
+      ? [
+          '',
+          'It is currently HIDDEN — the table does not know it is there. Staying hidden, repositioning unseen, or striking from ambush are all on the table; revealing itself is a choice.',
+        ]
+      : []),
+    '',
+    '# How it acts',
+    profile
+      ? `Follow this: ${profile}`
+      : 'Nothing was written down. Infer temperament from its name and its numbers, and say in premises that you did.',
+    '',
+    '# The ground',
+    ...ground(board),
+    ...unplaced(snapshot?.order),
+    '',
+    '# What a distance means here, and what a turn costs',
+    ...law(snapshot?.records),
+    ...conditions(snapshot?.records),
+    '',
+    `# The fight — round ${snapshot?.round ?? 1}, top acts first`,
+    ...(snapshot?.order ?? []).map(combatantLine),
+    ...happened(snapshot?.history),
+  ].join('\n');
 }
 
 /** Bare JSON out of whatever the model wrapped it in. */
@@ -219,11 +464,82 @@ async function ask(config, system, user) {
   return parseProposal(text);
 }
 
+/**
+ * THE DECISION DISCIPLINE — ported essentially verbatim from the
+ * implementation that ran real fights, because every clause in it was
+ * bought with a bad answer at a table.
+ *
+ * The lines worth naming: the printed band is STRICT (told to avoid a
+ * hazard, a reader once decided a close-quarters attack could be thrown
+ * across the gap rather than use the ranged one printed beneath it);
+ * moving is a TURN (a creature stood still for three rounds because
+ * nothing said a step could be bought); and it speaks in the WORLD, not
+ * on the table, because a number in the context becomes a number in the
+ * prose and nothing at a table is measured in inches.
+ */
+const TURN_SYSTEM = `You are teller, the bookkeeping assistant at an in-person tabletop RPG session. The DM is running a fight and asks: what would this creature do on its turn?
+
+You PROPOSE; the DM decides. Suggest one turn's worth of action for the acting creature, played true to its profile and current condition — not optimally. A cowardly creature flees at the wrong moment; a beast attacks the nearest threat, not the weakest.
+
+Hard rules:
+- Suggest the ACTION only. Never roll dice, never state damage dealt or outcomes — the table's dice decide outcomes.
+- Never decide for a player's character.
+- Base position reasoning only on the board given. Every distance below was MEASURED by teller in the board's true inches and converted to this system's own band: do not recompute either and do not doubt them. When you assume something the board doesn't state, say so in premises.
+- SPEAK IN THE WORLD, NOT ON THE TABLE. Table inches are how teller measures; they do not exist in the fiction and must never appear in "action", "rationale" or "preface". Say the band by name or the world distance it stands for. Premises may cite a measurement when the whole point is that a number is being checked.
+- An attack's printed BAND is strict. Something listed under one band cannot be used from another — if the distance puts everything out of reach, the honest turn is to close, reposition, wait, or use something that does reach. Never widen a band to make a plan work, and never do it to avoid a hazard: picking a different action or a different route is the answer, not reinterpreting the book.
+- A TURN IS BOUGHT, AND MOVING IS SOMETHING IT BUYS. The menu of actions and what each costs is given below, and the creature's own sheet says what it can afford and how fast it goes. Closing, backing off and repositioning are ordinary turns and often the honest one. Never leave a creature standing where it stands merely because nothing it holds happens to reach from there.
+- The GROUND is part of the decision, not scenery. What a creature stands in, what it would have to cross, and what lies between it and a target are all stated. A hazard in the way is a real reason to go around, wait, pick a different target, or accept the cost on purpose — and when the ground changes the choice, say which ground and why in the rationale.
+
+Respond with ONLY a JSON object, no other text:
+{"premises": ["assumption the DM should check", ...], "action": "what it does this turn, 1-3 sentences, concrete", "rationale": "why, in one sentence, grounded in profile and condition", "preface": "read-aloud words for the attempt", "roll": {"dice": "the pool exactly as printed", "for": "what it is for"}, "target": "who it is aimed at"}
+
+"roll" names the dice the action calls for: use the EXACT pool printed on the creature's own line, and say what it's for. Omit "roll" entirely if the action needs no dice (moving, hiding, waiting).
+
+"target" is who the action is aimed at, spelled EXACTLY as that combatant is named in the fight above. Omit it when the action targets nobody (moving, hiding, waiting) or catches an area rather than one named combatant.
+
+"preface" is 1–2 vivid present-tense sentences the DM READS ALOUD to the table before any dice are rolled. It is the attempt, not the result. Rules for it:
+- Stop at the instant of contact. No hit, no miss, no damage, no target's reaction, no consequence of any kind — the dice haven't decided yet and you must not imply what they will.
+- End mid-motion, leaning forward. It should make the table want to see the roll.
+- Prose only: no dice, no costs, no bracketed conditions, no stat names.
+- Never describe what a player's character thinks or feels.
+- If this creature was hidden and the action breaks cover, the preface IS the reveal — describe what the table suddenly sees.
+
+At most 4 premises, each under 15 words. Terse beats thorough — this is read mid-fight.`;
+
+/**
+ * THE NARRATION DISCIPLINE — the same port, the other half of a turn.
+ *
+ * The dice have already spoken, so the whole job is dressing decided
+ * facts. Two clauses carry it: it CONTINUES from the words already read
+ * aloud instead of retelling them (hearing the approach twice makes the
+ * dice feel undone and rolled again), and it may show a defense only
+ * with what the target visibly wears, carries or did — which is what
+ * lets a blocked hit read as the shot ringing off the plate instead of
+ * the flat "they defend".
+ */
+const NARRATE_SYSTEM = `You are teller, the bookkeeping assistant at an in-person tabletop RPG session. A turn was just RESOLVED at the table: the DM picked an action and the players rolled REAL dice. Your job is to dress the already-decided facts as a moment of story.
+
+Write 2–4 vivid sentences the DM can read aloud to the table, present tense, concrete and sensory — the kind of beat that makes a table lean in.
+
+YOU ARE CONTINUING, NOT STARTING. When words already read aloud are given below, treat them as spoken and behind you: they stopped at the instant of contact, mid-motion. Open where they broke off and carry straight on into what the dice decided. Do not re-approach, do not re-describe the lunge or the grab, do not restate the setup in fresh words — the table has heard it, and hearing it twice makes the dice feel undone and rolled again.
+
+Hard rules:
+- The dice already decided everything. Narrate ONLY what the given action and results state — never add damage, conditions, movement or events they don't contain, and never soften or improve an outcome.
+- This will be read TO THE TABLE: never mention anything marked hidden or unseen by the table unless the resolved action itself reveals it.
+- Never describe what a player's character thinks or feels; their bodies may react, their minds are their players'.
+- No rules language in the prose — no dice, no costs, no bracketed conditions; say what a condition LOOKS like, not what it's called.
+- When the results say a target defended, show HOW using only what they visibly wear, carry or did — armour, a shield, cover, bracing. Describing a defense the results already state is not adding an event; inventing protection they don't have is.
+- Table inches do not exist in the fiction and must never appear.
+
+Respond with ONLY a JSON object, no other text:
+{"narration": "the read-aloud text"}`;
+
 export const provides = {
   /**
-   * Snapshot: { round, order: [{name, score, acting, entityId, vitals, held,
-   * awayInches?, awaySquares?, onBoard}], acting: entity|null (children and
-   * all), board: BoardFacts, intent?, style? }
+   * Snapshot: { round, order: [{name, score, acting, entityId, vitals, stats,
+   * held, awayInches?, awaySquares?, awayBand?, onBoard}], acting: entity
+   * (children and all), board: BoardFacts, records: { bands, space, use,
+   * statuses, defenses }, history: [], intent?, style? }
    */
   'propose.turn': async (snapshot, config) => {
     const style = config?.style || snapshot?.style || '';
@@ -233,47 +549,59 @@ export const provides = {
     // overruling the machine afterwards, they go first.
     const intent = String(snapshot?.intent ?? '').trim();
     const system = [
-      'You propose ONE turn for the creature currently acting in a tabletop fight.',
-      'You decide nothing: the human at the table plays or ignores your words.',
+      TURN_SYSTEM,
       intent
-        ? 'The DM has ALREADY DECIDED what this creature does. Do not second-guess it: work out the premises, the dice and the words for that decision.'
+        ? [
+            '',
+            'THE DM HAS ALREADY DECIDED THIS TURN. Do NOT choose a different action, a different target, or a better one — that decision is made and it is not yours. Your job is the rest of it: the premises it rests on, the dice it calls for from this creature’s own printed lines, who it is aimed at, and the preface to read aloud.',
+            'If the decision looks like it breaks a rule — a band it cannot reach, a cost it cannot pay — say so plainly in premises and then write the turn anyway. The table’s ruling beats the book, and your job is to flag, not to refuse.',
+          ].join('\n')
         : '',
-      'State every assumption you rely on as a premise — the snapshot may be stale.',
-      'Reply with bare JSON, no fences: {"premises": string[], "action": string, "rationale": string, "roll"?: {"dice": string, "for": string}}',
-      'Use ONLY facts present in the snapshot; if a fact is missing, say so in premises rather than inventing it.',
-      'Positions and distances below were MEASURED by the host, in the board\u2019s true inches; do not recompute them and do not doubt them.',
-      'The acting creature\u2019s child entities are its available actions. Name the one you pick and quote its own numbers.',
-      style ? `Voice: ${style}` : '',
+      style ? `\nVoice: ${style}` : '',
     ]
       .filter(Boolean)
       .join('\n');
     const user = [
-      `# The moment`,
-      `Round ${snapshot?.round ?? 1}. Turn order (top acts first), one line each:`,
-      ...(snapshot?.order ?? []).map(combatantLine),
+      table(snapshot),
+      ...(intent ? ['', '# The DM has decided', intent] : []),
       '',
-      '# The ground',
-      ...ground(snapshot?.board),
-      '',
-      '# The acting creature, as its sheet reads right now',
-      'Its children are the things it can DO — each with its own numbers.',
-      sheet(snapshot?.acting),
-      ...(intent ? ['', `# The DM has decided`, intent] : []),
+      `What does ${snapshot?.acting?.name ?? 'it'} do this turn?`,
     ].join('\n');
     return ask(config, system, user);
   },
 
-  /** Snapshot: whatever the DM says happened — { outcome: string, style? } */
+  /**
+   * Snapshot: the same table as `propose.turn`, plus what the dice said
+   * — { outcome, preface?, action?, style? }.
+   *
+   * It gets the whole table on purpose. A narrator handed only the
+   * outcome sentence has no idea who is in armour, what ground anybody
+   * is standing in, or what was read aloud a minute ago, and invents all
+   * three. The facts that make a resolved number read as a moment are
+   * exactly the facts the proposal needed.
+   */
   'propose.narrate': async (snapshot, config) => {
     const style = config?.style || snapshot?.style || '';
-    const system = [
-      'You offer two or three sentences of table narration for an outcome the DM reports.',
-      'The DM may read, edit, or ignore them. Never add mechanical effects.',
-      'Reply with bare JSON, no fences: {"narration": string}',
-      style ? `Voice: ${style}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n');
-    return ask(config, system, `What happened: ${String(snapshot?.outcome ?? '')}`);
+    const system = [NARRATE_SYSTEM, style ? `\nVoice: ${style}` : ''].filter(Boolean).join('\n');
+    const preface = String(snapshot?.preface ?? '').trim();
+    const action = String(snapshot?.action ?? '').trim();
+    const user = [
+      table(snapshot),
+      ...(preface
+        ? [
+            '',
+            '# What the DM already read aloud',
+            'Spoken. Continue from where it stops; never retell it.',
+            preface,
+          ]
+        : []),
+      ...(action ? ['', '# The action the DM ran', action] : []),
+      '',
+      '# What the dice said — the table’s results, already final',
+      String(snapshot?.outcome ?? ''),
+      '',
+      'Narrate what just happened.',
+    ].join('\n');
+    return ask(config, system, user);
   },
 };
