@@ -85,7 +85,12 @@ import {
   systemExportModule,
   systemIndexModule,
 } from '../core/packs-shelf.ts';
-import { sweepSystems, systemDir, systemPanelDir } from '../core/systems-shelf.ts';
+import {
+  defaultSystems,
+  sweepSystems,
+  systemDir,
+  systemPanelDir,
+} from '../core/systems-shelf.ts';
 import {
   extFor,
   handoutOf,
@@ -537,6 +542,19 @@ function shelfListing(host: Host): {
   for (const folder of systemFolders.values()) {
     if (!rows.systems.some((row) => row.id === folder.id)) {
       systems.push({ id: folder.id, name: folder.name, version: folder.version });
+    }
+  }
+  // …and last, the systems teller SHIPS (§M-6): read from the install,
+  // never written to the data dir, and only where nothing on the shelf
+  // already answers to the id — the same fallback order `loadCampaign`
+  // resolves by, so what creation offers is what will load. Without it
+  // a virgin host offered zero systems and first-run dead-ended on the
+  // one screen it has.
+  for (const shipped of defaultSystems()) {
+    const known =
+      systems.some((s) => s.id === shipped.id) || packFolders.has(shipped.id);
+    if (!known) {
+      systems.push({ id: shipped.id, name: shipped.name, version: shipped.version });
     }
   }
 

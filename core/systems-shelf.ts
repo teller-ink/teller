@@ -42,6 +42,17 @@
 // pack keeps working forever — that is the compatibility contract, and
 // it has a test.
 //
+// …and BELOW all three, teller's own: `defaults/systems/` in the
+// INSTALL, read where it lies by the same sweep (`defaultSystems`,
+// 2026-08-21). A virgin host offered no system at all and first-run
+// dead-ended at the campaign screen; the fix is §M-6's, verbatim from
+// what `defaults/panels/` already does — defaults ship WITH teller,
+// nothing is ever written into the data dir, so nothing goes stale and
+// nothing resurrects. It is the BOTTOM of the fallback and never the
+// top: a shelf system restating a shipped id wins outright, because a
+// system a person put there and a system that shipped are the same kind
+// of thing (rule 4) and the person's is the one they edited.
+//
 // Trust is the pack machinery verbatim: one `pluginTrust` row, keyed by
 // the `sys_` id, gating CODE and never data. A system's declarations,
 // kinds and dice load for anyone; its presentations wait for a human.
@@ -49,7 +60,8 @@
 // the hand that put the folder there (see the §M note in CORE-NEXT).
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { compileFolder, readBuildMeta, stamp, NEUTRAL_IMPORTS } from './compile.ts';
 import {
   compilePackCode,
@@ -93,9 +105,34 @@ export type SystemSweep = { systems: ShelfSystemFolder[]; problems: PackProblem[
  * nothing.
  */
 export function sweepSystems(dataDir: string, shelf?: Shelf): SystemSweep {
+  return sweepSystemsIn(join(dataDir, 'systems'), {
+    shelf,
+    artInto: join(dataDir, 'art'),
+    code: true,
+  });
+}
+
+/**
+ * The sweep itself, over any `systems/` root — the shelf's, or the
+ * INSTALL's (`defaultSystems`). Split out for the same reason
+ * `sweepPanelsIn` was: two roots, one reader, and the floor is read
+ * exactly the way a shelf folder is or it isn't the same kind of thing.
+ *
+ * `artInto` and `code` are what only a SHELF folder gets. teller's own
+ * install may be read-only (a brew cellar, a tarball unpacked beside
+ * the binary), and both of those write — art copies into the data dir,
+ * code compiles into `<dir>/.build/`. So the install floor is DATA, and
+ * a default that wants pictures or components wants to be a folder on
+ * somebody's shelf; better to learn that in the open than to have teller
+ * quietly try to write into its own installation.
+ */
+export function sweepSystemsIn(
+  root: string,
+  opts: { shelf?: Shelf; artInto?: string; code?: boolean } = {},
+): SystemSweep {
+  const { shelf, artInto, code = false } = opts;
   const systems: ShelfSystemFolder[] = [];
   const problems: PackProblem[] = [];
-  const root = join(dataDir, 'systems');
   let names: string[];
   try {
     names = readdirSync(root);
@@ -128,9 +165,9 @@ export function sweepSystems(dataDir: string, shelf?: Shelf): SystemSweep {
     // pictures are keyed by it — same order `sweepPacks` uses.
     const id = typeof record.id === 'string' ? record.id.trim() : '';
     const artDir = join(dir, 'art');
-    if (id && existsSync(artDir)) {
+    if (id && artInto && existsSync(artDir)) {
       try {
-        copyNewer(artDir, join(dataDir, 'art', id));
+        copyNewer(artDir, join(artInto, id));
       } catch (err) {
         problems.push({ dir, problem: `art/ did not install: ${String(err)}` });
       }
@@ -176,26 +213,71 @@ export function sweepSystems(dataDir: string, shelf?: Shelf): SystemSweep {
     }
 
     const entry: ShelfSystemFolder = system;
-    const { presentations, needs, problems: codeProblems } = compilePackCode(dir, system.id);
-    for (const problem of codeProblems) problems.push({ dir, problem });
-    // …and the system's declared function beside its faces (§M-4a).
-    // Both halves take the SAME trust row, because they are the same
-    // system's code arriving through the same door.
-    const { exports, problems: exportProblems } = compileSystemExports(dir, system.id);
-    for (const problem of exportProblems) problems.push({ dir, problem });
-    if (presentations || exports) {
-      if (shelf?.pluginTrust(system.id)?.enabled) {
-        entry.code = {
-          presentations: presentations ?? {},
-          ...(exports ? { exports } : {}),
-          ...(needs?.length ? { needs } : {}),
-        };
-      } else entry.codePending = true;
+    if (code) {
+      const { presentations, needs, problems: codeProblems } = compilePackCode(dir, system.id);
+      for (const problem of codeProblems) problems.push({ dir, problem });
+      // …and the system's declared function beside its faces (§M-4a).
+      // Both halves take the SAME trust row, because they are the same
+      // system's code arriving through the same door.
+      const { exports, problems: exportProblems } = compileSystemExports(dir, system.id);
+      for (const problem of exportProblems) problems.push({ dir, problem });
+      if (presentations || exports) {
+        if (shelf?.pluginTrust(system.id)?.enabled) {
+          entry.code = {
+            presentations: presentations ?? {},
+            ...(exports ? { exports } : {}),
+            ...(needs?.length ? { needs } : {}),
+          };
+        } else entry.codePending = true;
+      }
     }
     systems.push(entry);
   }
 
   return { systems, problems };
+}
+
+/**
+ * Where teller's own systems live: `defaults/systems/`, in the INSTALL,
+ * resolved against this module's location — never relative to cwd, and
+ * never inside anyone's data dir. `defaultsRoot`'s twin, and the same
+ * walk, because a built layout may nest the code a level or two deeper.
+ */
+export function defaultSystemsRoot(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  let dir = here;
+  for (let up = 0; up < 5; up += 1) {
+    const candidate = join(dir, 'defaults', 'systems');
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return join(here, '..', 'defaults', 'systems');
+}
+
+/**
+ * The systems teller SHIPS — read where they lie, cached like the
+ * default panels, and the bottom of the per-id fallback rather than a
+ * layer of their own (§M-6, 2026-08-21).
+ *
+ * Systems don't stack the way panels do — a campaign names ONE, by id —
+ * so "the floor layer of systems" is a FALLBACK: `boot.ts` looks for the
+ * id on the shelf first (folder, then pack-embedded, then row) and only
+ * then here. A shelf system restating a shipped id therefore wins
+ * outright, which is the property rule 4 asks for — a system a person
+ * put on the shelf and a system that shipped with teller are the same
+ * kind of thing, and the shipped one never outranks the edit.
+ *
+ * And it never resurrects, because teller writes nothing: seeding a copy
+ * into `~/.teller/systems/` is exactly the wrinkle §M-6 killed for
+ * panels. Deleting a shipped system's shelf copy falls back to the
+ * install's; upgrading teller upgrades it.
+ */
+let cachedDefaults: ShelfSystemFolder[] | undefined;
+export function defaultSystems(): ShelfSystemFolder[] {
+  if (!cachedDefaults) cachedDefaults = sweepSystemsIn(defaultSystemsRoot()).systems;
+  return cachedDefaults;
 }
 
 /**

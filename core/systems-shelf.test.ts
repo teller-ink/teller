@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadCampaign } from './boot.ts';
-import { sweepSystems, systemDir, systemPanelDir } from './systems-shelf.ts';
+import {
+  defaultSystems,
+  defaultSystemsRoot,
+  sweepSystems,
+  systemDir,
+  systemPanelDir,
+} from './systems-shelf.ts';
 import { createCampaign, openShelf, type Campaign, type Shelf } from './store.ts';
 
 let dir: string;
@@ -446,6 +452,61 @@ describe('loadCampaign — systems-dir beats pack-embedded beats row (§M)', () 
     const loaded = loadCampaign(shelf, campaign, dir);
     expect(loaded.system?.name).toBe('Test System');
     expect(loaded.packProblems.map((p) => p.dir)).toContain(brokenDir);
+    campaign.close();
+  });
+});
+
+// The systems teller SHIPS — `defaults/systems/`, read from the install
+// (§M-6, 2026-08-21). The virgin-host case: nothing installs them, so
+// nothing can go stale or resurrect, and the shelf always outranks them.
+describe('the install floor — a virgin host still has a system to offer', () => {
+  function campaignOn(system: string): Campaign {
+    const campaign = createCampaign(dir, 'table', 'The Table');
+    const root = campaign.root();
+    campaign.save(
+      { ...root, refs: { system: { id: system, name: system } } },
+      'test',
+    );
+    return campaign;
+  }
+
+  it('ships the starter, and reads it where it lies', () => {
+    const shipped = defaultSystems();
+    const starter = shipped.find((s) => s.id === 'sys_starter');
+    expect(starter).toBeDefined();
+    expect(defaultSystemsRoot().endsWith(join('defaults', 'systems'))).toBe(true);
+    // Data only: teller's install may be read-only, so the floor never
+    // compiles and never copies art (`sweepSystemsIn`).
+    expect(starter?.code).toBeUndefined();
+    expect(starter?.codePending).toBeUndefined();
+    // It declares the play screens, which is the whole point of it.
+    expect((starter?.data.panels as { name: string }[]).map((p) => p.name).sort()).toContain(
+      'encounters',
+    );
+  });
+
+  it('resolves for a campaign on a shelf that has no systems folder at all', () => {
+    const campaign = campaignOn('sys_starter');
+    const loaded = loadCampaign(shelf, campaign, dir);
+    expect(loaded.missing).toEqual([]);
+    expect(loaded.system).toMatchObject({ id: 'sys_starter', name: 'Starter' });
+    expect(existsSync(join(dir, 'systems'))).toBe(false);
+    campaign.close();
+  });
+
+  it('a shelf folder restating a shipped id wins outright', () => {
+    writeSystem('starter', {
+      'system.json': { id: 'sys_starter', name: 'My Starter', version: 9 },
+    });
+    const campaign = campaignOn('sys_starter');
+    const loaded = loadCampaign(shelf, campaign, dir);
+    expect(loaded.system).toMatchObject({ name: 'My Starter', version: 9 });
+    // …and the shipped copy contributes nothing behind it: the floor is
+    // a FALLBACK per id, not a layer that merges underneath.
+    expect(loaded.declarations('panels')).toEqual(
+      loadCampaign(shelf, campaign, dir).declarations('panels'),
+    );
+    expect((loaded.declarations('kinds') as { name: string }[]).length).toBe(0);
     campaign.close();
   });
 });

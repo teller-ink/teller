@@ -11,25 +11,26 @@ nowhere to put a fight.
 
 **This is the escape hatch.** Starter is a zero-IP system that declares
 the generic play screens and nothing else, so the fully generic manual
-table still exists — as a file on the shelf, not as a hardcode in the
+table still exists — as a file teller loads, not as a hardcode in the
 kernel. Sit down with it and you get every screen teller knows how to
 draw, with none of anybody's game in them: you type in the lists, teller
 keeps the books, and no declaration presumes what a number means.
 
-Like `examples/plugins/`, this is **source you copy**, not something
-teller installs. It is not seeded, not special, and not loaded from the
-repo — it is an ordinary system folder that happens to ship in the
-source tree so there's a working one to start from.
+**It ships with teller** (2026-08-21). This folder is in the INSTALL,
+and teller reads it where it lies — the same treatment `defaults/panels/`
+gets, and for the same reason (§M-6): defaults that are *seeded* into a
+data dir go stale and resurrect, so nothing is ever written into
+`~/.teller-next/systems/`. Starter is the LAST place the loader looks for
+a system id — behind `systems/<name>/`, behind a pack-embedded
+`system.json`, behind a `shelf.db` row — so a folder on your shelf
+restating `sys_starter` wins outright, and deleting that folder falls
+back here instead of resurrecting a copy. It upgrades when teller does.
 
-## Install
+## Use
 
-```
-cp -R examples/systems/starter ~/.teller-next/systems/starter
-```
-
-Then either restart the host or `POST /api/shelf/sweep` (the DM's door,
-which answers with the load report). Make a campaign on it from the
-console's campaign screen, or:
+Make a campaign on it from the console's campaign screen — Starter is in
+the dropdown on a host with nothing else installed, which is the whole
+point of it — or:
 
 ```
 curl -X POST http://localhost:4526/api/campaigns \
@@ -40,12 +41,11 @@ curl -X POST http://localhost:4526/api/campaigns \
 
 **No trust row is needed.** Trust gates outside CODE, never data
 (`core/panels-shelf.ts`, `core/boot.ts`): Starter carries no
-`presentations/` and none of its panels carry blocks, so the sweep never
-produces anything to enable — an absent trust row means the declarations
-are IN and there is no pending code to switch on. You would only need
-the plugins-tab toggle if you added a `presentations/*.tsx` or a
-code-carrying panel of your own. (A row with `enabled: 0` is the
-opposite act — a tombstone that takes a declaration back out.)
+`presentations/` and none of its panels carry blocks, so there is nothing
+to enable. The install floor is data-only by construction — teller's own
+installation may be read-only, so the sweep neither compiles code nor
+copies art from it (`sweepSystemsIn`). A default that wants either wants
+to be a folder on somebody's shelf.
 
 ## What's in it
 
@@ -87,7 +87,7 @@ to say so in your own panel, not to make this one guess.
 This folder is meant to be copied and renamed — it's the smallest legal
 system, so it's the shortest path to your own:
 
-1. `cp -R examples/systems/starter ~/.teller-next/systems/mygame`, and
+1. `cp -R defaults/systems/starter ~/.teller-next/systems/mygame`, and
    change `id` and `name` in `system.json`. (Two systems may not share
    a `sys_` id; the folder name is not the identity.)
 2. Add records to `system.json` — `sheets` (what a new entity starts

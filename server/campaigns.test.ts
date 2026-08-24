@@ -7,7 +7,7 @@
 // swap (they live on the Room, not the Session), and that an emptied
 // pack list restores the default rather than meaning "no packs".
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -316,5 +316,48 @@ describe('trust, listed so it can be taken back', () => {
   it('an ordinary plugin id never appears there — only content code', async () => {
     await api('POST', '/api/plugins/plg_something', { enabled: true });
     expect((await api('GET', '/api/plugins')).body.trusted).toEqual([]);
+  });
+});
+
+describe('the system teller ships', () => {
+  // A virgin data dir used to offer ZERO systems, and the campaign
+  // screen — the only screen a host with nothing running has — was a
+  // dead end. Starter ships in the INSTALL (§M-6, 2026-08-21): never
+  // seeded, never written anywhere, and last in the fallback.
+
+  it('is offered on a shelf with nothing on it, and creation takes it', async () => {
+    const listed = await api('GET', '/api/shelf');
+    expect(listed.body.systems.map((s: any) => s.id)).toContain('sys_starter');
+
+    const made = await api('POST', '/api/campaigns', {
+      name: 'First Table',
+      system: 'sys_starter',
+    });
+    expect(made.status).toBe(201);
+
+    const campaign = await api('GET', '/api/campaign');
+    expect(campaign.body.system).toMatchObject({ id: 'sys_starter', name: 'Starter' });
+    expect(campaign.body.missing).toEqual([]);
+    // The play screens arrive with it — the thing a bare host lacked.
+    const panels = await api('GET', '/api/stack/declarations/panels');
+    expect(panels.body.map((p: any) => p.name)).toContain('encounters');
+  });
+
+  it('is read from the install: nothing is written into the data dir', async () => {
+    await api('POST', '/api/campaigns', { name: 'First Table', system: 'sys_starter' });
+    expect(existsSync(join(dir, 'systems'))).toBe(false);
+  });
+
+  it('is outranked by a shelf system of the same id', async () => {
+    const folder = join(dir, 'systems', 'starter');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(
+      join(folder, 'system.json'),
+      JSON.stringify({ id: 'sys_starter', name: 'My Own Starter', version: 4 }),
+    );
+    const listed = await api('GET', '/api/shelf');
+    expect(listed.body.systems.filter((s: any) => s.id === 'sys_starter')).toEqual([
+      { id: 'sys_starter', name: 'My Own Starter', version: 4 },
+    ]);
   });
 });

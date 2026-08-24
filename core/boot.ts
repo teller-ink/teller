@@ -29,7 +29,7 @@ import { layerBy, mergeBy, refine } from './merge.ts';
 import { byPanelOrder, includeProblems, type PanelDef } from './panels.ts';
 import { defaultPanels, sweepPanels } from './panels-shelf.ts';
 import { sweepPacks, type PackProblem } from './packs-shelf.ts';
-import { sweepSystems, type SystemExport } from './systems-shelf.ts';
+import { defaultSystems, sweepSystems, type SystemExport } from './systems-shelf.ts';
 import { toTemplate, type Template, type TemplateOf } from './stamp.ts';
 import type { Campaign, Shelf } from './store.ts';
 
@@ -504,6 +504,16 @@ export class Loaded {
  * merged shape) beats a `shelf.db` row. An old pack that still carries
  * its system loads exactly as it did.
  */
+/**
+ * The systems teller ships, keyed by id — the bottom of the per-id
+ * fallback below. A virgin host with no `systems/` folder at all still
+ * has one to offer, which is what first-run needs and what §M-6's "a
+ * host with no system is a host mid-setup" costs if nothing ships.
+ */
+function installedSystems(): Map<string, ReturnType<typeof defaultSystems>[number]> {
+  return new Map(defaultSystems().map((s) => [s.id, s]));
+}
+
 export function loadCampaign(shelf: Shelf, campaign: Campaign, dataDir?: string): Loaded {
   const manifest = campaign.root();
   const missing: Missing[] = [];
@@ -520,9 +530,16 @@ export function loadCampaign(shelf: Shelf, campaign: Campaign, dataDir?: string)
   if (systemRef) {
     // Precedence, per id (§M): the system's OWN folder, then a
     // `system.json` embedded in a pack folder (phase 1's shape — old
-    // exports keep working), then the `shelf.db` row.
+    // exports keep working), then the `shelf.db` row — and last, the
+    // systems teller SHIPS (§M-6, 2026-08-21). The install is the
+    // BOTTOM: a shelf copy of a shipped id wins outright, so nothing
+    // teller ships can outrank or resurrect over what a person edited.
     const own = systemFolders.get(systemRef.id);
-    const row = own ?? folderSystems.get(systemRef.id) ?? shelf.system(systemRef.id);
+    const row =
+      own ??
+      folderSystems.get(systemRef.id) ??
+      shelf.system(systemRef.id) ??
+      installedSystems().get(systemRef.id);
     if (row) {
       system = { id: row.id, name: row.name, version: row.version };
       // Only a system's own folder carries code — an embedded

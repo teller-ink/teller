@@ -74,7 +74,7 @@ export function useSystemFaces(): number {
  * system layer and kept these wired so that a host mid-migration
  * rendered the sheet it rendered yesterday. Phase 3.5 is the deletion,
  * taken once a SECOND system existed to prove the point
- * (`examples/systems/starter/`), and the four files are gone from
+ * (`defaults/systems/starter/`), and the four files are gone from
  * `client/components/` along with their exports from the `teller`
  * module.
  *

@@ -2028,6 +2028,50 @@ way up to the TABLE panels"):
   discovering and duplicating a default never requires finding the
   install dir. Queued, not built.
 
+**6b · The starter system ships too — the floor got a floor**
+(2026-08-21, built against this section rather than decided anew).
+
+§M-6 left a hole its own logic had opened: the play screens moved to
+the system layer, so a host with no system has nowhere to put a fight
+— correct — and the sanctioned escape hatch was a zero-IP starter
+system that *nothing installed*. It sat in `examples/systems/starter/`
+as source to copy, campaign creation validates against the shelf, and a
+virgin `~/.teller-next` therefore offered ZERO systems on the one screen
+a bare host has. First run dead-ended.
+
+**Decided: the starter ships WITH teller, exactly as the default panels
+do.** `examples/systems/starter/` → `defaults/systems/starter/`, read
+from the INSTALL by the same sweep (`sweepSystemsIn`, split out the way
+`sweepPanelsIn` was), never seeded into a data dir — so both §M-6
+wrinkles stay dead: nothing goes stale, nothing resurrects, and the
+folder upgrades with the software.
+
+**But not as a LAYER — as the bottom of a per-id FALLBACK**, and that
+distinction is the whole of the doctrine question. Panels merge, so
+teller's can be a floor layer under everyone. Systems don't merge: a
+campaign names ONE by id, so there is no "under" for a shipped system to
+sit in. `loadCampaign` resolves an id in the order it always did —
+`systems/<name>/` > pack-embedded `system.json` > `shelf.db` row — and
+only then asks the install. A shelf system restating `sys_starter`
+therefore wins OUTRIGHT and the shipped copy contributes nothing behind
+it, which is what §M-4's precedence rule and rule 4's "a system a person
+added and one that shipped with teller are the same kind of thing"
+between them require. Nothing teller ships can outrank or resurrect over
+an edit.
+
+The honest fallback (a console "install the starter" one-tap that copies
+it to the shelf) was NOT taken: it is a seed by another name, and the
+copy it makes is the stale copy §M-6 killed. Copying remains how you
+FORK the starter — `cp -R` it under a new id and edit — which is the act
+that genuinely wants a copy.
+
+One price, stated where it will be found: **the install floor is
+DATA-ONLY.** teller's own installation may be read-only (a brew cellar),
+and both art install and code compile WRITE, so `sweepSystemsIn` does
+neither for the install root. A shipped system wanting presentations or
+art wants to be a folder on somebody's shelf; better to hit that in the
+open than to have teller quietly try to write into itself.
+
 **The punchline the whole section was building toward** (Brian:
 "Full control if you care, simple controls if you don't. You choose
 how much to expose yourself to as the author"): customization is a
