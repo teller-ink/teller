@@ -29,6 +29,40 @@ import {
 } from '../core/store.ts';
 import type { Ref } from '../core/entity.ts';
 import { applyTurnOp, toTurnState, type TurnOp, type TurnState } from './turn.ts';
+import { withDeployed, withoutEntities, type Deploying } from './boards.ts';
+
+/**
+ * One foe in a prepared fight, as the recipe writes it down.
+ *
+ * A template reference and a count, plus — when the fight was staged on
+ * a map — where this one starts and whether it's waiting out of sight.
+ * The position is map space (`u`, `v` ∈ 0..1, docs/BATTLEMAP.md), never
+ * cells, so correcting a board's `widthInches` later leaves everyone
+ * glued to the painted feature they were standing on.
+ */
+export type EncounterFoe = {
+  templateId?: string;
+  name?: string;
+  count?: number;
+  u?: number;
+  v?: number;
+  hidden?: boolean;
+};
+
+/**
+ * What a deploy did. `placed` and `unplaced` are the loud half: a fight
+ * that wrote down positions and found no board must say that, because
+ * silence reads as "the map is fine" and the Warden finds out mid-fight.
+ */
+export type DeployResult = {
+  deployed: Entity[];
+  turn: TurnState;
+  /** The board the tokens went on, or null when the table has none up. */
+  board: string | null;
+  placed: number;
+  /** Why nothing was placed, when the recipe expected somewhere to place it. */
+  unplaced?: string;
+};
 
 /** Which slots resolution stamps through — the stampable ones this loop knows. */
 export const STAMP_SLOTS = ['bestiary', 'catalog'];
@@ -160,9 +194,91 @@ export class Session {
     return saved;
   }
 
+  /**
+   * Delete an entity, and take its place at the table with it.
+   *
+   * A row in the turn order and a token on a board both POINT at an
+   * entity by id (rule 5, §5), and a pointer at a deleted thing is a
+   * ghost: the runner counts four foes it can't name and the map holds
+   * four tokens that resolve to nothing. Deleting is one action, so the
+   * cascade rides with it — the order and every board are edited FIRST,
+   * each write logged as itself (rule 3), and then the deletion is
+   * appended naming what it took. `/undo` reads that one row and puts
+   * all of it back in a single press (`server/undo.ts`).
+   *
+   * Which entities: this one AND everything promoted under it, because
+   * the store deletes those too and a pistol's token would outlive its
+   * owner otherwise. Only placements that name them — a marker, a rock,
+   * somebody else's token, all untouched.
+   */
   remove(id: string, actor: string): void {
-    this.campaign.remove(id, actor);
+    const gone = new Set<string>();
+    const walk = (at: string) => {
+      if (gone.has(at)) return;
+      gone.add(at);
+      for (const child of this.campaign.children(at)) walk(child.id);
+    };
+    walk(id);
+
+    const events: number[] = [];
+    const lastEvent = () => this.campaign.events({ limit: 1 })[0]?.id;
+    const cascade: {
+      events: number[];
+      turn?: TurnState;
+      boards?: { boardId: string; data: unknown }[];
+    } = { events };
+
+    // The order. Row by row through the ordinary `remove` op, so whose
+    // turn it is falls back exactly the way it does when the DM lifts a
+    // row out by hand — the row that slid into that slot, or nobody.
+    const turnBefore = this.turnState();
+    let turn = turnBefore;
+    for (const entry of turnBefore.order) {
+      if (entry.entityId && gone.has(entry.entityId)) {
+        turn = applyTurnOp(turn, { op: 'remove', entryId: entry.id });
+      }
+    }
+    if (turn !== turnBefore) {
+      this.campaign.putTurnState(turn, actor, {
+        op: 'cascade',
+        before: turnBefore,
+        after: turn,
+      });
+      const at = lastEvent();
+      if (at !== undefined) events.push(at);
+      cascade.turn = turnBefore;
+      this.changed('turn');
+    }
+
+    // Every board, not just the active one: a foe deleted between
+    // scenes still has to leave the map it was standing on.
+    const boards: { boardId: string; data: unknown }[] = [];
+    for (const { boardId, data } of this.campaign.boardStates()) {
+      const next = withoutEntities(data, gone);
+      if (next === undefined) continue;
+      this.campaign.putBoardState(boardId, next, actor);
+      const at = lastEvent();
+      if (at !== undefined) events.push(at);
+      boards.push({ boardId, data });
+    }
+    if (boards.length) {
+      cascade.boards = boards;
+      this.changed('board');
+    }
+
+    this.campaign.remove(id, actor, events.length ? { cascade } : undefined);
     this.changed('entities');
+  }
+
+  /**
+   * The board the table is looking at, by id — one ordinary manifest
+   * ref (`refs.board`). Null means the table sits idle, which is an
+   * ordinary state and not a fault.
+   */
+  activeBoardId(): string | null {
+    const ref = this.campaign.root().refs?.board;
+    const id = Array.isArray(ref) ? ref[0]?.id : ref?.id;
+    return id ?? null;
   }
 
   move(id: string, parentId: string, actor: string): void {
@@ -255,13 +371,14 @@ export class Session {
   deployEncounter(
     encounterId: string,
     actor: string,
-  ): { deployed: Entity[]; turn: TurnState } | undefined {
+  ): DeployResult | undefined {
     const raw = this.campaign.templateRaw(encounterId);
     if (!raw || typeof raw !== 'object') return undefined;
-    const enc = raw as {
-      foes?: { templateId?: string; name?: string; count?: number }[];
-    };
+    const enc = raw as { foes?: EncounterFoe[] };
     const deployed: Entity[] = [];
+    // Where each one starts, when the recipe said — collected as the
+    // foes stamp so a token lands on the instance, not the template.
+    const standing: Deploying[] = [];
     for (const foe of enc.foes ?? []) {
       if (!foe.templateId) continue;
       // A foe whose template is missing is skipped and shows up as the
@@ -274,7 +391,16 @@ export class Session {
         const entity = this.stampFrom('bestiary', foe.templateId, actor, {
           name: count > 1 ? `${base} ${n}` : base,
         });
-        if (entity) deployed.push(entity);
+        if (!entity) continue;
+        deployed.push(entity);
+        if (typeof foe.u === 'number' && typeof foe.v === 'number') {
+          standing.push({
+            entityId: entity.id,
+            u: foe.u,
+            v: foe.v,
+            ...(foe.hidden === true ? { hidden: true } : {}),
+          });
+        }
       }
     }
     const before = this.turnState();
@@ -284,7 +410,27 @@ export class Session {
     }
     this.campaign.putTurnState(turn, actor, { op: 'deploy', before, after: turn });
     this.changed('turn');
-    return { deployed, turn };
+
+    // The other half of deploying: a fight that wrote down where
+    // everyone stands should put them there. A foe with no `u`/`v`
+    // simply joins the order, which is the mapless fight and not a
+    // degraded one — but a fight that DID say where, on a table with no
+    // board up, says so out loud rather than dropping the positions on
+    // the floor.
+    const boardId = this.activeBoardId();
+    const board = boardId && this.shelf.board(boardId) ? boardId : null;
+    const out: DeployResult = { deployed, turn, board, placed: 0 };
+    if (!standing.length) return out;
+    if (!board) {
+      out.unplaced = boardId
+        ? `no board ${boardId} on this host — ${standing.length} foe(s) joined the order with nowhere to stand`
+        : `no active board — ${standing.length} foe(s) joined the order with nowhere to stand`;
+      return out;
+    }
+    const { data, placed } = withDeployed(this.campaign.boardState(board), standing);
+    if (placed) this.putBoardState(board, data, actor);
+    out.placed = placed;
+    return out;
   }
 
   putBoardState(boardId: string, data: unknown, actor: string): void {

@@ -238,9 +238,11 @@ export function publicBoardState(data: unknown): unknown {
 export function activeBoard(session: Session): PublicBoard | null {
   // Read the LIVE manifest, not the loaded one: a board swap doesn't
   // re-resolve the content stack, so `loaded.manifest` is a snapshot
-  // from the last load and would answer with yesterday's scene.
-  const ref = session.campaign.root().refs?.board;
-  const id = Array.isArray(ref) ? ref[0]?.id : ref?.id;
+  // from the last load and would answer with yesterday's scene. That
+  // read is `Session.activeBoardId` — deploy asks the same question
+  // when it goes looking for somewhere to put the fight, and two
+  // spellings of "which board" would eventually disagree.
+  const id = session.activeBoardId();
   if (!id) return null;
   const board = session.shelf.board(id);
   if (!board) return null;

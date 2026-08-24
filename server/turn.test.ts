@@ -240,4 +240,165 @@ describe('the runner over HTTP', () => {
       events.body.filter((e: any) => e.kind === 'turn.updated').length,
     ).toBeGreaterThanOrEqual(4);
   });
+
+  // -- the fight ON the map -------------------------------------------
+  //
+  // A fight staged on a board writes down where everyone starts, and
+  // deploying used to throw that away: the order filled up and the map
+  // stayed empty, which reads at the table as "the deploy didn't work".
+
+  /** A board on the shelf, with the table looking at it. */
+  const stage = (name = 'The Lake'): string => {
+    const board = session.shelf.putBoard({ key: 'map/lake.png', name });
+    const root = session.campaign.root();
+    session.campaign.save(
+      { ...root, refs: { ...root.refs, board: { id: board.id, name } } },
+      'host',
+    );
+    return board.id;
+  };
+
+  /** Two watchers at the ford and one waiting in the reeds. */
+  const stagedFight = async (): Promise<string> =>
+    (
+      await call('POST', '/api/templates/encounters', {
+        key: true,
+        body: {
+          template: {
+            name: 'The Lake',
+            foes: [
+              { templateId: 'npc_watcher', count: 2, u: 0.2, v: 0.3 },
+              { templateId: 'npc_watcher', name: 'Lurker', u: 0.8, v: 0.6, hidden: true },
+            ],
+          },
+        },
+      })
+    ).body.id;
+
+  it('a staged fight arrives on the board it was staged for', async () => {
+    const boardId = stage();
+    const encounter = await stagedFight();
+    const run = await call('POST', `/api/encounters/${encounter}/deploy`, {
+      key: true,
+      body: {},
+    });
+    expect(run.body.board).toBe(boardId);
+    expect(run.body.placed).toBe(3);
+    expect(run.body.unplaced).toBeUndefined();
+
+    const state = session.campaign.boardState(boardId) as any;
+    expect(state.placements.map((p: any) => p.entityId)).toEqual(
+      run.body.deployed.map((e: any) => e.id),
+    );
+    expect(state.placements[0]).toMatchObject({ u: 0.2, v: 0.3, sizeInches: 1 });
+    // Hidden is the recipe's word, carried to the token — the one in
+    // the reeds is behind the screen, the two at the ford are not.
+    expect(state.placements.map((p: any) => p.hidden)).toEqual([false, false, true]);
+
+    // Run it again for another posse: new foes, new tokens, and nobody
+    // standing twice.
+    const again = await call('POST', `/api/encounters/${encounter}/deploy`, {
+      key: true,
+      body: {},
+    });
+    expect(again.body.placed).toBe(3);
+    const after = session.campaign.boardState(boardId) as any;
+    const ids = after.placements.map((p: any) => p.entityId);
+    expect(ids).toHaveLength(6);
+    expect(new Set(ids).size).toBe(6);
+  });
+
+  it('a staged fight with no board up says so out loud', async () => {
+    const encounter = await stagedFight();
+    const run = await call('POST', `/api/encounters/${encounter}/deploy`, {
+      key: true,
+      body: {},
+    });
+    expect(run.body.deployed).toHaveLength(3);
+    expect(run.body.board).toBeNull();
+    expect(run.body.placed).toBe(0);
+    // Loud absence: the count that came up short is IN the answer.
+    expect(run.body.unplaced).toContain('no active board');
+    expect(session.campaign.boardStates()).toHaveLength(0);
+  });
+
+  it('deleting a foe takes its row and its tokens with it', async () => {
+    const boardId = stage();
+    const encounter = await stagedFight();
+    const run = await call('POST', `/api/encounters/${encounter}/deploy`, {
+      key: true,
+      body: {},
+    });
+    const [first, , lurker] = run.body.deployed;
+
+    // A board this campaign played on last week, still holding the same
+    // foe and a rock nobody ever deletes.
+    const other = session.shelf.putBoard({ key: 'map/saloon.png', name: 'The Saloon' }).id;
+    session.campaign.putBoardState(
+      other,
+      {
+        placements: [
+          { id: 'plc_x', entityId: lurker.id, u: 0.1, v: 0.1 },
+          { id: 'plc_rock', label: 'a boulder', u: 0.9, v: 0.9 },
+        ],
+      },
+      'console',
+    );
+
+    // Walk to the lurker — the last row — then delete it. The acting
+    // pointer falls back the way `remove` does: off the end is nobody's
+    // turn but the first row's.
+    await call('POST', '/api/turn', { key: true, body: { op: 'next' } });
+    await call('POST', '/api/turn', { key: true, body: { op: 'next' } });
+    await call('POST', '/api/turn', { key: true, body: { op: 'next' } });
+    expect((await call('GET', '/api/turn', { key: true })).body.turn).toBe(2);
+
+    const del = await call('DELETE', `/api/entities/${lurker.id}`, { key: true });
+    expect(del.status).toBe(200);
+
+    const turn = (await call('GET', '/api/turn', { key: true })).body;
+    expect(turn.order).toHaveLength(2);
+    expect(turn.order.every((e: any) => e.entityId !== lurker.id)).toBe(true);
+    expect(turn.turn).toBe(0);
+
+    const state = session.campaign.boardState(boardId) as any;
+    expect(state.placements.map((p: any) => p.entityId)).not.toContain(lurker.id);
+    expect(state.placements).toHaveLength(2);
+    expect(state.placements[0].entityId).toBe(first.id);
+
+    // Every board, not just the one the table is looking at — and the
+    // boulder is nobody's foe.
+    const elsewhere = session.campaign.boardState(other) as any;
+    expect(elsewhere.placements.map((p: any) => p.id)).toEqual(['plc_rock']);
+  });
+
+  it('and one undo puts the foe back with its place at the table', async () => {
+    const boardId = stage();
+    const encounter = await stagedFight();
+    const run = await call('POST', `/api/encounters/${encounter}/deploy`, {
+      key: true,
+      body: {},
+    });
+    const lurker = run.body.deployed[2];
+    const entryId = (await call('GET', '/api/turn', { key: true })).body.order[2].id;
+
+    await call('DELETE', `/api/entities/${lurker.id}`, { key: true });
+    const undone = await call('POST', '/api/undo', { key: true, body: {} });
+    expect(undone.body.undone.kind).toBe('entity.deleted');
+
+    // The foe, its row (the same row — history is keyed by the id that
+    // didn't change), and its token.
+    expect((await call('GET', `/api/entities/${lurker.id}`, { key: true })).status).toBe(200);
+    const turn = (await call('GET', '/api/turn', { key: true })).body;
+    expect(turn.order).toHaveLength(3);
+    expect(turn.order[2].id).toBe(entryId);
+    const state = session.campaign.boardState(boardId) as any;
+    expect(state.placements.map((p: any) => p.entityId)).toContain(lurker.id);
+
+    // And the NEXT press steps further back — to before the fight was
+    // deployed at all — rather than re-undoing the cascade this one
+    // already put back.
+    await call('POST', '/api/undo', { key: true, body: {} });
+    expect((await call('GET', '/api/turn', { key: true })).body.order).toHaveLength(0);
+  });
 });

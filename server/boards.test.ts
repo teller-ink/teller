@@ -19,7 +19,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openShelf, type Shelf } from '../core/store.ts';
 import { serve } from './index.ts';
 import { Host } from './session.ts';
-import { extFor, saveBoardBytes, toGrid, toWidthInches } from './boards.ts';
+import { tokenColor } from '../core/tokens.ts';
+import {
+  extFor,
+  saveBoardBytes,
+  toGrid,
+  toWidthInches,
+  withDeployed,
+  withoutEntities,
+} from './boards.ts';
 
 let dir: string;
 let shelf: Shelf;
@@ -308,5 +316,75 @@ describe('reading an author defensively', () => {
     const a = saveBoardBytes(dir, PNG, 'png');
     const b = saveBoardBytes(dir, PNG, 'png');
     expect(a).toBe(b);
+  });
+});
+
+// The two edits a fight makes to a board without anyone opening the
+// editor. Both are pure, so they're pinned here rather than through a
+// deploy: what matters is the SHAPE — whose tokens move, whose don't.
+describe('what a fight does to the state on a board', () => {
+  const state = {
+    placements: [
+      { id: 'plc_a', entityId: 'ent_watcher', u: 0.1, v: 0.2 },
+      { id: 'plc_b', label: 'a boulder', u: 0.5, v: 0.5 },
+      { id: 'plc_c', entityId: 'ent_barrett', u: 0.9, v: 0.4 },
+    ],
+    fog: { on: true, revealed: [] },
+    view: { mode: 'fit', zoom: 1, cu: 0.5, cv: 0.5 },
+  };
+
+  it('takes a deleted entity’s tokens and leaves everything else alone', () => {
+    const next = withoutEntities(state, new Set(['ent_watcher'])) as typeof state;
+    expect(next.placements.map((p) => p.id)).toEqual(['plc_b', 'plc_c']);
+    // The rest of the blob is untouched — fog and view are nobody's foe.
+    expect(next.fog).toEqual(state.fog);
+    expect(next.view).toEqual(state.view);
+    // A board the deletion never touched is not written at all.
+    expect(withoutEntities(state, new Set(['ent_nobody']))).toBeUndefined();
+    expect(withoutEntities(null, new Set(['ent_watcher']))).toBeUndefined();
+  });
+
+  it('places a staged foe with the strip’s own defaults', () => {
+    const { data, placed } = withDeployed(state, [
+      { entityId: 'ent_new', u: 0.25, v: 0.75 },
+      { entityId: 'ent_lurker', u: 0.3, v: 0.8, hidden: true },
+    ]);
+    const placements = (data as typeof state).placements;
+    expect(placed).toBe(2);
+    expect(placements).toHaveLength(5);
+    const [fresh, lurker] = placements.slice(3) as any[];
+    expect(fresh).toMatchObject({ entityId: 'ent_new', u: 0.25, v: 0.75, sizeInches: 1 });
+    expect(fresh.id).toMatch(/^plc_/);
+    // Hidden is the recipe's, not a default: on the table unless said.
+    expect(fresh.hidden).toBe(false);
+    expect(lurker.hidden).toBe(true);
+    // Colour continues the palette from what's already standing.
+    expect(fresh.color).toBe(tokenColor(3));
+    expect(lurker.color).toBe(tokenColor(4));
+  });
+
+  it('never puts a second token down for one foe', () => {
+    const { data, placed } = withDeployed(state, [
+      { entityId: 'ent_watcher', u: 0.4, v: 0.4 },
+      { entityId: 'ent_new', u: 0.4, v: 0.5 },
+      { entityId: 'ent_new', u: 0.6, v: 0.5 },
+    ]);
+    expect(placed).toBe(1);
+    const ids = (data as typeof state).placements.map((p: any) => p.entityId);
+    expect(ids.filter((id: string) => id === 'ent_watcher')).toHaveLength(1);
+    expect(ids.filter((id: string) => id === 'ent_new')).toHaveLength(1);
+    // The one already standing did not move to where the recipe said.
+    const watcher = (data as typeof state).placements.find(
+      (p: any) => p.entityId === 'ent_watcher',
+    ) as any;
+    expect([watcher.u, watcher.v]).toEqual([0.1, 0.2]);
+  });
+
+  it('starts a board that has never been played on', () => {
+    const { data, placed } = withDeployed(undefined, [
+      { entityId: 'ent_new', u: 0.5, v: 0.5 },
+    ]);
+    expect(placed).toBe(1);
+    expect((data as any).placements[0].color).toBe(tokenColor(0));
   });
 });
