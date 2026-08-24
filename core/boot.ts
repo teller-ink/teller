@@ -347,6 +347,26 @@ export class Loaded {
   }
 
   /**
+   * A slot that is one PARAGRAPH per layer — `space`, where a system
+   * says in its own words what a distance means and what a step costs.
+   *
+   * Prose does not merge (`core/merge.ts`: scalars replace whole), so
+   * this is the stack's SCALAR reading: the last layer to write any is
+   * the one that meant it. It exists because the record teller was
+   * already carrying had no reader at all, which is the oldest failure
+   * in this codebase wearing a new hat — a fact held and not passed on
+   * is a fact the reader invents.
+   */
+  prose(slot: string): string | undefined {
+    let out: string | undefined;
+    for (const layer of this.#layers) {
+      const held = layer.data[slot];
+      if (typeof held === 'string' && held.trim()) out = held.trim();
+    }
+    return out;
+  }
+
+  /**
    * Which layer a merged entry came from — the LAST layer to state the
    * name, because that's the one whose version won. Provenance for a
    * console that wants to say "campaign, overriding the Guidebook".

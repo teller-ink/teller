@@ -192,14 +192,26 @@ const notAtTable = () => reply(401, { error: 'not at this table' });
 function forNeeds(full: Record<string, unknown>, needs: Need[]): Record<string, unknown> {
   const out = { ...full };
   if (!grants(needs, 'read', 'board')) delete out.board;
+  if (!grants(needs, 'read', 'log')) delete out.history;
+  // Per SLOT, the way a door's records are gated: `read:records` whole
+  // grants every one, `read:records/bands` grants exactly that rung.
+  if (out.records && typeof out.records === 'object') {
+    const kept = Object.entries(out.records as Record<string, unknown>).filter(([slot]) =>
+      grants(needs, 'read', 'records', slot),
+    );
+    if (kept.length) out.records = Object.fromEntries(kept);
+    else delete out.records;
+  }
   if (!grants(needs, 'read', 'entities') && Array.isArray(out.order)) {
     out.order = (out.order as Record<string, unknown>[]).map((entry) => {
       const {
         entityId: _e,
         vitals: _v,
+        stats: _t,
         held: _h,
         awayInches: _i,
         awaySquares: _s,
+        awayBand: _n,
         onBoard: _b,
         ...rest
       } = entry;
@@ -1638,7 +1650,12 @@ export async function handleApi(
     // two proposers would be work nobody asked for, never because the
     // gate is optional.
     let widest: Record<string, unknown> | undefined;
-    if (point === 'propose.turn') {
+    // BOTH halves of a turn get the same table. `propose.narrate` used
+    // to be handed only the sentence the console typed, which is how a
+    // narrator ends up inventing the shot that rang off the plate
+    // nobody told it about — the ground, the order and the sheets are
+    // as load-bearing after the dice as before them.
+    if (point === 'propose.turn' || point === 'propose.narrate') {
       // Assemble the snapshot server-side: a fact the host holds and
       // doesn't pass on is a fact the model invents. That sentence was
       // the whole design, and it was only half kept — the turn order
@@ -1663,6 +1680,41 @@ export async function handleApi(
           ? board.tokens.flatMap((t) => (t.entityId ? [[t.entityId, t] as const] : []))
           : [],
       );
+      // THE SYSTEM'S OWN LAW, in the system's own words. Every one of
+      // these was already on the shelf and none of it was passed on,
+      // which is the oldest failure here wearing a fourth hat: handed
+      // band NAMES with no inches behind them, a reader said so out
+      // loud in the middle of a fight ("I am assuming"), and handed no
+      // menu of actions it never once considered moving.
+      //
+      // Slot names are the system's, not teller's — `bands` is a list
+      // of rungs, `space` is a paragraph, `use` is the record the
+      // console already prices actions from. Nothing here learns what
+      // any of them say.
+      const space = session.loaded.prose('space');
+      const records: Record<string, unknown> = {
+        bands: session.loaded.declarations('bands'),
+        use: session.loaded.record('use'),
+        statuses: session.loaded.declarations('statuses'),
+        defenses: session.loaded.record('defenses'),
+        ...(space ? { space } : {}),
+      };
+      // WHAT ALREADY HAPPENED, oldest last. Rule 3's payoff read
+      // forwards: the log is the only place a condition's CAUSE is
+      // written down, and a reader handed a held creature and no reason
+      // for it makes one up and plays the turn off the invention.
+      // Records only — the two kinds `server/undo.ts` also treats as
+      // records, because they changed no state and say what the table
+      // saw.
+      const history = session.campaign
+        .events({ limit: 80 })
+        .filter((e) => e.kind === 'turn.resolved' || e.kind === 'dice.rolled')
+        .slice(0, 12)
+        .reverse()
+        .map((e) => ({
+          kind: e.kind,
+          ...(e.payload && typeof e.payload === 'object' ? (e.payload as object) : {}),
+        }));
       widest = {
         round: turn.round,
         order: turn.order.map((e, i) => {
@@ -1683,14 +1735,28 @@ export async function handleApi(
               .filter((x) => typeof x.max === 'number')
               .map((x) => ({ name: x.name, value: x.value ?? 0, max: x.max })),
             held: entries.filter((x) => x.value === undefined).map((x) => x.name),
+            // The THIRD kind of entry, and the one a turn is priced in:
+            // a value with no ceiling is a STAT — a speed, a printed
+            // band, a pool. `vitals` and `held` between them dropped
+            // every one of them on the floor, so a reader asked what a
+            // step costs had nothing to work it out from.
+            stats: entries
+              .filter((x) => typeof x.max !== 'number' && x.value !== undefined)
+              .map((x) => ({ name: x.name, value: x.value })),
             ...(token?.awayInches !== undefined
-              ? { awayInches: token.awayInches, awaySquares: token.awaySquares }
+              ? {
+                  awayInches: token.awayInches,
+                  awaySquares: token.awaySquares,
+                  ...(token.awayBand ? { awayBand: token.awayBand } : {}),
+                }
               : {}),
             onBoard: Boolean(token),
           };
         }),
         acting: actingEntity ? session.reading(actingEntity) : null,
         board,
+        records,
+        history,
         ...(typeof body.payload === 'object' && body.payload !== null
           ? (body.payload as object)
           : {}),

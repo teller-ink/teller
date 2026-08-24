@@ -324,3 +324,166 @@ describe('plugin management over HTTP (§15 in the console)', () => {
     expect((await call('GET', '/api/plugins')).status).toBe(401);
   });
 });
+
+// THE SYSTEM'S OWN LAW, and what already happened.
+//
+// Every failure this covers is the same failure wearing a new hat: a
+// fact teller held and did not pass on is a fact the reader invents.
+// Handed band NAMES with nothing behind them, a proposer said "the
+// snapshot gives no inch value for the bands — I am assuming" in the
+// middle of a live fight, and never once considered moving, because
+// nothing told it a step could be bought.
+describe('what the snapshot says about how this system works', () => {
+  /** A system with a spatial law: rungs, prose, a menu, and conditions. */
+  function lawful() {
+    session.shelf.putSystem({
+      id: 'sys_wiw',
+      name: 'WiW',
+      version: 2,
+      data: {
+        bands: [
+          { name: 'Close', to: 1, world: 'within reach' },
+          { name: 'Short', from: 1, to: 6, world: 'up to 30 yards' },
+        ],
+        space: 'Moving costs one per Short, by speed.',
+        use: { costCounter: 'Grit', actions: [{ name: 'Move', cost: 1, text: 'one Short.' }] },
+        statuses: [{ name: 'Trapped', relief: 'Finesse', uncapped: true }],
+        defenses: { Cover: '1B' },
+      },
+    });
+    session.reload();
+  }
+
+  async function seer(needs: string[]) {
+    const plug = join(dir, 'plugins', 'seer');
+    mkdirSync(plug, { recursive: true });
+    writeFileSync(
+      join(plug, 'plugin.json'),
+      JSON.stringify({
+        id: 'plg_seer000000001',
+        name: 'Seer',
+        version: 1,
+        provides: ['propose.turn', 'propose.narrate'],
+        needs,
+      }),
+    );
+    writeFileSync(
+      join(plug, 'host.mjs'),
+      `export const provides = {
+        'propose.turn': (snapshot) => ({ saw: snapshot }),
+        'propose.narrate': (snapshot) => ({ saw: snapshot }),
+      };`,
+    );
+    enablePlugin(dir, session.shelf, 'plg_seer000000001', true);
+    const reloaded = await loadPlugins(dir, session.shelf);
+    expect(reloaded.problems).toEqual([]);
+    session.plugins = reloaded.loaded;
+  }
+
+  const sawBy = (body: any, id: string) =>
+    body.proposals.find((p: any) => p.plugin === id).proposal.saw;
+
+  it('carries the bands, the prose, the action menu and the conditions — to whoever asked', async () => {
+    lawful();
+    await seer(['read:records — how far is far, and what a turn buys']);
+    const { body } = await call('POST', '/api/propose/turn', { key: true, body: {} });
+
+    const saw = sawBy(body, 'plg_seer000000001');
+    expect(saw.records.bands).toEqual([
+      { name: 'Close', to: 1, world: 'within reach' },
+      { name: 'Short', from: 1, to: 6, world: 'up to 30 yards' },
+    ]);
+    expect(saw.records.space).toBe('Moving costs one per Short, by speed.');
+    expect(saw.records.use.actions).toEqual([{ name: 'Move', cost: 1, text: 'one Short.' }]);
+    expect(saw.records.statuses[0]).toMatchObject({ name: 'Trapped', uncapped: true });
+    expect(saw.records.defenses).toEqual({ Cover: '1B' });
+
+    // Echo declared nothing, so the law is absent for it — not an error.
+    expect(sawBy(body, 'plg_echo00000001').records).toBeUndefined();
+  });
+
+  it('gates records per slot, the way a door’s are gated', async () => {
+    lawful();
+    await seer(['read:records/bands — only the ladder']);
+    const { body } = await call('POST', '/api/propose/turn', { key: true, body: {} });
+    const saw = sawBy(body, 'plg_seer000000001');
+    expect(Object.keys(saw.records)).toEqual(['bands']);
+  });
+
+  it('hands over what already happened, only to a plugin that asked for the log', async () => {
+    const stamped = await call('POST', '/api/stamp', {
+      key: true,
+      body: { slot: 'bestiary', templateId: 'npc_watcher', name: 'Watcher 1' },
+    });
+    session.turnOp({ op: 'add', entityId: stamped.body.id }, 'console');
+    session.turnOp({ op: 'next' }, 'console');
+    await call('POST', '/api/exchange', {
+      key: true,
+      body: {
+        by: stamped.body.id,
+        byName: 'Watcher 1',
+        action: 'Claw',
+        targets: [{ target: 'ent_x', targetName: 'Hosa', hits: 3, blocked: 1, damage: 2 }],
+        spend: [{ counter: 'Grit', amount: 2, on: 'Claw' }],
+        round: 1,
+      },
+    });
+
+    await seer(['read:log — where a condition came from']);
+    const { body } = await call('POST', '/api/propose/turn', { key: true, body: {} });
+    // Oldest LAST: the freshest thing that happened is the final line.
+    const history = sawBy(body, 'plg_seer000000001').history;
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({
+      kind: 'turn.resolved',
+      byName: 'Watcher 1',
+      action: 'Claw',
+      spend: [{ counter: 'Grit', amount: 2, on: 'Claw' }],
+    });
+    expect(sawBy(body, 'plg_echo00000001').history).toBeUndefined();
+  });
+
+  it('says how fast everyone is — a value with no ceiling is a stat, not nothing', async () => {
+    const stamped = await call('POST', '/api/stamp', {
+      key: true,
+      body: { slot: 'bestiary', templateId: 'npc_watcher', name: 'Watcher 1' },
+    });
+    await call('POST', `/api/entities/${stamped.body.id}/entry`, {
+      key: true,
+      body: { list: 'stats', name: 'Speed', value: 'Fast' },
+    });
+    session.turnOp({ op: 'add', entityId: stamped.body.id }, 'console');
+    session.turnOp({ op: 'next' }, 'console');
+
+    await seer(['read:entities — the sheets']);
+    const { body } = await call('POST', '/api/propose/turn', { key: true, body: {} });
+    expect(sawBy(body, 'plg_seer000000001').order[0].stats).toEqual([
+      { name: 'Speed', value: 'Fast' },
+    ]);
+    // And it is one of the things `read:entities` buys, so a plugin
+    // that never asked never sees it.
+    expect(sawBy(body, 'plg_echo00000001').order[0].stats).toBeUndefined();
+  });
+
+  it('gives the NARRATION the same table — the dice do not make the ground stop mattering', async () => {
+    lawful();
+    const stamped = await call('POST', '/api/stamp', {
+      key: true,
+      body: { slot: 'bestiary', templateId: 'npc_watcher', name: 'Watcher 1' },
+    });
+    session.turnOp({ op: 'add', entityId: stamped.body.id }, 'console');
+    session.turnOp({ op: 'next' }, 'console');
+    await seer(['read:records — the law', 'read:entities — the sheets']);
+
+    const { body } = await call('POST', '/api/propose/narrate', {
+      key: true,
+      body: { payload: { outcome: 'it takes 2', preface: 'the branches shift' } },
+    });
+    const saw = sawBy(body, 'plg_seer000000001');
+    expect(saw.acting.name).toBe('Watcher 1');
+    expect(saw.records.space).toBe('Moving costs one per Short, by speed.');
+    // And what only the console could know rides in beside it.
+    expect(saw.outcome).toBe('it takes 2');
+    expect(saw.preface).toBe('the branches shift');
+  });
+});
