@@ -199,13 +199,13 @@ describe('a foe this host has not got', () => {
   it('is named in the result rather than counted short', () => {
     const fight = stageFight([
       { templateId: 'npc_watcher', count: 2 },
-      { templateId: 'npc_moss', name: 'Lurking Moss' },
+      { templateId: 'npc_lurker', name: 'Bog Lurker' },
       { templateId: 'npc_ghost' },
     ]);
     const out = session.deployEncounter(fight, 'console')!;
     expect(out.deployed).toHaveLength(2);
     expect(out.missing).toEqual([
-      { templateId: 'npc_moss', name: 'Lurking Moss' },
+      { templateId: 'npc_lurker', name: 'Bog Lurker' },
       { templateId: 'npc_ghost' },
     ]);
   });
