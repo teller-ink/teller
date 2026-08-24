@@ -56,7 +56,8 @@ import {
   type TargetOutcome,
 } from '../../../core/exchange.ts';
 import type { NarrationProposal } from '../../../core/registry.ts';
-import { api } from '../../lib/api.ts';
+import { api, fightGeometry, type BoardFacts } from '../../lib/api.ts';
+import { useLive } from '../../lib/use-session.ts';
 import {
   combinePools,
   countFace,
@@ -70,6 +71,7 @@ import { DiceFloor, type DicePoolProps } from '../DiceFloor.tsx';
 import { presentationOf, useSystemFaces } from '../../lib/presentations.ts';
 import { useProvided } from '../ProviderSlot.tsx';
 import { StatusChip } from './TemplateSheet.tsx';
+import { RangeToTarget } from './Range.tsx';
 
 /**
  * The dice grid, SUMMONED rather than imported (§L phase 3.5).
@@ -446,6 +448,36 @@ export function Exchange({
   const foe = actor.type === 'foe';
   /** The printed profile decides this, never the Warden and never this file. */
   const aoe = armed.aoe === true;
+
+  /**
+   * THE GROUND, measured from whoever is acting.
+   *
+   * The old app worked the gap out in the browser at draw time, in
+   * pixels, which is why nothing but the map ever knew a distance. The
+   * server measures it now (`server/geometry.ts`) and this asks the
+   * same door the proposer bridge reads — one arithmetic, so what the
+   * Warden sees on the card and what a plugin was told are the same
+   * number by construction.
+   *
+   * Refetched when the tokens move or the fight turns; a failure is
+   * just an absent measurement, and an absent measurement says "not on
+   * the board" rather than pretending everyone is adjacent.
+   */
+  const geometry = useLive<BoardFacts>(() => fightGeometry(actor.id), [actor.id], {
+    on: ['board', 'boards', 'turn', 'entities'],
+  });
+  const gapTo = (
+    id: string,
+  ): { inches: number; band?: { name: string; world?: string } } | undefined => {
+    const facts = geometry.data;
+    if (!facts?.present) return undefined;
+    const token = facts.tokens.find((t) => t.entityId === id);
+    if (!token || token.awayInches === undefined) return undefined;
+    return {
+      inches: token.awayInches,
+      ...(token.awayBand ? { band: token.awayBand } : {}),
+    };
+  };
   const targets = targetIds
     .map((id) => sheetOf(id))
     .filter((t): t is Entity => t !== undefined);
@@ -888,6 +920,14 @@ export function Exchange({
               .filter((e) => e.id !== actor.id)
               .map((e) => {
                 const on = targetIds.includes(e.id);
+                // How far off they are, before you pick them — the
+                // measurement belongs to CHOOSING a target at least as
+                // much as to having chosen one, and a tooltip is where
+                // it fits without turning the row into a table.
+                const gap = gapTo(e.id);
+                const how = gap
+                  ? `${gap.band ? `${gap.band.name} — ` : ''}${Math.round(gap.inches * 10) / 10} in away`
+                  : 'not on the board';
                 return (
                   <button
                     key={e.id}
@@ -896,7 +936,7 @@ export function Exchange({
                         ? 'bg-amber-800 text-amber-50'
                         : 'bg-stone-800 text-stone-400 hover:bg-stone-700'
                     }`}
-                    title={on ? 'tap to take them back out' : undefined}
+                    title={on ? `${how} · tap to take them back out` : how}
                     onClick={() => {
                       toggleTarget(e.id);
                       touched();
@@ -938,6 +978,16 @@ export function Exchange({
                     </button>
                   </div>
                 )}
+
+                {/* How far off they actually are, beside what the armed
+                    thing says it reaches — the ruling the Warden makes
+                    at a glance, and never one teller makes for them. */}
+                <RangeToTarget
+                  name={target.name}
+                  {...(gapTo(target.id) ? { measured: gapTo(target.id) } : {})}
+                  {...(armed.band ? { declared: armed.band } : {})}
+                />
+
                 <div className="flex flex-wrap items-center gap-1">
                   {offered.map((o) => {
                     const on = s.defenses.includes(o.name);

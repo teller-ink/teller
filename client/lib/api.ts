@@ -3,6 +3,10 @@
 // permission slips, and keeps localStorage keys identical to the
 // vanilla client's so already-paired screens survive the swap.
 
+import type { BoardFacts } from '../../core/registry.ts';
+
+export type { BoardFacts };
+
 const KEY = 'teller.key';
 const DISPLAY = 'teller.display';
 
@@ -430,6 +434,17 @@ export function setNotice(text: string): Promise<{ notice: PublicNotice | null }
   return api<{ notice: PublicNotice | null }>('/api/notice', { body: { text } });
 }
 
+// ---- how far away everything is ---------------------------------------
+//
+// The DM's door onto `server/geometry.ts` — the fight measured on the
+// calibrated board, in inches, in squares, and in the system's own word
+// for that reach. DM-gated because it reports hidden tokens as hidden
+// (the public snapshot removes them), so nothing that draws from this
+// may ever be a player-facing surface.
+
+export function fightGeometry(from?: string): Promise<BoardFacts> {
+  return api<BoardFacts>(`/api/geometry${from ? `?from=${encodeURIComponent(from)}` : ''}`);
+}
 
 // ---- handouts and passed notes ----------------------------------------
 //

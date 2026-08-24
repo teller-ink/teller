@@ -12,11 +12,14 @@
 // board's proportions come out of a picture on disk, and a test that
 // stubbed that would pin a shape the running host never produces.
 
+import type { AddressInfo } from 'node:net';
+import type { Server } from 'node:http';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createCampaign, openShelf, type Shelf } from '../core/store.ts';
+import { serve } from './index.ts';
 import { Session } from './session.ts';
 import {
   bandOf,
@@ -691,5 +694,101 @@ describe('the ground a straight line crosses', () => {
     // nothing against itself.
     expect(byName.get('Barrett')?.between).toBeUndefined();
     expect(byName.get('Peril')?.between).toBeUndefined();
+  });
+});
+
+// -- the door -----------------------------------------------------------
+//
+// The runner draws the fight's distances, so the measurement needed a
+// way out of the server. It is the DM's door and only the DM's, and the
+// reason is in `fightGeometry` itself: it REPORTS a hidden token rather
+// than removing it, which is the ambush the public snapshot exists to
+// strip. A passive screen that could ask this could find the ambush.
+
+describe('GET /api/geometry, as a door', () => {
+  const KEY = 'test-key-0123456789abcdef';
+  let server: Server;
+  let base: string;
+
+  async function call(
+    path: string,
+    opts: { key?: boolean; display?: string } = {},
+  ): Promise<{ status: number; body: any }> {
+    const headers: Record<string, string> = {};
+    if (opts.key) headers['x-teller-key'] = KEY;
+    if (opts.display) headers['x-teller-display'] = opts.display;
+    const res = await fetch(`${base}${path}`, { headers });
+    return { status: res.status, body: await res.json() };
+  }
+
+  beforeEach(async () => {
+    server = serve(session, 0, KEY);
+    await new Promise((r) => server.on('listening', r));
+    base = `http://localhost:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise((r) => server.close(r));
+  });
+
+  it('answers the DM with the same facts the bridge measures', async () => {
+    const id = board();
+    const acting = session.create({ name: 'Peril', lists: {} }, 'test');
+    const other = session.create({ name: 'Rook', lists: {} }, 'test');
+    session.putBoardState(
+      id,
+      {
+        placements: [
+          { entityId: acting.id, u: 0.25, v: 0.5 },
+          { entityId: other.id, u: 0.5, v: 0.5 },
+          { label: 'the ambush', u: 0.9, v: 0.9, hidden: true },
+        ],
+      },
+      'test',
+    );
+
+    const res = await call(`/api/geometry?from=${acting.id}`, { key: true });
+    expect(res.status).toBe(200);
+    expect(res.body.present).toBe(true);
+    expect(res.body.measuredFrom).toBe('Peril');
+    const rook = res.body.tokens.find((t: { entityId?: string }) => t.entityId === other.id);
+    expect(rook.awayInches).toBe(10);
+    expect(rook.awaySquares).toBe(10);
+    // Hidden is REPORTED here, which is exactly why the door is gated.
+    expect(res.body.tokens.some((t: { hidden: boolean }) => t.hidden)).toBe(true);
+  });
+
+  it('an adopted passive screen may not measure the board', async () => {
+    const hello = await fetch(`${base}/api/displays/hello`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    }).then((r) => r.json() as Promise<{ display: { id: string; code: string } }>);
+    await fetch(`${base}/api/displays/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-teller-key': KEY },
+      body: JSON.stringify({ code: hello.display.code }),
+    });
+    await fetch(`${base}/api/displays/${hello.display.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'x-teller-key': KEY },
+      body: JSON.stringify({ role: 'table' }),
+    });
+
+    expect((await call('/api/geometry', { display: hello.display.id })).status).toBe(401);
+    expect((await call('/api/geometry')).status).toBe(401);
+  });
+
+  it('with nobody named, it says so rather than measuring from nowhere', async () => {
+    const id = board();
+    const alone = session.create({ name: 'Peril', lists: {} }, 'test');
+    session.putBoardState(
+      id,
+      { placements: [{ entityId: alone.id, u: 0.5, v: 0.5 }] },
+      'test',
+    );
+    const res = await call('/api/geometry', { key: true });
+    expect(res.body.present).toBe(true);
+    expect(res.body.unmeasured).toContain('nobody is acting');
   });
 });

@@ -1181,6 +1181,24 @@ export async function handleApi(
     return reply(200, publicSnapshot(session));
   }
 
+  // -- how far away everything is ---------------------------------------
+  //
+  // The board, MEASURED (`server/geometry.ts`) — the same facts the
+  // proposer bridge hands a plugin, through a door the DM's own screens
+  // can knock on. It exists because the runner needed the one thing
+  // only the host could answer: the target is three inches away, which
+  // is Short, and the thing you armed reaches Melee.
+  //
+  // DM-GATED, and that is not a formality. It reports hidden tokens as
+  // hidden and keeps them (the file says so out loud), which is exactly
+  // the ambush the public snapshot strips — so this is the DM's screen
+  // and nowhere else. `from` is whose turn it is; without one every
+  // distance is simply absent, said in words.
+  if (method === 'GET' && head === 'geometry' && !a) {
+    if (!canDm(auth)) return denied();
+    const from = url.searchParams.get('from')?.trim();
+    return reply(200, fightGeometry(session, from || undefined));
+  }
 
   // Which system and packs this campaign runs on — the manifest's refs,
   // rewritten. An ABSENT (or emptied) pack list is not "no packs": it
