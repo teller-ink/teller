@@ -7,6 +7,17 @@ why. The thesis still governs: the table TV is the GROUND; physical
 minis and terrain are the actors; everything here is presentation +
 bookkeeping.
 
+**The design did not change in the fold; the facts moved house**
+(2026-08-24, ported end to end). A **board** is a shelf ASSET — the
+picture, its physical width, its grid style — reusable across
+campaigns and referenced by a minted `brd_` id (`server/boards.ts`).
+What's on it right now — placements, fog, zones, the view — is
+`board_state`, one row per board per campaign, and it never travels in
+a `.story`. The shapes live in `client/components/board/model.ts`, the
+player-safe stripping in `server/public.ts`, the console's workshop in
+`client/tools/boards.tsx`. Wherever this doc says "scene" read
+"board", and wherever it says "token" the stored word is `placement`.
+
 ## Coordinate spaces
 
 Three spaces, three jobs — never mix them:
@@ -22,14 +33,16 @@ Three spaces, three jobs — never mix them:
   ppi.
 - **Glass space** — the viewport maps one onto the other.
 
-## Scale: one fact per scene, one fact per display
+## Scale: one fact per board, one fact per display
 
-- Scene: optional `widthInches` (the map's intended physical width).
+- Board: optional `widthInches` (the map's intended physical width),
+  on the board ASSET, not in the state.
   Read it off the file — print-destined maps carry DPI, so
   `pixels ÷ dpi` (Boylei's are 10800px @ 300dpi = 36"). No value →
   fit-to-screen, and no cells, so no grid/painting/fog.
-- Display: calibrated `ppi`, in `campaign.data.grid.ppi`, derived from
-  the table's self-reported viewport ÷ its diagonal size.
+- Display: calibrated `ppi` (and `ppiY`) on the display row itself —
+  `server/calibration.ts` — derived from the table's self-reported
+  viewport ÷ its diagonal size.
 - True scale factor = `ppi × widthInches / imageWidthPx`.
 
 ## The grid belongs to the MAP, not the screen
@@ -41,13 +54,15 @@ one grid**, drawn in map space inside the same transformed layer as
 tokens, ground and fog. It matches every painted cell by construction,
 and at true scale one cell is exactly one calibrated inch.
 
-Per scene: `grid: { on, color?, opacity? }` — a dark cave wants pale
-lines, bright sand wants dark ones. `campaign.data.grid.ox/oy/on` are
-legacy from the screen-fixed grid; only `ppi` still matters.
+Per board: `grid: { on, color?, opacity? }` — a dark cave wants pale
+lines, bright sand wants dark ones. It rides the board asset, beside
+`widthInches`, because both are calibration between pixels and the
+room rather than anything about a fight. The screen-fixed grid's
+pan offsets are gone; only the display's `ppi` still matters.
 
 ## Viewport
 
-Per scene, remembered across switches:
+Per board, remembered across switches:
 `view: { mode: 'fit' | 'true', zoom, cu, cv, locked? }`
 (`cu, cv` = map-space point at the viewport centre; `zoom` multiplies
 true scale — 1.0 is exact).
@@ -78,7 +93,7 @@ blurring the reveal mask, not from smaller geometry.
 - **Areas** (`regions: { id, name, cells, revealed }`) — paint a room
   once during prep, reveal the whole thing with one tap when the posse
   walks in. Brian's design; the reason fog is usable at speed.
-- Areas are DM-only structure: `publicScene` flattens fog to plain
+- Areas are DM-only structure: `publicBoardState` flattens fog to plain
   revealed cells, so the name and shape of an unentered room never
   reach the table.
 - Fog never switches itself on. Reaching for the tool or shaping an
@@ -88,20 +103,24 @@ blurring the reveal mask, not from smaller geometry.
 
 ## Tokens and painted ground
 
-Tokens: `{ id, label, u, v, sizeInches, color, characterId?, hidden?,
-effect?, shape?, rot? }`. Coloured discs; images are someday. No
-vision, no auras-as-data, no pathing — ever.
+Placements: `{ id, entityId?, label, color, u, v, sizeInches, shape?,
+rot?, hidden? }` — `client/components/board/model.ts`. Coloured discs;
+images are someday. No vision, no auras-as-data, no pathing — ever.
 
-- `characterId` unlocks **reactive effects**, pure render on the table
+- `entityId` unlocks **reactive effects**, pure render on the table
   from state already streaming over SSE: amber pulse on whoever's turn
-  it is; red glow when the linked character is bloodied/critical.
+  it is; red glow when the linked entity is bloodied/critical. How the
+  entity is DOING is derived through the link at render and never
+  stored, so a token cannot go stale (§5).
   Vitality is derived SERVER-side as a qualitative state from the first
   max-bearing counter, so NPC numbers never leak.
-- `effect` turns a token into an environmental zone (fire, oil, smoke,
-  ice, poison, water) with a shape and rotation — triangle + rotation
-  is a cone.
-- Effects work identically under a PHYSICAL mini: the token becomes the
-  ground marker the mini stands on.
+- A token could also BE an environmental zone (fire, oil, smoke, ice,
+  poison, water) with a shape and rotation — triangle + rotation is a
+  cone — which worked identically under a PHYSICAL mini: the token
+  became the ground marker the mini stood on. **That half did not come
+  across in the fold**: a placement carries `shape` and `rot` but no
+  `effect`, so environmental ground is painted `zones` only. Recorded
+  here rather than quietly dropped.
 
 Painted ground: `zones: { id, effect, cells, hidden? }[]`. **Identity
 is the id, not the effect** — two fires in different corners are two
@@ -114,28 +133,34 @@ contrast).
 ## Hidden means absent, not dimmed
 
 Hidden tokens, hidden ground layers and unrevealed fog areas are
-STRIPPED server-side in `publicScene`. The table client never receives
+STRIPPED server-side in `server/public.ts`. The table client never receives
 them, so nothing is discoverable in devtools. New tokens start hidden.
 
 ## Where state lives
 
-All additive on the scene entries in `campaign.data.maps` — no
-migration. Console edits → campaign PATCH (whole `maps` array, like
-`counters`) → event log → SSE poke → table refetch. Only the ACTIVE
-scene flows to `/public`; the scene LIBRARY stays DM-only, which is
-what makes off-table prep safe.
+Split, and the split is the point (§4). The board — picture,
+`widthInches`, `grid` — is a SHELF row, because a board outlives the
+campaign that showed it. Everything a fight does to it is
+`board_state`, one blob of `{ placements, view, fog, zones }` per
+campaign, which is why deploying foes and deleting an entity are pure
+functions over that blob (`server/boards.ts`) instead of console-only
+edits. Console edits → write → event log → SSE poke → refetch. Only
+the ACTIVE board flows to `/public` (`activeBoard`, `server/public.ts`);
+the board LIBRARY stays DM-only, which is what makes off-table prep
+safe.
 
 ## Console surface
 
-The **map pane** IS the workshop — not a modal. A fullscreen canvas
-with floating tool overlays, editing whatever scene you select, which
-is deliberately independent of what's on the table (`put on table ↗`
-promotes it). Edits are LIVE and debounced, with an in-editor undo
+The **boards tool** IS the workshop — not a modal (`client/tools/
+boards.tsx` over `client/components/board/BoardEditor.tsx`). A
+fullscreen canvas with floating tool overlays, editing whatever board
+you select, which is deliberately independent of what's on the table
+(putting it on the table promotes it). Edits are LIVE and debounced, with an in-editor undo
 stack (⌘Z) rather than save/cancel, so you can iterate against the
 real table without a round trip.
 
 Tools: select (drag tokens, pan view) · frame (aim the table) · lock ·
-pan · paint · fog · add token · snap · grid. Panels: scene (width,
+pan · paint · fog · add token · snap · grid. Panels: board (width,
 calibration, grid style, clear) · ground (layers) · fog (areas) ·
 tokens.
 

@@ -1,0 +1,16 @@
+{
+  "id": "sys_starter",
+  "name": "Starter",
+  "version": 1,
+  "kinds": [
+    {
+      "name": "conditions",
+      "label": "Conditions",
+      "note": "A list of things an entity is currently under, each held as a number — how many, how badly, how long. Zero clears the entry rather than storing a zero, which is what makes a condition either ON or gone. Nothing here names any condition: what they are is the table's to type in.",
+      "domain": {
+        "kind": "count",
+        "zero": "clears"
+      }
+    }
+  ]
+}

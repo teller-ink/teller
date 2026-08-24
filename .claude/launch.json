@@ -2,10 +2,35 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "teller",
+      "name": "core-next",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "server/index.ts",
+        "--data",
+        "/Users/briancorbin/.teller",
+        "--campaign",
+        "the-unlikely-duo"
+      ],
+      "port": 4526
+    },
+    {
+      "name": "client-dev",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["dev"],
-      "port": 4525
+      "runtimeArgs": [
+        "client:dev"
+      ],
+      "port": 4527
+    },
+    {
+      "name": "client-dev-4528",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "client:dev",
+        "--",
+        "--port",
+        "4528"
+      ],
+      "port": 4528
     }
   ]
 }

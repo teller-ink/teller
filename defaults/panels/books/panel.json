@@ -1,0 +1,20 @@
+{
+  "name": "books",
+  "label": "Books",
+  "blurb": "The rulebooks on this machine — search every page, open one at a page.",
+  "subject": "none",
+  "order": 93,
+  "mounted": [
+    {
+      "block": "tool",
+      "tool": "books"
+    }
+  ],
+  "held": [
+    {
+      "block": "tool",
+      "tool": "books"
+    }
+  ],
+  "id": "pan_3f1c8a0d5e72"
+}

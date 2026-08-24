@@ -1,0 +1,40 @@
+{
+  "id": "plg_57012c4ab8e3",
+  "name": "The Counter",
+  "version": 1,
+  "provides": [
+    { "point": "door.shop", "role": "prep" },
+    { "point": "door.cart", "role": "prep" },
+    { "point": "door.sell", "role": "dm" },
+    { "point": "door.vendors", "role": "prep" },
+    {
+      "point": "pane.store",
+      "name": "store",
+      "label": "Store",
+      "blurb": "Shops as written, and the counter a cart is ruled on.",
+      "subject": "none",
+      "entry": "panes/store.tsx"
+    },
+    {
+      "point": "pane.shop",
+      "name": "Shop",
+      "label": "Shop",
+      "blurb": "The shelf a player browses while the shop is open.",
+      "subject": "entity",
+      "icon": "coin",
+      "when": "shop",
+      "entry": "panes/shop.tsx"
+    }
+  ],
+  "needs": [
+    "read:declarations/vendors — the shops, as written, from every layer",
+    "read:templates/catalog — the goods, their prices and their stats",
+    "read:records/store — which counter a purchase debits, and which stat holds a price",
+    "read:records/currency — the coins this system counts money in",
+    "read:records/growth — the grades nobody simply stocks",
+    "read:entities — to price a cart against what its buyer is carrying",
+    "write:entities — the shop goes live at the first sale, and the goods change hands",
+    "write:templates/vendors — to author and delete this campaign's own shops",
+    "write:log — the receipt, and the fact that the shop opened"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "bestiary",
+  "label": "Bestiary",
+  "blurb": "Everything you could put in front of the party.",
+  "subject": "none",
+  "mounted": [
+    {
+      "block": "tool",
+      "tool": "bestiary"
+    }
+  ],
+  "held": [
+    {
+      "block": "tool",
+      "tool": "bestiary"
+    }
+  ],
+  "id": "pan_25e35dbbfd67"
+}

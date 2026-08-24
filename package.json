@@ -5,15 +5,12 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "typecheck": "tsc --noEmit",
+    "client:dev": "vite --config vite.client.config.ts",
+    "client:build": "vite build --config vite.client.config.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.client.json",
     "host": "node bin/teller host",
-    "preview": "npm run build && wrangler dev",
-    "deploy": "npm run build && wrangler deploy",
-    "db:migrate:local": "wrangler d1 migrations apply teller --local",
-    "db:migrate:remote": "wrangler d1 migrations apply teller --remote",
-    "pack": "npm run build && node scripts/pack.mjs"
+    "pack": "npm run client:build && node scripts/pack.mjs",
+    "test": "vitest run"
   },
   "dependencies": {
     "pdfjs-dist": "^6.2.108",
@@ -21,16 +18,16 @@
     "react-dom": "19.2.0"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.37.1",
-    "@cloudflare/workers-types": "^4.20260515.1",
     "@tailwindcss/vite": "^4.3.0",
+    "@types/node": "^26.2.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.2.0",
+    "esbuild": "^0.28.2",
     "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3",
     "vite": "^7.3.3",
-    "wrangler": "^4.110.0"
+    "vitest": "^4.1.10"
   },
   "bin": {
     "teller": "bin/teller"

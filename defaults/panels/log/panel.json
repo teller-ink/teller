@@ -1,0 +1,20 @@
+{
+  "name": "log",
+  "label": "Log",
+  "blurb": "Everything that happened, newest first (rule 3, readable).",
+  "subject": "none",
+  "order": 98,
+  "mounted": [
+    {
+      "block": "tool",
+      "tool": "log"
+    }
+  ],
+  "held": [
+    {
+      "block": "tool",
+      "tool": "log"
+    }
+  ],
+  "id": "pan_2a788cc77d3a"
+}

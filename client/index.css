@@ -1,0 +1,13 @@
+@import 'tailwindcss';
+
+/* Ink-and-paper base, ported from the old app verbatim — dark is the
+   table default; a glowing rectangle in a candlelit room should
+   whisper. Identity beyond this arrives from records (accents, dials),
+   never from this file (§E: the stylesheet is teller's own tokens). */
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-stone-950 text-stone-200 antialiased;
+}

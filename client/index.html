@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>teller</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!--
+      The rung-4 import map (§E UN-DEFERRED, docs/CORE-NEXT.md): panel
+      code compiled by the sweep (core/compile.ts, PANEL_IMPORTS)
+      imports these bare specifiers, and only these resolve.
+      `system` is the odd one out and the point of §L phase 2: it is
+      served, not built — a generated index module re-exporting the
+      active system's pack-carried presentations, empty when no pack
+      supplies any, so importing it never 404s a panel.
+      `system/` is the PREFIX mapping beside it (§M-4a): `system/creation`
+      is one file of the active system's declared function, resolved
+      through a no-store shim that re-exports the stamped module. A
+      prefix key is why the specifier is spelled with a slash — import
+      maps resolve those natively.
+      `/runtime-*.js` is a stable, unhashed build output
+      (vite.client.config.ts) in prod; in dev the same urls are
+      answered by a small middleware in that same config that
+      transforms `client/runtime/*.ts` through Vite's normal pipeline
+      — one set of urls either way, documented there.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "/runtime-react.js",
+          "react/jsx-runtime": "/runtime-jsx-runtime.js",
+          "teller": "/runtime-teller.js",
+          "system": "/pack-code/system.js",
+          "system/": "/system-export/"
+        }
+      }
+    </script>
+    <script type="module" src="/main.tsx"></script>
+  </body>
+</html>

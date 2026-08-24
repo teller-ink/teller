@@ -1,0 +1,17 @@
+{
+  "name": "bare",
+  "label": "Bare",
+  "blurb": "The floor's grammar — every stored value, one control each.",
+  "subject": "entity",
+  "mounted": [
+    {
+      "block": "floor"
+    }
+  ],
+  "held": [
+    {
+      "block": "floor"
+    }
+  ],
+  "id": "pan_842e1d16ce96"
+}

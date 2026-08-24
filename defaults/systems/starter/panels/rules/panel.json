@@ -1,0 +1,19 @@
+{
+  "name": "rules",
+  "label": "Rules",
+  "blurb": "Whatever your packs wrote down, searchable.",
+  "subject": "none",
+  "mounted": [
+    {
+      "block": "tool",
+      "tool": "rules"
+    }
+  ],
+  "held": [
+    {
+      "block": "tool",
+      "tool": "rules"
+    }
+  ],
+  "id": "pan_17d25a9f33ea"
+}

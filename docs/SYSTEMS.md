@@ -12,8 +12,16 @@ sketched here. Screens get designed one at a time, at the table's
 pace, which is the half of the process that has actually worked.
 
 Rule 4 note: mechanics are not protected expression and belong to the
-template/repo; the book's PROSE stays in the pack. Everything below is
+SYSTEM; the book's PROSE stays in the pack. Everything below is
 paraphrase + page references (printed page; PDF page = printed + 14).
+
+**Read the marks as of the fold** (2026-08-24). This survey was taken
+against the old app; the world it cites was folded, and the citations
+below have been re-pointed at their new homes. A system is no longer a
+database row — it is a folder on the shelf (`systems/<name>/`), and
+where this file says "the template" read `system.json`'s record slots.
+Where something did not come across, it says so rather than staying
+green.
 
 Status marks: ✅ built · 🔶 partly built · ⬜ not built · 🎲 stays
 physical / the table's business (teller may reference, never run).
@@ -28,7 +36,7 @@ Spurs reroll **only** with the matching Talent (§14). Rolling is
 physical — teller renders pools and may roll only where a human asked
 it to (initiative).
 
-- **Shape:** `SystemTemplate.dice` — shipped.
+- **Shape:** the system's `dice` record — shipped.
 - **Touches:** Talents (spur rerolls), Ace-in-the-Hole (ace tally, §4),
   Misfire house rule (official dice landing on end — pure table).
 
@@ -106,19 +114,27 @@ attempt per status per turn. `[2B]` = roll for severity; `[2]` = flat.
 after relief until proper care; they don't stack with themselves.
 
 - **Built:** StatusPanel with severity boxes ✅. **The seven live in the
-  SYSTEM** (2026-08-16), each with its relief skill — `statuses.list` on
-  the template, merged with anything a pack or the campaign adds
-  (`worker/statuses.ts`). They were in the Guidebook pack, which meant a
-  host without it had no conditions at all; the pack still carries what
-  each one MEANS. A condition on a character is a `Tag` —
-  `{name, value?}`, never a string with the number on the end
-  (`worker/tags.ts`).
+  SYSTEM** (2026-08-16), each with its relief skill — the system's
+  `statuses` declaration, merged with anything a pack or the campaign
+  adds (`core/boot.ts`, field by field via `layerBy` in
+  `core/merge.ts`). They were in the Guidebook pack, which meant a host
+  without it had no conditions at all; the pack still carries what each
+  one MEANS. A condition on an entity is an `Entry` — `{name, value?,
+  max?}` in a declared list, never a string with the number on the end
+  (`core/entity.ts`, ported whole from the old `worker/tags.ts`), and
+  what the list MEANS is a kind declaration (`core/kind.ts`).
 - **Gone:** the "state suggestions" (Bloodied, Down, Out of Grit). They
   were never statuses — each was a threshold over a counter, stored as a
   fact, so a healed character stayed Bloodied until somebody noticed.
-  Deriving them instead is open and unbuilt; the Frenzy case suggests
-  the answer is derivation at the point of USE, which is what
-  `thresholdOf` in `worker/assistant.ts` already does for the prompt.
+  Deriving them instead is open and unbuilt, and the fold made that
+  gap sharper rather than smaller: the assistant's old `thresholdOf`
+  did not come across (the assistant is a plugin now,
+  `examples/plugins/assistant/`), and the one place a threshold still
+  lives is `vitalityOf` in `server/public.ts`, which hardcodes 0.5 and
+  0.25 in the KERNEL where the old world declared them per system.
+  That is recorded doctrine drift — see the fold-gate audit in
+  `docs/CORE-NEXT.md` — and it gets fixed when state-suggestion
+  derivation is actually built.
 - **Not built:** lasting effects are pack prose; Captured thresholds
   belong in bestiary/pack data if ever needed. The `effect` palette is
   SHORT — six visuals for seven statuses, so Afraid and Dazed currently
@@ -157,7 +173,7 @@ at most a someday reference card in the pack.
 ## 10. Money, wages, shopping (p. 63) ✅ / 🎲
 
 Money is COINS (2026-08-14): each denomination an ordinary counter,
-composed by the template's `currency` declaration; the pocket shows one
+composed by the system's `currency` declaration; the pocket shows one
 purse chip that opens into the counts ✅. Wage tables are reference
 (pack). Prices are filing data on catalogue entries ✅ — the whole
 priced catalogue is entered (weapons, traps, tools, explosives, first
@@ -169,6 +185,12 @@ seat, carts go on the counter, and the haggle happens out loud — the
 DM types the final figure over the book's total and teller books the
 transfer (coins paid, change back, goods landed, services consumed,
 one event). "Prices are often negotiable" is the book's own economy.
+
+**The bookkeeper is a PLUGIN now** (§15, plugin №2, extracted
+2026-08-20 — `examples/plugins/store/`). Built still means built, but
+it means "on a host where somebody copied it onto their shelf and
+enabled it", not "on every host": teller ships zero plugins and a fresh
+install has no store until a human turns one on.
 
 ## 11. Weapons (p. 64–67) ✅ / 🔶
 
@@ -370,7 +392,14 @@ Surprise = narrative. Shipped: initiative declaration + roll-and-sort.
 
 ## The template vocabulary, audited
 
-What exists after this survey, and whether it generalizes:
+What existed after this survey, and whether it generalizes. **Taken
+2026-08-11 against the old `SystemTemplate` row; the shapes generalized
+and the HOME changed** — these are now record slots in a system folder's
+`system.json` (`core/boot.ts` reads them; §M-6a's sibling-`*.json` rule
+lets a long one have its own file). Two entries have moved on: `states`
+is superseded by `kinds` + a declared `statuses` list (`core/kind.ts` —
+there is no un-kinded bucket), and `groups`/`pins` were folded into the
+panels grammar, which is now files rather than a key (§M-5a/5a′).
 
 | Key | Carries | Verdict |
 |---|---|---|

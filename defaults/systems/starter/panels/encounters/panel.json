@@ -1,0 +1,19 @@
+{
+  "name": "encounters",
+  "label": "Encounters",
+  "blurb": "Prep: author a fight against the merged bestiary.",
+  "subject": "none",
+  "mounted": [
+    {
+      "block": "tool",
+      "tool": "encounters"
+    }
+  ],
+  "held": [
+    {
+      "block": "tool",
+      "tool": "encounters"
+    }
+  ],
+  "id": "pan_34f28522e5cf"
+}

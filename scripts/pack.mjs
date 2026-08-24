@@ -2,12 +2,26 @@
 //
 // Build the tarball Homebrew installs.
 //
-// What goes in is deliberately small: the built app, the migrations, the
-// host, and a package.json that exists only so `teller version` has
-// something to read. **No node_modules** — the host imports nothing but
-// node builtins, so there is nothing to install, nothing to compile, and
-// no native module to go stale when Node updates. That's the property
-// that makes the formula five lines long, and it's worth protecting.
+// What goes in is the new world and nothing else: `bin/`, the server and
+// the core it calls (TypeScript, unbundled — Node strips the types as it
+// loads, so there is no build step at the far end), `defaults/` for the
+// panels teller ships, the built client in `server/dist`, and a
+// package.json that exists so `teller version` has something to read.
+//
+// **node_modules is no longer empty, and that's the honest part.** The
+// old host imported nothing but node builtins, so the formula could
+// unpack a folder and stop. The new server imports `esbuild` (a `.panel`
+// and a pack's presentations are compiled on the host) and, when a
+// rulebook is swept, `pdfjs-dist`. Neither can be wished away, so the
+// tarball carries them — installed into the staged tree, production
+// only, so `brew install` still unpacks a folder and stops.
+//
+// The cost, said out loud: both of those pull NATIVE binaries
+// (`@esbuild/<platform>`, `@napi-rs/canvas`), so this tarball is built
+// for the platform it was packed on. Cross-platform releases mean one
+// tarball per platform (or a formula that installs deps at the far end),
+// and that is a release-engineering decision the fold has to make — not
+// something to discover from a Linux user's bug report.
 
 import { execFile } from 'node:child_process';
 import { mkdir, cp, rm, readFile, writeFile, stat } from 'node:fs/promises';
@@ -20,15 +34,17 @@ import { promisify } from 'node:util';
 const run = promisify(execFile);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const INCLUDE = ['bin', 'host', 'migrations', 'dist'];
+// `server` carries its own `dist` (the built client) and `public` (the
+// vanilla fallback) along with it.
+const INCLUDE = ['bin', 'core', 'server', 'defaults'];
 
-// The one thing vendored in: pdfjs, so the host can read a rulebook.
-// It's pure JavaScript — no native module, nothing to compile — so the
-// property that matters survives: `brew install` unpacks a folder and
-// there is never an install step.
-const VENDOR = [
-  ['node_modules/pdfjs-dist/legacy/build/pdf.mjs', 'vendor/pdfjs/pdf.mjs'],
-];
+// Tests are source, not product. Nothing in the installed copy runs them
+// and vitest isn't there to try.
+const skipTests = (src) => !src.endsWith('.test.ts');
+
+// The two packages the server actually reaches for. Everything else in
+// `dependencies` is the client's, and the client arrives built.
+const DEPS = ['esbuild', 'pdfjs-dist'];
 
 async function main() {
   const pkg = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8'));
@@ -37,23 +53,20 @@ async function main() {
   const out = join(ROOT, 'build');
   const stage = join(out, name);
 
-  if (!(await stat(join(ROOT, 'dist', 'teller', 'index.js')).catch(() => null))) {
-    throw new Error('no build — run `pnpm build` first');
+  if (!(await stat(join(ROOT, 'server', 'dist', 'index.html')).catch(() => null))) {
+    throw new Error('no client build — run `pnpm client:build` first');
   }
 
   await rm(out, { recursive: true, force: true });
   await mkdir(stage, { recursive: true });
   for (const dir of INCLUDE) {
-    await cp(join(ROOT, dir), join(stage, dir), { recursive: true });
-  }
-  for (const [from, to] of VENDOR) {
-    await mkdir(dirname(join(stage, to)), { recursive: true });
-    await cp(join(ROOT, from), join(stage, to));
+    await cp(join(ROOT, dir), join(stage, dir), { recursive: true, filter: skipTests });
   }
 
   // A stripped package.json: the installed copy is not a project anyone
   // builds from, and shipping devDependencies would invite Homebrew to
-  // think otherwise.
+  // think otherwise. `type: module` and the dependency names stay,
+  // because Node reads both when it resolves what's beside them.
   await writeFile(
     join(stage, 'package.json'),
     `${JSON.stringify(
@@ -63,6 +76,9 @@ async function main() {
         license: pkg.license,
         type: 'module',
         bin: { teller: 'bin/teller' },
+        dependencies: Object.fromEntries(
+          DEPS.map((dep) => [dep, pkg.dependencies?.[dep] ?? pkg.devDependencies?.[dep] ?? '*']),
+        ),
         private: true,
       },
       null,
@@ -72,6 +88,20 @@ async function main() {
   for (const file of ['LICENSE', 'README.md']) {
     await cp(join(ROOT, file), join(stage, file)).catch(() => {});
   }
+
+  // The dependencies, installed rather than copied. Copying two folders
+  // out of pnpm's store looks tidier and is wrong twice over: esbuild's
+  // compiler is a native binary in a sibling `@esbuild/<platform>`
+  // package, and pdfjs reaches for `@napi-rs/canvas` (native again) the
+  // moment it loads. Both live in the store beside their parent, not
+  // under it, and chasing them by hand is reimplementing a package
+  // manager. So: a real, production-only install into the staged tree.
+  // It needs the network at PACK time — never at install time, which is
+  // the property the formula actually depends on.
+  await run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund', '--silent'], {
+    cwd: stage,
+  });
+  await rm(join(stage, 'package-lock.json'), { force: true });
 
   const tarball = join(out, `${name}.tar.gz`);
   // Plain, portable tar. macOS ships bsdtar, which has neither --sort nor
@@ -89,7 +119,7 @@ async function main() {
   await rm(stage, { recursive: true, force: true });
 
   console.log(`\n  ${tarball}`);
-  console.log(`  ${(size / 1024 / 1024).toFixed(1)} MB`);
+  console.log(`  ${(size / 1024 / 1024).toFixed(1)} MB  (${process.platform}-${process.arch})`);
   console.log(`  sha256 ${sha}\n`);
   console.log('  formula fields:');
   console.log(

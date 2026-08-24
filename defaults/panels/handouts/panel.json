@@ -1,0 +1,20 @@
+{
+  "name": "handouts",
+  "label": "Handouts",
+  "blurb": "The pictures, and the notes you pass.",
+  "subject": "none",
+  "order": 91,
+  "mounted": [
+    {
+      "block": "tool",
+      "tool": "handouts"
+    }
+  ],
+  "held": [
+    {
+      "block": "tool",
+      "tool": "handouts"
+    }
+  ],
+  "id": "pan_ec16612dece8"
+}

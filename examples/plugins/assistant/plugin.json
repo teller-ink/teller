@@ -1,0 +1,13 @@
+{
+  "id": "plg_7ec543dd0e9a",
+  "name": "Assistant",
+  "version": 4,
+  "provides": ["propose.turn", "propose.narrate"],
+  "needs": [
+    "read:entities — every combatant's sheet, so it can see who is hurt, how fast they are and what they are holding",
+    "read:board — where everyone is standing, and how far apart",
+    "read:records — the system's own spatial law: what a range band means in the world, how a step is paid for, and the whole menu of things a turn can be spent on",
+    "read:log — what already happened this fight, so a condition has a cause instead of an invented one",
+    "network: the model endpoint in its config"
+  ]
+}

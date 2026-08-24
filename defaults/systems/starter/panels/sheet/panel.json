@@ -1,0 +1,17 @@
+{
+  "name": "sheet",
+  "label": "Sheet",
+  "blurb": "Who it is, and everything stored about it.",
+  "subject": "entity",
+  "mounted": [
+    {
+      "block": "rest"
+    }
+  ],
+  "held": [
+    {
+      "block": "rest"
+    }
+  ],
+  "id": "pan_d52b3a47c1ae"
+}

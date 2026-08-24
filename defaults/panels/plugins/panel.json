@@ -1,0 +1,20 @@
+{
+  "name": "plugins",
+  "label": "Plugins",
+  "blurb": "Discovered on disk; enabled only by you, here.",
+  "subject": "none",
+  "order": 96,
+  "mounted": [
+    {
+      "block": "tool",
+      "tool": "plugins"
+    }
+  ],
+  "held": [
+    {
+      "block": "tool",
+      "tool": "plugins"
+    }
+  ],
+  "id": "pan_5d4111763802"
+}

@@ -1,2 +1,23 @@
 #!/usr/bin/env node
-import '../host/cli.mjs';
+//
+// The installed command. Plain JavaScript on purpose: everything past
+// this file is TypeScript that Node strips as it loads, and a Node too
+// old to do that must fail with a sentence rather than a syntax error
+// inside a file the reader never opened.
+
+const major = Number(process.versions.node.split('.')[0]);
+if (!Number.isFinite(major) || major < 24) {
+  console.error(
+    `\n  teller needs Node 24 or newer (this is ${process.version}).\n` +
+      '  it runs its TypeScript unbundled, and reads `import.meta.main`,\n' +
+      '  neither of which older Node does.\n\n' +
+      '  brew upgrade node\n',
+  );
+  process.exit(1);
+}
+
+const { main } = await import('../server/cli.ts');
+await main(process.argv.slice(2)).catch((e) => {
+  console.error(`\n  ${e?.message ?? e}\n`);
+  process.exit(1);
+});

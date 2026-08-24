@@ -1,0 +1,19 @@
+{
+  "name": "roster",
+  "label": "Roster",
+  "blurb": "Everyone at the table; open a sheet, stamp a foe.",
+  "subject": "none",
+  "mounted": [
+    {
+      "block": "tool",
+      "tool": "roster"
+    }
+  ],
+  "held": [
+    {
+      "block": "tool",
+      "tool": "roster"
+    }
+  ],
+  "id": "pan_01c32db7ba2f"
+}

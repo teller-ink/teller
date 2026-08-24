@@ -5,19 +5,23 @@ that come up mid-game, and the bestiary that goes with them. Rulebook
 excerpts for your own table, or homebrew.
 
 **A pack is an archive — and a folder.** Drop a `.pack` into
-`~/.teller/packs/` and the host sweeps it in within ten seconds; drop an
-unzipped *directory* there and it installs identically. No restart, no
-upload step. The Rules panel's "add a pack" does the same through the
-browser, and packs that arrived that way get written back out as
-folders, so the shelf always shows everything this host has.
+`~/.teller/packs/` and the host sweeps it in; drop an unzipped
+*directory* there and it installs identically. The sweep runs on boot
+and on demand (`POST /api/shelf/sweep`, from the console's shelf), and
+it is VERSION-GATED — bump `version` in `pack.json` or the edit won't
+reinstall. There is deliberately no upload door: a pack arrives on the
+filesystem, the way a book does.
 
 The two forms are the same format for different jobs:
 
 - **A folder is what you author in.** Open `bestiary.json`, fix the foe,
-  bump `version` in `pack.json` — live within ten seconds. No zipping,
-  no copying, no upload.
-- **An archive is what you hand someone.** `GET /api/packs/:id/file`
-  builds one on demand, art included.
+  bump `version` in `pack.json`, sweep — live. No zipping, no copying,
+  no upload.
+- **An archive is what you hand someone.** `GET /api/packs/:id/export`
+  builds one on demand, art included. (There is no `.system` export to
+  match it — doors 2 and 3 hold that until the kind declaration is
+  settled, so a `systems/<name>/` folder is the only serialization
+  there is.)
 
 ```
 wiw-guidebook/            ← or wiw-guidebook.pack, zipped
@@ -30,7 +34,31 @@ wiw-guidebook/            ← or wiw-guidebook.pack, zipped
   creation.json           the creation flow's own prose
   notes.json              the sheet's panel captions
   art/                    the pictures
+  presentations/          the book's own faces — see below
 ```
+
+**A system is no longer part of a pack.** It lives beside it, in its own
+shelf folder — `~/.teller/systems/<name>/` — because the two halves have
+different rights and different lives:
+
+```
+systems/wiw/
+  system.json             sys_ id, name, version, and the record slots
+  presentations/          functional, unbranded components
+  panels/                 the system's own `.panel` folders
+  art/                    only what function demands
+```
+
+A **system is pure function**: kinds, dice, effects, the vocabulary, the
+mechanics code. Mechanics aren't protectable expression, so a system
+with no prose and no book art is anyone's to hand on. A **pack is the
+book's stuff**: monsters, items, sections, pictures, and the faces that
+ape the printed page — rights follow the content, as they always have.
+
+A `system.json` sitting inside a pack folder still works and always
+will (it is how the first conversion wrote things). The system folder
+simply wins if both exist, per id: **`systems/<name>/` > a pack's
+embedded `system.json` > a `shelf.db` row.**
 
 Only `pack.json` is required. Everything else is optional and a pack
 declares itself by what it contains — a bestiary-only pack and a whole
@@ -100,9 +128,11 @@ anyone, and it's the same deal books have always had.
   {
     "id": "npc_example_varmint",
     "name": "Example Varmint",
-    "fields": [{ "key": "defense", "label": "Defense", "value": "3G" }],
-    "counters": [{ "id": "ctr_hp", "name": "Health", "current": 24, "max": 24 }],
-    "tags": [],
+    "lists": {
+      "defense": [{ "name": "Defense", "value": "3G" }],
+      "counters": [{ "name": "Health", "value": 24, "max": 24 }],
+      "conditions": []
+    },
     "page": 186
   }
 ]
@@ -111,6 +141,57 @@ anyone, and it's the same deal books have always had.
 Each part file holds a bare array or object — no wrapper key, because
 the file name already said what it is. `catalog.json`, `trades.json`,
 `creation.json` and `notes.json` follow the same rule.
+
+**The file name IS the slot name**, and that's the whole rule — there is
+no list of permitted files. Drop `upgrades.json` beside the others and
+the pack has an `upgrades` slot; the files above are simply the ones
+anything reads today. Two names are reserved, because they carry
+identity rather than content: `pack.json` and `system.json`.
+
+### `system.json` — the system, in its own folder
+
+Written in `systems/<name>/system.json`, beside the pack rather than
+inside it. (A copy inside a pack folder is still read, for packs
+exported before the split — the system folder wins where both exist.)
+
+```json
+{
+  "id": "sys_example",
+  "name": "Example System",
+  "version": 3,
+
+  "vocabulary": { "conditions": "Afflictions" },
+  "dials": { "Grit": "cylinder" },
+  "kinds": [{ "name": "conditions", "domain": { "kind": "count", "zero": "clears" } }]
+}
+```
+
+`id`, `name` and `version` are the system's identity and are reserved;
+**every other key is a record slot, inline**. That's the one place this
+format differs from the pack half, and deliberately: a pack's slots are
+long lists that each want a file (65 foes do not belong beside an id),
+while a system's are a dozen small records read and edited together —
+`dials` is four lines. One file keeps the whole vocabulary in one
+editor buffer, which is what editing a system actually looks like.
+
+A system whose id matches one already on the shelf REPLACES it while the
+folder is there: the folder is the authoring copy, so the folder wins.
+Most packs carry no system of their own at all — a bestiary for a system
+that arrived some other way is the ordinary case.
+
+A system folder may also carry `presentations/` and `panels/`, on
+exactly the terms below: same sweep, same esbuild, same trust row —
+keyed by the `sys_` id instead of a `pak_` one.
+
+**The edit recipe**, which is the point of all of this:
+
+1. edit `~/.teller/packs/<name>/<file>.json`
+2. `POST /api/shelf/sweep`
+3. it's live
+
+A file that doesn't parse is reported in the sweep's answer and costs
+exactly that slot — the rest of the pack loads. Broken loudly beats
+missing quietly.
 
 ### `statuses.json` — conditions this pack adds
 
@@ -154,8 +235,78 @@ relative path on export. That's what lets two packs both carry an
 `art/logo.png` without meeting, and lets the same file install on any
 host and still find its own pictures.
 
+For a folder that means the sweep COPIES `art/` into the host's own
+`art/<pak_id>/`, file by file, skipping anything already newer than its
+source — so the picture is served from the one place the file route
+looks, and an untouched folder costs nothing on the next sweep. Not a
+symlink: a symlink survives neither a zip nor a copy to a stick, and it
+would ask the serving route to follow a path out of the data dir, which
+is the exact check that route exists to make.
+
 A book does NOT travel with a pack. It's referenced by hash, because a
 book is something the recipient owns; a monster portrait isn't.
+
+### `presentations/` — components, on either shelf
+
+A counter is a counter everywhere, but a *revolver* is not. teller ships
+the neutral floor — bars, steppers, chips, ledger rows — and whatever
+wants its own face brings it, as code:
+
+```
+systems/wiw/presentations/
+  StatusPanel.tsx         severity boxes with a relief caption each
+  HealthPanel.tsx         a capped gauge with its declared pins beside it
+  DicePool.tsx            the declared dice, as a tappable grid
+
+packs/wiw-guidebook/presentations/
+  Cylinder.tsx            a revolver: six chambers, spend one, reload
+```
+
+**Which shelf a file belongs on is one question: is anything about it
+branded?** A severity-boxed status plate is how the mechanic works, so
+it is the system's. Drawing a spend dial as a *revolver* is the book's
+picture, so it is the pack's — and a pack SKINS the system by restating
+the filename, because the merge puts the system's presentations first
+and the packs' after, later winning.
+
+**The file name is the summoning name, three times over**: it is the
+export name, it is what `import { Cylinder } from 'system'` gives a
+panel, and it is the word a record uses to ask for a face. A `dials`
+entry of `{"Grit": "cylinder"}` finds `Cylinder.tsx` (the exact word or
+that word capitalized — a pack needn't choose a spelling). Rename the
+file and nothing finds it.
+
+Each file **default-exports** its component. A file with no default
+export supplies nothing.
+
+Four rules, and each one is load-bearing:
+
+- **The host compiles it, at sweep.** esbuild builds each `*.tsx` into
+  `.build/presentations/`, rebuilding when the source is newer. There is
+  no toolchain for the author: edit the file on the shelf, sweep, look.
+  A compile error is a line in the load report, never a crash.
+- **A human enables it.** Code arriving from outside sits behind the
+  trust gate (the plugins tool, same row a code-carrying `.panel`
+  rides — keyed by the `pak_` or `sys_` id whose folder carries the
+  file). Until it's enabled the DATA loads and the code does not — the
+  console says so rather than pretending the folder is inert.
+- **Four specifiers resolve, and bare `system` is not one of them for a
+  pack.** `react`, `react/jsx-runtime`, `teller`, and `system/<name>` —
+  one file from the active system's `exports/` folder, named RELATIVELY
+  (§M-4a: the system's id is spelled once, in `pack.json`, so the
+  declaration and the import can never disagree). Bare `system` is the
+  merged presentation index, which a pack RIDES — importing it is a
+  cycle, and the compiler refuses it out loud (`PACK_IMPORTS` in
+  `core/compile.ts`). A missing export refuses out loud too, naming all
+  three parties. Anything else you import gets bundled into the output.
+- **A presentation carries no facts.** Entity, records, catalogue, the
+  write door — all arrive as props. The folder owns look and behaviour;
+  the campaign owns the numbers.
+
+A host whose system and packs supply no presentations still plays:
+teller falls back to the floor, and a counter with nobody's face on it is drawn as a
+bar you can still edit. A face is dressing; the stored value is the
+sheet.
 
 Every value above is invented. A pack's contents are somebody's rules
 text, and this file is public — so the example teaches the shape and
@@ -184,13 +335,13 @@ a real statement, and it's how a file decides whether it supersedes what
 the host already has: a file only overwrites a stored pack when its
 version is strictly **greater**. Equal versions leave the stored one
 alone, because it may have been edited on the host and that edit is a
-person's decision (rule 1). Uploading through the console is explicit
-intent and always replaces.
+person's decision (rule 1) — which is why an unbumped edit doesn't
+reinstall, and why bumping is the whole ritual.
 
 ### Which packs a campaign uses
 
 A campaign declares its packs by id, **in precedence order**, in the
-console's Rules panel under "running on". When two packs print the same
+console's shelf tool under THIS CAMPAIGN. When two packs print the same
 foe, **the later one wins** — name the base, then what layers on top.
 Per-foe exceptions are the "printed in 2 books" picker in the bestiary.
 
@@ -248,14 +399,14 @@ the same book. Attach both.
 
 The reference identifies; it never authorises. A pack whose book isn't
 on this host works completely — the console just says the book is
-missing instead of offering a page you can't open. You can attach and
-detach books from the Rules panel without editing JSON.
+missing instead of offering a page you can't open.
 
-### `npcs` — the bestiary the pack brings
+### `bestiary.json` — the foes the pack brings
 
-`NpcBlueprint`s: `id`, `name`, `fields`, `counters`, `tags`. Having the
-pack means having the foes, the way having the book on the shelf does,
-instead of every new campaign starting empty.
+Entity-shaped templates: `id`, `name`, optional `type`, `lists`,
+`notes`, `children`, plus the shelf limbs (`group`, `page`, `slots`).
+Having the pack means having the foes, the way having the book on the
+shelf does, instead of every new campaign starting empty.
 
 Ids must be **stable** — `npc_<system>_<name>` is the convention — and
 they're what a campaign's own copy collides with. On a collision **the

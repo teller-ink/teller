@@ -1,0 +1,20 @@
+{
+  "name": "shelf",
+  "label": "Shelf",
+  "blurb": "This machine's systems, packs and what the campaign runs on.",
+  "subject": "none",
+  "order": 94,
+  "mounted": [
+    {
+      "block": "tool",
+      "tool": "shelf"
+    }
+  ],
+  "held": [
+    {
+      "block": "tool",
+      "tool": "shelf"
+    }
+  ],
+  "id": "pan_aefe0648c631"
+}
