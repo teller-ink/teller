@@ -14,6 +14,13 @@
 //     fighting each other (undo, undo, undo walks three edits back).
 //     A revert also names the rows its own inverse write produced, so
 //     the second undo doesn't simply redo the first.
+// A DELETION is the one row that undoes more than itself. An entity's
+// place at the table — its row in the order, its token on a board —
+// points at it by id, so deleting takes those with it (`Session.remove`)
+// and the deletion's payload carries them back. One press, one restore:
+// a foe that came back without its place in the fight would be a second
+// thing for the Warden to notice and fix.
+//
 //   - RECORDS, which changed no state: `dice.rolled` and
 //     `turn.resolved` say what happened at the table (what the dice
 //     showed, what the arithmetic was). Undoing one would mean
@@ -77,6 +84,25 @@ export type Undoable = {
 };
 
 type Payload = Record<string, unknown>;
+
+/**
+ * What else one deletion took with it — the turn order it was standing
+ * in and the boards it was standing on, both as they were BEFORE
+ * (`Session.remove`). It rides on the deletion's own row rather than on
+ * rows of its own so that one press puts the whole thing back; the
+ * `events` list names the cascade's log rows so the NEXT press steps
+ * past them instead of re-undoing what this one already restored.
+ */
+type Cascade = {
+  events?: number[];
+  turn?: unknown;
+  boards?: { boardId: string; data: unknown }[];
+};
+
+function cascadeOf(p: Payload): Cascade | undefined {
+  const raw = p.cascade;
+  return raw && typeof raw === 'object' ? (raw as Cascade) : undefined;
+}
 
 function payloadOf(event: EventRow): Payload {
   return event.payload && typeof event.payload === 'object'
@@ -212,6 +238,15 @@ function invert(session: Session, event: EventRow, actor: string): void {
       // that came back under a new id would orphan its own log.
       const parent = typeof p.parent === 'string' ? p.parent : undefined;
       session.create(before, actor, parent);
+      // And its place at the table, which went with it (`Session.remove`).
+      // Order matters: the entity exists again BEFORE anything points
+      // at it, so no reader ever sees a row naming a thing that isn't
+      // there — the ghost this whole cascade exists to prevent.
+      const cascade = cascadeOf(p);
+      if (cascade?.turn !== undefined) session.restoreTurn(toTurnState(cascade.turn), actor);
+      for (const board of cascade?.boards ?? []) {
+        session.putBoardState(board.boardId, board.data, actor);
+      }
       return;
     }
     case 'entity.moved': {
@@ -261,7 +296,10 @@ export function undo(session: Session, actor: string): Undoable | null {
 
   session.campaign.append(event.entityId, actor, 'revert', {
     reverted: event.id,
-    wrote,
+    // The cascade's own rows count as written by this undo: their
+    // "before" is the state it just restored, so stepping one back
+    // again would be a press that changes nothing and looks broken.
+    wrote: [...(cascadeOf(payloadOf(event))?.events ?? []), ...wrote],
     kind: event.kind,
   });
   session.changed('events');

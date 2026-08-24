@@ -250,8 +250,15 @@ export class Campaign {
    * Delete an entity and everything promoted under it — containment
    * means the nested things go with their owner. One event per row, so
    * the log can put every one of them back.
+   *
+   * `extra` rides on the TOP row's payload only, and is how a caller
+   * says what else this one deletion took with it — the turn order it
+   * was standing in, the boards it was standing on. It belongs to the
+   * deletion rather than to a row of its own so that ONE undo puts the
+   * whole thing back (`server/session.ts`, `server/undo.ts`); a foe
+   * restored without its place in the fight is half a restore.
    */
-  remove(id: string, actor: string): void {
+  remove(id: string, actor: string, extra?: Record<string, unknown>): void {
     for (const child of this.children(id)) this.remove(child.id, actor);
     const before = this.get(id);
     if (!before) return;
@@ -260,7 +267,7 @@ export class Campaign {
     // at the root, which is a different table than the one deleted.
     const parent = this.parentOf(id);
     this.#db.prepare('DELETE FROM entities WHERE id = ?').run(id);
-    this.append(id, actor, 'entity.deleted', { before, parent });
+    this.append(id, actor, 'entity.deleted', { before, parent, ...(extra ?? {}) });
   }
 
   /**
