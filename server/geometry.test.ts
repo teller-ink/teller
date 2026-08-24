@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createCampaign, openShelf, type Shelf } from '../core/store.ts';
 import { Session } from './session.ts';
-import { fightGeometry, gridOf, sizeInHeader } from './geometry.ts';
+import { bandOf, bandsIn, fightGeometry, gridOf, sizeInHeader } from './geometry.ts';
 import { snapshotFor } from './plugin-bridge.ts';
 import { toNeed, type Need } from '../core/registry.ts';
 
@@ -307,5 +307,84 @@ describe('read:board, as a door sees it', () => {
     // the board from the acting creature's point of view without saying so.
     expect(asked.measuredFrom).toBe('Peril');
     expect(asked.tokens.find((t) => t.name === 'Hosa')?.awayInches).toBe(10);
+  });
+});
+
+// The measurement, said in the system's own word for it.
+//
+// This is the second half of "measure, don't make the reader derive",
+// and it was learned separately: handed inches with no ladder to hang
+// them on, a reader said so out loud in the middle of a fight ("the
+// snapshot gives no inch value for the bands — I am assuming"), and
+// handed a band name with no inches behind it, an earlier one walked an
+// attack out of its printed range to make a plan work. Both spellings,
+// converted here, is the answer to both.
+describe('converting a distance into the system’s own band', () => {
+  const ladder = [
+    { name: "Arm's Reach", to: 1, world: "within arm's reach" },
+    { name: 'Short', from: 1, to: 6, world: 'up to 30 yards' },
+    { name: 'Long', from: 6, world: 'past 30 yards' },
+  ];
+
+  it('reads the rungs forgivingly and picks the one a distance falls in', () => {
+    const bands = bandsIn(ladder);
+    expect(bands).toHaveLength(3);
+    // `from` is inclusive and `to` exclusive, so a boundary belongs to
+    // exactly one rung and never to both.
+    expect(bandOf(0, bands)?.name).toBe("Arm's Reach");
+    expect(bandOf(0.9, bands)?.name).toBe("Arm's Reach");
+    expect(bandOf(1, bands)?.name).toBe('Short');
+    expect(bandOf(5.9, bands)?.name).toBe('Short');
+    expect(bandOf(6, bands)?.name).toBe('Long');
+    // An open-topped rung has no ceiling to fall off.
+    expect(bandOf(400, bands)?.name).toBe('Long');
+  });
+
+  it('drops a rung with no name, and answers nothing for a system with no ladder', () => {
+    expect(bandsIn([{ world: 'somewhere' }, { name: '  ' }, 'Short'])).toEqual([]);
+    expect(bandsIn(undefined)).toEqual([]);
+    expect(bandOf(3, [])).toBeUndefined();
+  });
+
+  it('rides on every measured distance, or is absent when nothing was declared', () => {
+    const id = board();
+    const acting = session.create({ name: 'Peril', lists: {} }, 'test');
+    const other = session.create({ name: 'Hosa', lists: {} }, 'test');
+    session.putBoardState(
+      id,
+      {
+        placements: [
+          { id: 'plc_a', entityId: acting.id, u: 0.1, v: 0.5 },
+          // 10 inches across a 40-inch map.
+          { id: 'plc_b', entityId: other.id, u: 0.35, v: 0.5 },
+        ],
+      },
+      'test',
+    );
+
+    // No system, no ladder: the inches stand alone rather than being
+    // hung on a rung teller made up.
+    const bare = fightGeometry(session, acting.id);
+    if (!bare.present) throw new Error(bare.why);
+    expect(bare.tokens.find((t) => t.name === 'Hosa')?.awayInches).toBe(10);
+    expect(bare.tokens.find((t) => t.name === 'Hosa')?.awayBand).toBeUndefined();
+
+    shelf.putSystem({ id: 'sys_ladder', name: 'Laddered', version: 1, data: { bands: ladder } });
+    const root = session.campaign.root();
+    session.campaign.save(
+      { ...root, refs: { ...root.refs, system: { id: 'sys_ladder', name: 'Laddered' } } },
+      'test',
+    );
+    session.reload();
+
+    const facts = fightGeometry(session, acting.id);
+    if (!facts.present) throw new Error(facts.why);
+    expect(facts.tokens.find((t) => t.name === 'Hosa')).toMatchObject({
+      awayInches: 10,
+      awaySquares: 10,
+      awayBand: { name: 'Long', world: 'past 30 yards' },
+    });
+    // The one it was measured FROM has no distance, so it has no band.
+    expect(facts.tokens.find((t) => t.name === 'Peril')?.awayBand).toBeUndefined();
   });
 });

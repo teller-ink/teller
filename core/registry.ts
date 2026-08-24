@@ -118,6 +118,18 @@ export type TurnProposal = {
   rationale?: string;
   /** The pool the action calls for, and what it's for. Rolled by a human. */
   roll?: { dice?: string; for?: string };
+  /**
+   * The words for the table, stopping at the instant of contact — the
+   * attempt, never the result, because the dice have not decided yet.
+   *
+   * It is a separate field from `action` because they have different
+   * audiences: `action` is a brief for the DM and this is spoken. It
+   * also becomes the front bookend of a narration, which continues from
+   * where it stops rather than retelling it.
+   */
+  preface?: string;
+  /** Who it is aimed at, spelled as the fight names them. A guess, matched by a surface. */
+  target?: string;
 };
 
 /** What a `propose.narrate` provider hands back — words, and only words. */
@@ -334,6 +346,18 @@ export type TokenFacts = {
   awayInches?: number;
   /** The same distance in 1-inch grid squares, when the grid is calibrated. */
   awaySquares?: number;
+  /**
+   * The same distance in the SYSTEM'S OWN WORD for it, plus what that
+   * word means in the world — 'Short', 'up to 30 yards'.
+   *
+   * teller converts; nobody downstream reinterprets. A reader handed a
+   * band name with no inches behind it says so out loud mid-fight ("I
+   * am assuming"), and a reader handed inches with no band walks an
+   * attack out of its printed range to make a plan work. Both were
+   * observed. Absent when the system declares no bands, which is most
+   * of them.
+   */
+  awayBand?: { name: string; world?: string };
 };
 
 export type ZoneFacts = {
