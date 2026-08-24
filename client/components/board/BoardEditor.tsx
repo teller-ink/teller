@@ -573,6 +573,21 @@ export function BoardEditor({
         }
       : null;
 
+  // The comment above promises the editor "says so rather than drawing a
+  // lie" — this is the saying-so (it was silent until 2026-08-23, and
+  // the silence read as "there are no sizing settings"). Name the ONE
+  // missing ingredient, most actionable first.
+  const frameGap =
+    view.mode !== 'true' || frame
+      ? null
+      : !tableViewport
+        ? 'no table screen — adopt one in Screens and assign it the table role'
+        : !(ppi && ppi > 0)
+          ? "the table screen isn't calibrated — Screens → its row → calibrate"
+          : !(board.widthInches && board.widthInches > 0)
+            ? 'this map has no declared width — set "inches wide" below'
+            : 'waiting on the map image';
+
   const px = (inches: number) => (cellPx ? inches * cellPx : 24);
   const names = new Map(roster.map((r) => [r.id, r.name]));
   const nameOf = (p: Placement) =>
@@ -927,7 +942,7 @@ export function BoardEditor({
 
       {/* ---------------- right panels ---------------- */}
       <div className="absolute right-3 top-1/2 flex max-h-[80vh] w-64 -translate-y-1/2 flex-col gap-2 overflow-y-auto">
-        <BoardPanel board={board} onBoard={onBoard} view={view} setView={setView} />
+        <BoardPanel board={board} onBoard={onBoard} view={view} setView={setView} frameGap={frameGap} />
         {tool === 'paint' && (
           <GroundPanel
             zones={zones}
@@ -1115,11 +1130,14 @@ function BoardPanel({
   onBoard,
   view,
   setView,
+  frameGap,
 }: {
   board: Board;
   onBoard: (patch: { name?: string; widthInches?: number | null; grid?: unknown }) => void;
   view: BoardView;
   setView: (patch: Partial<BoardView>) => void;
+  /** Why true scale can't draw the table's frame right now — null when it can. */
+  frameGap: string | null;
 }) {
   return (
     <section className={`space-y-2 p-3 ${panel}`}>
@@ -1191,6 +1209,9 @@ function BoardPanel({
           </span>
         )}
       </div>
+      {frameGap && (
+        <p className="text-[11px] leading-snug text-amber-500/90">{frameGap}</p>
+      )}
       {view.mode === 'true' && (
         <input
           className="w-full"
