@@ -764,7 +764,7 @@ is a real question and an open one.
 
 *(Brian, 2026-08-18: "CF doesn't need to know anything at all about
 teller as a program. It's just a landing page." Supersedes the
-dual-runtime rule in CLAUDE.md — fold on merge.)*
+dual-runtime rule in CLAUDE.md — **folded 2026-08-24**.)*
 
 "One codebase, two runtimes, no fork" existed only to keep play possible
 on Cloudflare, and play left. Consequences:
@@ -1075,6 +1075,11 @@ reference. The clean break's classic failure (a long dark stretch with
 nothing runnable) is mitigated by never turning the old one off and by
 lighting a minimal loop early.
 
+*(Both worlds ended 2026-08-24: the old one was folded after the
+fold-gate audit below, and the data dir default came back to
+`~/.teller`. `~/.teller-next` throughout this doc is the parallel
+world's name for what is now simply the shelf.)*
+
 **The porting filter IS the console redesign.** Surfaces port one at a
 time, and porting is an editorial act: every pane answers "does this
 earn porting, and is it prep or play?" (template vs instance, §13). The
@@ -1133,7 +1138,8 @@ The doc said building would amend it. What building found, first day:
 - **`core/` typechecks as its own project** (`tsconfig.core.json`,
   node types): workers-types and node ambients can't share a tsconfig.
   A deliberate scar of the half-done sweep — it retires with `worker/`
-  when §16 finishes.
+  when §16 finishes. *(Retired 2026-08-24: two projects now, root
+  (core + server) and client.)*
 
 Second pass, same day — the boot loader (`core/boot.ts`):
 
