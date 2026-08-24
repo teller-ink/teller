@@ -20,6 +20,9 @@
 // So `encounter.deployed` carries the table as it was — the generation
 // it cleared, the order, the boards — and names every row it wrote, and
 // one press peels the whole generation back (`Session.deployEncounter`).
+// CLEARING THE TABLE is that row with its stamping half missing, and
+// undoes through the same lines: the fight is over is one thing the
+// Warden decided, so putting it back is one press (`Session.clearTable`).
 //
 // A DELETION is the one row that undoes more than itself. An entity's
 // place at the table — its row in the order, its token on a board —
@@ -170,6 +173,10 @@ function invertible(event: EventRow): boolean {
       // One press peels one generation: what it stamped, and what it
       // cleared to stamp it (`Session.deployEncounter`).
       return Array.isArray(p.created) && Array.isArray(p.cleared);
+    case 'table.cleared':
+      // The same row with the stamping half missing: a sweep only ever
+      // took things away (`Session.clearTable`).
+      return Array.isArray(p.cleared);
     default:
       return false;
   }
@@ -301,20 +308,40 @@ function invert(session: Session, event: EventRow, actor: string): void {
       for (const id of (p.created as unknown[]) ?? []) {
         if (typeof id === 'string' && session.campaign.get(id)) session.remove(id, actor);
       }
-      for (const row of (p.cleared as unknown[]) ?? []) {
-        const held = row && typeof row === 'object' ? (row as Record<string, unknown>) : {};
-        const entity = entityOf(held.entity);
-        if (!entity) continue;
-        const parent = typeof held.parent === 'string' ? held.parent : undefined;
-        session.create(entity, actor, parent);
-      }
-      const cascade = cascadeOf(p);
-      if (cascade?.turn !== undefined) session.restoreTurn(toTurnState(cascade.turn), actor);
-      for (const board of cascade?.boards ?? []) {
-        session.putBoardState(board.boardId, board.data, actor);
-      }
+      restoreCleared(session, p, actor);
       return;
     }
+    case 'table.cleared': {
+      // A sweep is the deploy's second half alone: nothing was stamped,
+      // so the fight simply comes back — entities first, then the order
+      // and the boards that pointed at them (`Session.clearTable`).
+      restoreCleared(session, p, actor);
+      return;
+    }
+  }
+}
+
+/**
+ * Put a cleared generation back: the entities as they were, parents
+ * first, and only THEN the places that name them.
+ *
+ * Both rows that clear things — a deploy's reset and a table sweep —
+ * carry the same `{cleared, cascade}` shape, so they undo through the
+ * same few lines. The order is the deletion cascade's law: no reader
+ * ever sees a turn row or a token naming a thing that isn't there.
+ */
+function restoreCleared(session: Session, p: Payload, actor: string): void {
+  for (const row of (p.cleared as unknown[]) ?? []) {
+    const held = row && typeof row === 'object' ? (row as Record<string, unknown>) : {};
+    const entity = entityOf(held.entity);
+    if (!entity) continue;
+    const parent = typeof held.parent === 'string' ? held.parent : undefined;
+    session.create(entity, actor, parent);
+  }
+  const cascade = cascadeOf(p);
+  if (cascade?.turn !== undefined) session.restoreTurn(toTurnState(cascade.turn), actor);
+  for (const board of cascade?.boards ?? []) {
+    session.putBoardState(board.boardId, board.data, actor);
   }
 }
 

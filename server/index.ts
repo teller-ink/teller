@@ -2206,6 +2206,20 @@ export async function handleApi(
     return reply(200, { notice });
   }
 
+  // The fight is over — one press, and the table is clear (TEL-111).
+  //
+  // Deploy's opposite number and its neighbour on purpose: one door
+  // puts a generation on the table, this one takes it off. It answers
+  // with what it took, because a sweep that reported nothing reads the
+  // same as a sweep that did nothing, and the console says the numbers
+  // out loud. Confirmation is the console's job (rule 1 — this is a big
+  // proposal), and `/undo` is the floor under it either way.
+  if (method === 'POST' && head === 'table' && a === 'clear' && !b) {
+    if (!canDm(auth)) return denied();
+    const body = await bodyOf(req);
+    return reply(200, session.clearTable(actorOf(auth, String(body.actor ?? ''))));
+  }
+
   // Deploy a prepared fight: stamp the foes, seed the order.
   if (method === 'POST' && head === 'encounters' && a && b === 'deploy') {
     if (!canDm(auth)) return denied();

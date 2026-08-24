@@ -14,7 +14,14 @@
 
 import { exportProblems, loadCampaign, type Loaded } from '../core/boot.ts';
 import type { LoadedPlugin, PluginProblem } from '../core/plugins.ts';
-import { findEntry, refIn, sameName, withoutEntry, type Entity } from '../core/entity.ts';
+import {
+  findEntry,
+  isDraft,
+  refIn,
+  sameName,
+  withoutEntry,
+  type Entity,
+} from '../core/entity.ts';
 import { kindFor, setEntry, toKindDef, type KindDef } from '../core/kind.ts';
 import { resolve, stamp } from '../core/stamp.ts';
 import {
@@ -32,7 +39,12 @@ import { applyTurnOp, toTurnState, type TurnOp, type TurnState } from './turn.ts
 // The window an undo walks — the same bound the rows of one deploy are
 // collected under, because they are collected for exactly that walk.
 import { UNDO_WINDOW } from './undo.ts';
-import { withDeployed, withoutEntities, type Deploying } from './boards.ts';
+import { countEntities, withDeployed, withoutEntities, type Deploying } from './boards.ts';
+// The clearing rule is the REDACTOR'S rule, imported rather than
+// restated: one answer to "who was the fight", so the door that sweeps
+// them off the table and the door that hides their numbers can never
+// come to disagree (`server/public.ts`).
+import { isParty, tradeNames } from './public.ts';
 import { movesBetween, type MoveRecord } from './geometry.ts';
 
 /**
@@ -79,6 +91,20 @@ export type DeployResult = {
   cleared: number;
   /** Foes named by the recipe and absent from this host — by name (rule 9). */
   missing: MissingFoe[];
+};
+
+/**
+ * What one press of "clear the table" took off it — counted, because
+ * the console says it out loud and a sweep that reported nothing would
+ * be indistinguishable from a sweep that did nothing.
+ */
+export type ClearResult = {
+  /** Entities swept — the fight, its children not counted separately. */
+  cleared: number;
+  /** Tokens their sweep took off every board, not just the active one. */
+  tokens: number;
+  /** Rows the turn order held, all of which went. */
+  order: number;
 };
 
 /** Which slots resolution stamps through — the stampable ones this loop knows. */
@@ -290,6 +316,117 @@ export class Session {
 
     this.campaign.remove(id, actor, events.length ? { cascade } : undefined);
     this.changed('entities');
+  }
+
+  /**
+   * Sweep the fight off the table — one press, and the between-fights
+   * state is back (TEL-111).
+   *
+   * The old world had this and the rebuild lost it, which turned "the
+   * fight is over" into archaeology: delete eleven foes one at a time,
+   * then find the rows they left in the order. It is one thing the
+   * Warden decided, so it is one action here.
+   *
+   * WHO GOES is asked with the redactor's own question, and deliberately
+   * not with a second one. `isParty` is the fail-closed rule the public
+   * snapshot already keys on (`server/public.ts`) — a `pc`, or one of
+   * the trades the system declares — so the two can never disagree about
+   * who the fight was: anything player-facing glass was hiding numbers
+   * for is exactly what this takes off the table. Three things survive
+   * on top of that, each for its own reason:
+   *
+   *   - the CAMPAIGN ROOT, which isn't at the table at all — it's the
+   *     table (party resources hang off it, §2).
+   *   - a VENDOR, which is set dressing rather than a combatant: the
+   *     store keeps standing after the shooting stops.
+   *   - a DRAFT, which is prep. A half-made character interrupted
+   *     mid-creation is somebody's evening, not this fight's litter.
+   *
+   * And only the root's own children are judged. What a character
+   * CARRIES is promoted underneath them (a pistol is an entity), wears
+   * no party word of its own, and would be swept out from under its
+   * owner by a walk that recursed. A cleared entity's own children go
+   * with it the way they always do — through the deletion cascade.
+   *
+   * The ORDER goes whole, party rows included. An empty order IS the
+   * between-fights state (rule 5: a list and an index), and leaving the
+   * posse standing in a fight that's over is the thing this replaces.
+   *
+   * One row in the log for all of it, deploy's exact trick: every write
+   * goes through the ordinary doors and is logged as itself (rule 3),
+   * and then `table.cleared` claims them all and carries the table as it
+   * was — so `/undo` puts the fight back in one press (`server/undo.ts`).
+   */
+  clearTable(actor: string): ClearResult {
+    const trades = tradeNames(this);
+    const root = this.campaign.root();
+    const doomed = this.campaign
+      .children(root.id)
+      .filter(
+        (child) =>
+          !isParty(child, trades) &&
+          (child.type ?? '').trim().toLowerCase() !== 'vendor' &&
+          !isDraft(child),
+      );
+
+    // Everything below this rowid is this sweep's own work.
+    const mark = this.campaign.events({ limit: 1 })[0]?.id ?? 0;
+    const turnAtStart = this.turnState();
+    const boardsAtStart = this.campaign.boardStates();
+
+    // Parents before children, so a restore can put them back in that
+    // order and nothing ever points at a thing that isn't there yet.
+    const cleared: { entity: Entity; parent?: string }[] = [];
+    const gone = new Set<string>();
+    const walk = (parentId: string, entity: Entity) => {
+      cleared.push({ entity, parent: parentId });
+      gone.add(entity.id);
+      for (const child of this.campaign.children(entity.id)) walk(entity.id, child);
+    };
+    for (const entity of doomed) walk(root.id, entity);
+
+    const tokens = boardsAtStart.reduce(
+      (n, { data }) => n + countEntities(data, gone),
+      0,
+    );
+
+    for (const entity of doomed) {
+      if (this.campaign.get(entity.id)) this.remove(entity.id, actor);
+    }
+
+    // What the cascade left standing: the party's rows, and whatever
+    // label somebody typed in by hand. Round back to one, because the
+    // next fight starts at the top.
+    const before = this.turnState();
+    const emptied: TurnState = { order: [], turn: null, round: 1 };
+    if (before.order.length || before.turn !== null || before.round !== 1 || before.rolling) {
+      this.campaign.putTurnState(emptied, actor, {
+        op: 'clear',
+        before,
+        after: emptied,
+      });
+      this.changed('turn');
+    }
+
+    const events = this.campaign
+      .events({ limit: UNDO_WINDOW })
+      .filter((e) => e.id > mark)
+      .map((e) => e.id);
+    const boardsBefore = boardsAtStart.filter(({ boardId: id, data }) => {
+      const now = this.campaign.boardState(id);
+      return JSON.stringify(now ?? null) !== JSON.stringify(data ?? null);
+    });
+    this.campaign.append(null, actor, 'table.cleared', {
+      cleared,
+      cascade: {
+        events,
+        turn: turnAtStart,
+        ...(boardsBefore.length ? { boards: boardsBefore } : {}),
+      },
+    });
+    this.changed('events');
+
+    return { cleared: doomed.length, tokens, order: turnAtStart.order.length };
   }
 
   /**

@@ -172,6 +172,76 @@ function vitalOf(entity: Entity | undefined) {
   return ordered.find((e) => typeof e.max === 'number' && e.max > 0);
 }
 
+/**
+ * "The fight is over" — one press, under the controls that ran it.
+ *
+ * Deploy's opposite number, and it lives HERE rather than in the
+ * encounters tool because this is where the Warden is standing when the
+ * last foe goes down. It sweeps everything that isn't the posse off the
+ * table — foes, their minis, the whole order — and leaves the party,
+ * the store and anyone half-made alone (`Session.clearTable`).
+ *
+ * Two presses, and the second one names what it takes: this is eleven
+ * deletions in a coat, and the affordance a confirm dialog gets is the
+ * one that gets clicked through (`client/views/campaigns.tsx`, the armed
+ * delete). It reports what went, because a sweep that said nothing
+ * reads exactly like a sweep that did nothing — and `/undo` puts the
+ * whole fight back in one press if it was the wrong one (rule 1).
+ */
+function ClearTable({ onCleared }: { onCleared: () => void }) {
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [went, setWent] = useState<string | undefined>(undefined);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  if (!armed) {
+    return (
+      <>
+        {went && <span className="font-mono text-[11px] text-stone-500">{went}</span>}
+        <button
+          className={`${btn} hover:bg-red-950 hover:text-red-200`}
+          title="delete every foe, take their minis off the board, and empty the turn order"
+          onClick={() => {
+            setWent(undefined);
+            setArmed(true);
+            clearTimeout(timer.current);
+            timer.current = setTimeout(() => setArmed(false), 5000);
+          }}
+        >
+          clear table
+        </button>
+      </>
+    );
+  }
+  return (
+    <button
+      className="rounded-md bg-red-900 px-3 py-1.5 text-sm text-red-100 transition-colors hover:bg-red-800 active:bg-red-700 disabled:opacity-40"
+      disabled={busy}
+      onClick={() => {
+        clearTimeout(timer.current);
+        setBusy(true);
+        api<{ cleared: number; tokens: number; order: number }>('/api/table/clear', { body: {} })
+          .then((out) => {
+            setWent(
+              `swept ${out.cleared} off the table — ${out.tokens} mini${
+                out.tokens === 1 ? '' : 's'
+              }, ${out.order} row${out.order === 1 ? '' : 's'}`,
+            );
+            onCleared();
+          })
+          .finally(() => {
+            setArmed(false);
+            setBusy(false);
+          });
+      }}
+    >
+      really clear the table?
+    </button>
+  );
+}
+
 function RunnerTool() {
   const turn = useLive(() => api<TurnState>('/api/turn'), [], { on: ['turn'] });
   const roster = useLive(() => api<RosterEntry[]>('/api/entities'), [], { on: ['entities'] });
@@ -745,6 +815,15 @@ function RunnerTool() {
       >
         end
       </button>
+      {/* The end of the FIGHT, not of the turn: `end` puts the pointer
+          down and leaves everyone standing, this sweeps them off. */}
+      <ClearTable
+        onCleared={() => {
+          turn.reload();
+          roster.reload();
+          board.reload();
+        }}
+      />
     </div>
   );
 

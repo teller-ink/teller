@@ -149,6 +149,22 @@ export function withoutEntities(state: unknown, ids: Set<string>): unknown | und
   return { ...(state as object), placements: kept };
 }
 
+/**
+ * How many tokens on this board stand for any of these entities.
+ *
+ * `withoutEntities` says WHAT the board becomes; this says how much came
+ * off it, which is the only thing a one-press sweep of the table can
+ * honestly report having done (`Session.clearTable`). Counted from the
+ * state as it was, because after the write there is nothing left to
+ * count.
+ */
+export function countEntities(state: unknown, ids: Set<string>): number {
+  const placements = placementsIn(state);
+  if (!placements?.length) return 0;
+  return placements.filter((p) => typeof p.entityId === 'string' && ids.has(p.entityId))
+    .length;
+}
+
 /** Where a deployed foe starts, as the recipe wrote it down. */
 export type Deploying = { entityId: string; u: number; v: number; hidden?: boolean };
 
