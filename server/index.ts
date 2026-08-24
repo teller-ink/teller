@@ -58,13 +58,15 @@ import {
 import { isBookId } from '../core/books-shelf.ts';
 import {
   discoverPlugins,
+  enablePlugin,
   loadPlugins,
   panesOf,
   pluginOf,
   providersOf,
 } from '../core/plugins.ts';
 import { callDoor, whoOf } from './plugin-bridge.ts';
-import { isPoint, POINTS, type Point } from '../core/registry.ts';
+import { grants, isPoint, POINTS, type Need, type Point } from '../core/registry.ts';
+import { fightGeometry } from './geometry.ts';
 import {
   copyPanelToTable,
   defaultPanelDir,
@@ -175,6 +177,37 @@ function fileReply(bytes: Buffer, filename: string): Reply {
 const canPrep = (auth: Auth): boolean =>
   canDm(auth) || (adopted(auth.display) && auth.display.role === 'seat');
 const notAtTable = () => reply(401, { error: 'not at this table' });
+
+/**
+ * One proposer's share of the turn snapshot, cut to what its manifest
+ * declared — the `needs` gate, applied to `propose.*` the same way the
+ * bridge applies it to a door.
+ *
+ * A slot a plugin never asked for arrives ABSENT rather than as an
+ * error, exactly like `snapshotFor`: the manifest is the reason, and
+ * degrading is what a plugin does with anything it wasn't handed. Round,
+ * order and the acting sheet are ungated because they are what
+ * `propose.turn` IS — a point with no snapshot is not a point.
+ */
+function forNeeds(full: Record<string, unknown>, needs: Need[]): Record<string, unknown> {
+  const out = { ...full };
+  if (!grants(needs, 'read', 'board')) delete out.board;
+  if (!grants(needs, 'read', 'entities') && Array.isArray(out.order)) {
+    out.order = (out.order as Record<string, unknown>[]).map((entry) => {
+      const {
+        entityId: _e,
+        vitals: _v,
+        held: _h,
+        awayInches: _i,
+        awaySquares: _s,
+        onBoard: _b,
+        ...rest
+      } = entry;
+      return rest;
+    });
+  }
+  return out;
+}
 const noCampaign = () =>
   reply(503, { error: 'no campaign is active — pick one from the campaign screen' });
 
@@ -1483,7 +1516,10 @@ export async function handleApi(
       if (typeof body.enabled !== 'boolean') {
         return reply(400, { error: 'enabled must be true or false' });
       }
-      shelf.setPluginEnabled(a, body.enabled);
+      // Record WHAT was agreed to, not just that something was — the
+      // needs list is what the console put on screen, and consent to it
+      // is what `loadPlugins` checks the manifest against later.
+      enablePlugin(dataDir, shelf, a, body.enabled);
       if (a.startsWith('pan_') || a.startsWith('pak_') || a.startsWith('sys_')) {
         // Panel, pack and system code aren't a plugin's `provides` —
         // all three are attached to their declaration by the sweep, so
@@ -1596,9 +1632,21 @@ export async function handleApi(
     if (!point) return reply(404, { error: `no such point: ${named}` });
     const body = await bodyOf(req);
     let payload: unknown = body.payload ?? {};
+    // What the WIDEST-declared provider could see. Each one is then
+    // handed only the part its own `needs` granted, just below — the
+    // snapshot is assembled once because measuring the board twice for
+    // two proposers would be work nobody asked for, never because the
+    // gate is optional.
+    let widest: Record<string, unknown> | undefined;
     if (point === 'propose.turn') {
       // Assemble the snapshot server-side: a fact the host holds and
-      // doesn't pass on is a fact the model invents.
+      // doesn't pass on is a fact the model invents. That sentence was
+      // the whole design, and it was only half kept — the turn order
+      // and the acting sheet went, and the GROUND everybody was
+      // standing on did not, so a proposer answered "the snapshot gives
+      // no map, no positions and no ranges" about a fight teller had
+      // measured coordinates for. `board` is that half (§4, rule 1: it
+      // still only ever proposes).
       const turn = session.turnState();
       const acting = turn.turn === null ? undefined : turn.order[turn.turn];
       const actingEntity = acting?.entityId
@@ -1609,24 +1657,53 @@ export async function handleApi(
           .children(session.loaded.manifest.id)
           .map((e) => [e.id, e.name]),
       );
-      payload = {
+      const board = fightGeometry(session, acting?.entityId);
+      const placed = new Map(
+        board.present
+          ? board.tokens.flatMap((t) => (t.entityId ? [[t.entityId, t] as const] : []))
+          : [],
+      );
+      widest = {
         round: turn.round,
-        order: turn.order.map((e, i) => ({
-          name: e.label ?? (e.entityId ? (names.get(e.entityId) ?? 'unknown') : '?'),
-          score: e.score ?? null,
-          acting: i === turn.turn,
-        })),
+        order: turn.order.map((e, i) => {
+          const entity = e.entityId ? session.campaign.get(e.entityId) : undefined;
+          const read = entity ? session.reading(entity) : undefined;
+          const entries = Object.values(read?.lists ?? {}).flat();
+          const token = e.entityId ? placed.get(e.entityId) : undefined;
+          return {
+            name: e.label ?? (e.entityId ? (names.get(e.entityId) ?? 'unknown') : '?'),
+            score: e.score ?? null,
+            acting: i === turn.turn,
+            ...(e.entityId ? { entityId: e.entityId } : {}),
+            // LABELLED, both of them: a ceiling'd entry is something
+            // being spent down, a value-less one is something held
+            // (`core/entity.ts` — Prone, Ally, Dazed). Core's own
+            // distinction, passed on rather than re-guessed per system.
+            vitals: entries
+              .filter((x) => typeof x.max === 'number')
+              .map((x) => ({ name: x.name, value: x.value ?? 0, max: x.max })),
+            held: entries.filter((x) => x.value === undefined).map((x) => x.name),
+            ...(token?.awayInches !== undefined
+              ? { awayInches: token.awayInches, awaySquares: token.awaySquares }
+              : {}),
+            onBoard: Boolean(token),
+          };
+        }),
         acting: actingEntity ? session.reading(actingEntity) : null,
+        board,
         ...(typeof body.payload === 'object' && body.payload !== null
           ? (body.payload as object)
           : {}),
       };
+      payload = widest;
     }
     const providers = providersOf(session.plugins, point);
     const proposals: { plugin: string; proposal?: unknown; error?: string }[] = [];
     for (const provider of providers) {
       try {
-        const proposal = await provider.call(payload);
+        const proposal = await provider.call(
+          widest ? forNeeds(widest, pluginOf(session.plugins, provider.id)?.manifest.needs ?? []) : payload,
+        );
         proposals.push({ plugin: provider.id, proposal });
       } catch (err) {
         proposals.push({ plugin: provider.id, error: String(err) });
@@ -2483,8 +2560,12 @@ export async function boot(args: Record<string, string>) {
       for (const p of problems) console.log(`  PROBLEM ${p.dir}: ${p.problem}`);
     } else if (args.enable || args.disable) {
       const id = args.enable || args.disable;
-      shelf.setPluginEnabled(id, Boolean(args.enable));
+      // Enabling here is the same act the console performs, through the
+      // same door, so it records the same thing: the needs as written,
+      // which is what the agreement is ABOUT. Saying yes prints them back.
+      const { wants } = enablePlugin(dataDir, shelf, id, Boolean(args.enable));
       console.log(`${id} ${args.enable ? 'enabled' : 'disabled'}`);
+      if (args.enable) for (const want of wants) console.log(`  agreed: ${want}`);
     } else if (args.configure) {
       try {
         shelf.setPluginConfig(args.configure, JSON.parse(args.config ?? 'null'));
