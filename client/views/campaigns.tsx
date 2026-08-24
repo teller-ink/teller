@@ -11,7 +11,7 @@
 // character that no longer exists simply refetches and says so — the
 // displays are on the shelf and are never touched by any of this.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ImportStory } from '../components/story/ImportStory.tsx';
 import { api, ApiError } from '../lib/api.ts';
 import { useLive } from '../lib/use-session.ts';
@@ -26,40 +26,173 @@ type CampaignRow = {
 type CampaignsOut = { active: string | null; campaigns: CampaignRow[] };
 type ShelfOut = { systems: { id: string; name: string; version: number }[] };
 
-function Row({ row, onSwitched }: { row: CampaignRow; onSwitched: () => void }) {
+/** One slug, safe in a path — the campaign's name on disk is its id. */
+const pathSlug = (slug: string) => encodeURIComponent(slug);
+
+/**
+ * The armed delete — two presses, and the second one names what it is
+ * about to take. Deliberately not `window.confirm`: this is a campaign,
+ * meaning every character and the whole event log, and a modal nobody
+ * reads is exactly the affordance that gets clicked through. The arm
+ * disarms itself after a few seconds, so a press left hanging while
+ * somebody answers the door goes cold instead of waiting to be nudged.
+ */
+function DeleteCampaign({
+  slug,
+  onGone,
+  onRefused,
+}: {
+  slug: string;
+  onGone: (where: string) => void;
+  onRefused: (why: string) => void;
+}) {
+  const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  const arm = () => {
+    setArmed(true);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setArmed(false), 5000);
+  };
+
+  if (!armed) {
+    return (
+      <button className={btnGhost} onClick={arm}>
+        delete…
+      </button>
+    );
+  }
+  return (
+    <button
+      className="rounded-md bg-red-900 px-3 py-1.5 text-sm text-red-100 transition-colors hover:bg-red-800 active:bg-red-700 disabled:opacity-40"
+      disabled={busy}
+      onClick={() => {
+        clearTimeout(timer.current);
+        setBusy(true);
+        api<{ trashed: string }>(`/api/campaigns/${pathSlug(slug)}`, { method: 'DELETE' })
+          .then((out) => onGone(out.trashed))
+          .catch((e: ApiError) => {
+            setArmed(false);
+            onRefused(e.message);
+          })
+          .finally(() => setBusy(false));
+      }}
+    >
+      really delete {slug}?
+    </button>
+  );
+}
+
+function Row({
+  row: campaign,
+  onSwitched,
+  onSaid,
+}: {
+  row: CampaignRow;
+  onSwitched: () => void;
+  onSaid: (words: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [slug, setSlug] = useState(campaign.slug);
+  const [err, setErr] = useState('');
+
+  const rename = () => {
+    const wanted = slug.trim();
+    if (!wanted || wanted === campaign.slug) {
+      setRenaming(false);
+      return;
+    }
+    setBusy(true);
+    setErr('');
+    api(`/api/campaigns/${pathSlug(campaign.slug)}`, { method: 'PATCH', body: { slug: wanted } })
+      .then(() => {
+        setRenaming(false);
+        onSaid(`${campaign.slug} is now ${wanted}`);
+        onSwitched();
+      })
+      .catch((e: ApiError) => setErr(e.message))
+      .finally(() => setBusy(false));
+  };
+
   return (
     <li
       className={`flex flex-wrap items-center gap-2 rounded-md px-3 py-2 ${
-        row.active ? 'bg-amber-950/40 ring-1 ring-amber-800/60' : 'bg-stone-900'
+        campaign.active ? 'bg-amber-950/40 ring-1 ring-amber-800/60' : 'bg-stone-900'
       }`}
     >
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm text-stone-100">{row.name}</span>
+        <span className="block truncate text-sm text-stone-100">{campaign.name}</span>
         <span className="block truncate font-mono text-[11px] text-stone-600">
-          {row.slug}
-          {row.system ? ` · ${row.system.name}` : ' · no system'}
-          {row.system && !row.system.installed ? ' (missing)' : ''}
+          {campaign.slug}
+          {campaign.system ? ` · ${campaign.system.name}` : ' · no system'}
+          {campaign.system && !campaign.system.installed ? ' (missing)' : ''}
         </span>
       </span>
-      {row.active ? (
+      {campaign.active ? (
         <span className="rounded bg-amber-900/60 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-amber-300">
           at the table
         </span>
       ) : (
-        <button
-          className={btn}
-          disabled={busy}
-          onClick={() => {
-            setBusy(true);
-            api(`/api/campaigns/${row.slug}/activate`, { method: 'POST' })
-              .then(onSwitched)
-              .finally(() => setBusy(false));
+        <>
+          {/*
+            Both doors are for campaigns NOT at the table — the server
+            refuses the running one, and offering a button that can only
+            be told no is worse than not offering it.
+          */}
+          <button className={btnGhost} onClick={() => setRenaming((r) => !r)}>
+            rename
+          </button>
+          <DeleteCampaign
+            slug={campaign.slug}
+            onGone={(where) => {
+              onSaid(`${campaign.slug} moved to ${where}`);
+              onSwitched();
+            }}
+            onRefused={setErr}
+          />
+          <button
+            className={btn}
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              api(`/api/campaigns/${pathSlug(campaign.slug)}/activate`, { method: 'POST' })
+                .then(onSwitched)
+                .finally(() => setBusy(false));
+            }}
+          >
+            play this
+          </button>
+        </>
+      )}
+      {renaming && (
+        <form
+          className="flex w-full flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            rename();
           }}
         >
-          play this
-        </button>
+          <input
+            className={`${input} min-w-0 flex-1 font-mono`}
+            autoFocus
+            value={slug}
+            onChange={(e) => setSlug(e.target.value)}
+            placeholder="the-file-name"
+          />
+          <button className={btnPrimary} type="submit" disabled={busy}>
+            rename the file
+          </button>
+          <p className="w-full text-[11px] text-stone-600">
+            this is the file on disk — lowercase letters, digits and dashes. the
+            campaign’s own title is edited at the table.
+          </p>
+        </form>
       )}
+      {err && <p className="w-full text-sm text-red-500">{err}</p>}
     </li>
   );
 }
@@ -136,6 +269,11 @@ export function CampaignScreen({ onBack }: { onBack?: () => void }) {
     on: ['books'],
   });
   const [opening, setOpening] = useState(false);
+  // What the last file operation did, in the words the server used.
+  // There is no shelf-level event log for machine state, so this line
+  // and the response it echoes ARE the record a delete leaves behind:
+  // "where did it go" gets an answer while the DM is still looking.
+  const [said, setSaid] = useState('');
 
   return (
     <div className="flex min-h-dvh items-center justify-center p-6">
@@ -159,7 +297,7 @@ export function CampaignScreen({ onBack }: { onBack?: () => void }) {
           {error && <p className="text-sm text-red-500">{error.message}</p>}
           <ul className="space-y-1">
             {(data?.campaigns ?? []).map((c) => (
-              <Row key={c.slug} row={c} onSwitched={reload} />
+              <Row key={c.slug} row={c} onSwitched={reload} onSaid={setSaid} />
             ))}
             {data && data.campaigns.length === 0 && (
               <li className="text-sm text-stone-600">
@@ -167,6 +305,7 @@ export function CampaignScreen({ onBack }: { onBack?: () => void }) {
               </li>
             )}
           </ul>
+          {said && <p className="font-mono text-[11px] text-stone-500">{said}</p>}
         </section>
 
         <section className={`${card} space-y-3`}>

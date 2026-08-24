@@ -7,7 +7,14 @@
 // swap (they live on the Room, not the Session), and that an emptied
 // pack list restores the default rather than meaning "no packs".
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -162,6 +169,87 @@ describe('switching campaigns', () => {
     expect(text).toContain('data: campaign');
     expect(text).toContain('data: entities');
     await reader.cancel();
+  });
+});
+
+// Getting rid of one, and calling one something else (TEL-113). The
+// campaign is the file, so both doors are file operations — and the one
+// at the table is not a file either of them may touch.
+describe('deleting and renaming', () => {
+  beforeEach(async () => {
+    await api('POST', '/api/campaigns', { name: 'First', system: 'sys_wiw' });
+    await api('POST', '/api/campaigns', { name: 'Second', system: 'sys_wiw' });
+  });
+
+  const files = () => readdirSync(join(dir, 'campaigns')).filter((f) => f.endsWith('.db'));
+  const trashed = () => {
+    try {
+      return readdirSync(join(dir, 'campaigns', '.trash'));
+    } catch {
+      return [];
+    }
+  };
+
+  it('deletes by MOVING the file to the trash, and says where it went', async () => {
+    const { status, body } = await api('DELETE', '/api/campaigns/first');
+    expect(status).toBe(200);
+    expect(files()).toEqual(['second.db']);
+    // Reversible, and the response is the record — there is no
+    // shelf-level log for this, so "where did it go" lives here.
+    expect(trashed()).toEqual([expect.stringMatching(/^first-.*\.db$/)]);
+    expect(existsSync(body.trashed)).toBe(true);
+    expect((await api('GET', '/api/campaigns')).body.campaigns.map((c: any) => c.slug)).toEqual([
+      'second',
+    ]);
+  });
+
+  it('refuses to delete the campaign at the table, and says what to do', async () => {
+    const { status, body } = await api('DELETE', '/api/campaigns/second');
+    expect(status).toBe(409);
+    expect(body.error).toMatch(/play another one first/);
+    expect(files()).toEqual(['first.db', 'second.db']);
+  });
+
+  it('renames the FILE, which is the identity', async () => {
+    const { status, body } = await api('PATCH', '/api/campaigns/first', {
+      slug: 'the-long-road',
+    });
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ slug: 'the-long-road', was: 'first' });
+    expect(files()).toEqual(['second.db', 'the-long-road.db']);
+    // Same campaign, new filename: it still opens and it is still itself.
+    await api('POST', '/api/campaigns/the-long-road/activate');
+    const now = await api('GET', '/api/campaign');
+    expect(now.body.slug).toBe('the-long-road');
+    expect(now.body.manifest.name).toBe('First');
+  });
+
+  it('refuses a rename onto a slug already taken', async () => {
+    const { status, body } = await api('PATCH', '/api/campaigns/first', { slug: 'second' });
+    expect(status).toBe(400);
+    expect(body.error).toMatch(/already called second/);
+    expect(files()).toEqual(['first.db', 'second.db']);
+  });
+
+  it('refuses to rename the campaign at the table', async () => {
+    expect((await api('PATCH', '/api/campaigns/second', { slug: 'elsewhere' })).status).toBe(
+      409,
+    );
+  });
+
+  it('a slug that could walk out of campaigns/ is not a campaign', async () => {
+    // In the path: it never resolves to anything this host lists.
+    expect((await api('DELETE', '/api/campaigns/..%2F..%2Fshelf')).status).toBe(404);
+    expect((await api('DELETE', '/api/campaigns/.trash')).status).toBe(404);
+    // And in the body, where a rename could otherwise name a
+    // destination outside the folder.
+    const { status, body } = await api('PATCH', '/api/campaigns/first', {
+      slug: '../shelf',
+    });
+    expect(status).toBe(400);
+    expect(body.error).toMatch(/not a campaign slug/);
+    expect(existsSync(join(dir, 'shelf.db'))).toBe(true);
+    expect(files()).toEqual(['first.db', 'second.db']);
   });
 });
 

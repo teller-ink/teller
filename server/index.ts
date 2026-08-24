@@ -27,6 +27,8 @@ import {
   isDisplayRole,
   listCampaigns,
   openShelf,
+  renameCampaign,
+  trashCampaign,
   validSlug,
   type EntityDraft,
 } from '../core/store.ts';
@@ -923,6 +925,62 @@ export async function handleApi(
         });
         host.activate(out.slug);
         return reply(201, { ...out, name: host.session?.campaign.root().name, active: true });
+      } catch (err) {
+        return reply(400, { error: String(err) });
+      }
+    }
+
+    // Doors (b) and (c): get rid of one, and call one something else.
+    //
+    // Both refuse the campaign THIS TABLE IS RUNNING, loudly. You
+    // cannot delete the floor you're standing on: the file is open, the
+    // room is watching it, and the sane order of operations — switch,
+    // then delete — is a sentence the error can just say. The same
+    // refusal covers rename for the same reason, since renaming the
+    // file underneath an open handle is the identical trick with a
+    // quieter failure.
+    //
+    // There is no shelf-level event log to append to (rule 3 lives in
+    // the campaign file, and the campaign file is the thing being
+    // moved), so the response IS the record: it says where the bytes
+    // went, and the console repeats it.
+    if (a && !b && (method === 'DELETE' || method === 'PATCH')) {
+      if (!validSlug(a) || !listCampaigns(host.dataDir).includes(a)) {
+        return reply(404, { error: `no campaign ${a} on this host` });
+      }
+      if (host.session?.campaign.slug === a) {
+        return reply(409, {
+          error: `${a} is the campaign at the table — play another one first, then come back`,
+        });
+      }
+
+      if (method === 'DELETE') {
+        try {
+          const trashed = trashCampaign(host.dataDir, a);
+          if (shelf.setting(ACTIVE_CAMPAIGN) === a) shelf.setSetting(ACTIVE_CAMPAIGN, null);
+          host.room.changed('campaign');
+          return reply(200, { ok: true, slug: a, trashed: trashed.path });
+        } catch (err) {
+          return reply(400, { error: String(err) });
+        }
+      }
+
+      // Rename means the SLUG, because the slug is the filename and
+      // the file is the identity (§11). The manifest's display name is
+      // a different fact with its own door — this one is not it.
+      const body = await bodyOf(req);
+      const slug = String(body.slug ?? '').trim();
+      if (!slug) return reply(400, { error: 'a rename needs a slug' });
+      if (!validSlug(slug)) {
+        return reply(400, {
+          error: `not a campaign slug: ${slug} (lowercase letters, digits and dashes)`,
+        });
+      }
+      try {
+        renameCampaign(host.dataDir, a, slug);
+        if (shelf.setting(ACTIVE_CAMPAIGN) === a) shelf.setSetting(ACTIVE_CAMPAIGN, slug);
+        host.room.changed('campaign');
+        return reply(200, { ok: true, slug, was: a });
       } catch (err) {
         return reply(400, { error: String(err) });
       }

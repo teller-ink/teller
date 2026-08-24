@@ -28,7 +28,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { newId } from './id.ts';
 import { refIn, toEntity, type Entity, type Ref } from './entity.ts';
@@ -613,6 +613,88 @@ export function listCampaigns(dataDir: string): string[] {
       .sort();
   } catch {
     return [];
+  }
+}
+
+/**
+ * Where a deleted campaign goes. Not a table, not a flag on a row —
+ * the campaign IS the file (§11), so the honest reversible delete is
+ * a MOVE, and the trash is a folder beside the live ones.
+ *
+ * It sits inside `campaigns/` deliberately: a campaign on a stick you
+ * carry takes its own wastebasket with it, and `listCampaigns` already
+ * reads only `*.db` so a directory here is invisible to every other
+ * reader.
+ */
+export const TRASH_DIR = '.trash';
+
+/** A campaign file's WAL companions — moved with it, or the move loses writes. */
+const DB_SIBLINGS = ['', '-wal', '-shm'];
+
+/** Where a delete put it, so the route can say so out loud. */
+export type TrashedCampaign = { slug: string; path: string };
+
+/**
+ * Delete a campaign — by moving its file to `campaigns/.trash/`.
+ *
+ * Unlinking a campaign is unlinking somebody's whole table: every
+ * character, every scene, the entire event log that `/undo` walks
+ * (rule 3), in one press. So this is a move, and the caller is told
+ * the path so "where did it go" has an answer that isn't archaeology.
+ * Recovering one is a `mv` — the same operation backing a campaign up
+ * has always been.
+ *
+ * The caller decides whether the campaign may go at all; this function
+ * knows nothing about which one is being played. Opening it is the
+ * server's job and so is refusing (`server/index.ts`).
+ */
+export function trashCampaign(dataDir: string, slug: string): TrashedCampaign {
+  assertSlug(slug);
+  const dir = join(dataDir, 'campaigns');
+  const from = join(dir, `${slug}.db`);
+  if (!existsSync(from)) {
+    throw new Error(`no campaign ${slug} in ${dataDir}`);
+  }
+  const trash = join(dir, TRASH_DIR);
+  mkdirSync(trash, { recursive: true });
+  // ISO, with the colons taken out: the instant is the point, and a
+  // filename carrying `:` is a filename some tool somewhere mangles.
+  const at = new Date().toISOString().replace(/[:.]/g, '-');
+  const to = join(trash, `${slug}-${at}.db`);
+  for (const suffix of DB_SIBLINGS) {
+    const side = `${from}${suffix}`;
+    if (existsSync(side)) renameSync(side, `${to}${suffix}`);
+  }
+  return { slug, path: to };
+}
+
+/**
+ * Rename a campaign — which means renaming the FILE, because the file
+ * is the identity (§11). The manifest's `name` is a different fact
+ * with a different door; this one is about what the campaign is called
+ * on disk and in every url that names it.
+ *
+ * A slug already taken is refused rather than merged: two campaigns
+ * may share a name, never a file (`slugFor` has said so since the
+ * beginning), and silently swallowing one is the worst reading of
+ * "rename".
+ */
+export function renameCampaign(dataDir: string, from: string, to: string): void {
+  assertSlug(from);
+  assertSlug(to);
+  const dir = join(dataDir, 'campaigns');
+  const before = join(dir, `${from}.db`);
+  if (!existsSync(before)) {
+    throw new Error(`no campaign ${from} in ${dataDir}`);
+  }
+  if (from === to) return;
+  const after = join(dir, `${to}.db`);
+  if (existsSync(after)) {
+    throw new Error(`a campaign is already called ${to} — pick another name`);
+  }
+  for (const suffix of DB_SIBLINGS) {
+    const side = `${before}${suffix}`;
+    if (existsSync(side)) renameSync(side, `${after}${suffix}`);
   }
 }
 
