@@ -1,7 +1,7 @@
 {
   "id": "plg_7ec543dd0e9a",
   "name": "Assistant",
-  "version": 3,
+  "version": 4,
   "provides": ["propose.turn", "propose.narrate"],
   "needs": [
     "read:entities — every combatant's sheet, so it can see who is hurt, how fast they are and what they are holding",

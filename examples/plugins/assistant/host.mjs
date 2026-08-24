@@ -20,7 +20,7 @@
 //
 // Neither configured — every call quietly proposes nothing.
 //
-// WHAT IT ASKS FOR, and why it keeps growing (v3): `read:entities`,
+// WHAT IT ASKS FOR, and why it keeps growing (v3; unchanged at v4): `read:entities`,
 // `read:board`, `read:records`, `read:log`. Each one was added the day
 // an answer went wrong for want of it, and every one of those failures
 // is the SAME failure — a fact teller held and did not pass on is a
@@ -37,6 +37,12 @@
 //     actions), and every distance now arrives converted.
 //   * A creature was handed a held target and no cause for it, made one
 //     up, and played the turn off the invention. → `read:log`.
+//
+// v4 asks for NOTHING NEW, and that is the point of saying so: who
+// moved and what a straight line crosses were both derivable from the
+// board and the log this plugin already had — teller simply was not
+// deriving them, so nobody was told. The list stayed put; the answers
+// got fuller.
 //
 // Changing what a plugin asks for means agreeing to it again — the
 // enable gate is consent to a list, not to a folder.
@@ -213,7 +219,61 @@ function ground(board) {
         (z.standingIn.length ? ` — standing in it: ${z.standingIn.join(', ')}` : ' — nobody in it'),
     );
   }
+  lines.push(...crossings(board));
   return lines;
+}
+
+/**
+ * WHAT LIES BETWEEN — the ground that would have to be crossed.
+ *
+ * Standing-in is a fact about a tile and is already in the table above;
+ * this is a fact about the PATH, and it is the one that changes a
+ * decision. A creature crosses open sand without a thought and thinks
+ * twice about six squares of fire, so a hazard in the way is a real
+ * reason to go around, wait, or pick somebody else.
+ *
+ * The host measured every crossing (`server/geometry.ts`, from the
+ * acting token only). Silence when nothing is painted in the way: a
+ * line per pair would be noise on a busy board, and 'none' repeated
+ * eight times teaches nothing.
+ */
+function crossings(board) {
+  const blocked = (board.tokens ?? []).filter((t) => t.between?.length);
+  if (!blocked.length) return [];
+  const patch = (z) =>
+    `${z.name} (${z.cells} square${z.cells === 1 ? '' : 's'} of it${z.hidden ? ', hidden from the table' : ''})`;
+  return [
+    '',
+    'What lies between it and them — straight line, ground either end is already standing in excluded:',
+    ...blocked.map((t) => `- to ${t.name}: ${t.between.map(patch).join(', ')}`),
+  ];
+}
+
+/**
+ * How far a step went, and what it did to the gap — the host's
+ * measurement, said in the system's word for it.
+ *
+ * Every number here was worked out by teller (`measureMove`). Toward
+ * and away especially: a reader handed two coordinate pairs and asked
+ * whether one of them got nearer does trigonometry, and eventually does
+ * it generously.
+ */
+function step(r, actingName) {
+  const said = (band, inches) => band?.name ?? (inches === undefined ? undefined : `${inches}"`);
+  const far = said(r.wentBand, r.wentInches);
+  const went = `${r.name} moved${far ? ` about ${far}` : ''}`;
+  const seen = r.hidden ? ' (hidden from the table while it moved)' : '';
+  if (r.mine || !r.sense) return `${went}${seen}`;
+  const verb =
+    r.sense === 'neither'
+      ? `staying about as far off from ${actingName ?? 'the acting creature'}`
+      : r.sense === 'toward'
+        ? `toward ${actingName ?? 'the acting creature'}`
+        : `away from ${actingName ?? 'the acting creature'}`;
+  const now = said(r.nowBand, r.nowAwayInches);
+  const was = said(r.wasBand, r.wasAwayInches);
+  const gap = now && was ? `, now ${now} (was ${was})` : '';
+  return `${went} — ${verb}${gap}${seen}`;
 }
 
 /**
@@ -330,7 +390,7 @@ function conditions(records) {
  * reason: what a turn could afford last round is how a creature judges
  * what it can afford this one.
  */
-function happened(history) {
+function happened(history, actingName) {
   if (!Array.isArray(history)) return [];
   if (!history.length) return ['', '# What has already happened', 'Nothing recorded yet this fight.'];
   const paid = (spend) => {
@@ -348,6 +408,7 @@ function happened(history) {
   };
   const one = (r) => {
     const round = r.round ? `round ${r.round}: ` : '';
+    if (r.kind === 'token.moved') return `${round}${step(r, actingName)}`;
     if (r.kind === 'dice.rolled') {
       return `${round}${r.byName ?? 'somebody'} rolled ${r.pool}${
         r.faces?.length ? ` — ${r.faces.join(', ')}` : ''
@@ -369,10 +430,21 @@ function happened(history) {
     });
     return `${round}${by} used ${r.action} on ${said.join('; ')}${paid(r.spend)}`;
   };
+  // What did NOT happen is the other half of the sign. A creature that
+  // has not left its own patch of water in three rounds is exactly the
+  // sort of fact a profile turns on, and it can only be stated by
+  // something that was watching — so it is stated, rather than left to
+  // be inferred from an absence.
+  const moves = history.filter((r) => r.kind === 'token.moved');
+  const still =
+    moves.length && !moves.some((r) => r.mine)
+      ? [`${actingName ?? 'The acting creature'} has not moved in any of the turns recorded above.`]
+      : [];
   return [
     '',
     '# What has already happened (oldest first — this is where the conditions above came from)',
     ...history.map((r) => `- ${one(r)}`),
+    ...still,
   ];
 }
 
@@ -414,7 +486,7 @@ function table(snapshot) {
     '',
     `# The fight — round ${snapshot?.round ?? 1}, top acts first`,
     ...(snapshot?.order ?? []).map(combatantLine),
-    ...happened(snapshot?.history),
+    ...happened(snapshot?.history, acting?.name),
   ].join('\n');
 }
 
@@ -563,8 +635,10 @@ export const provides = {
   /**
    * Snapshot: { round, order: [{name, score, acting, entityId, vitals, stats,
    * held, awayInches?, awaySquares?, awayBand?, onBoard}], acting: entity
-   * (children and all), board: BoardFacts, records: { bands, space, use,
-   * statuses, defenses }, history: [], intent?, style? }
+   * (children and all), board: BoardFacts (each token carrying what the
+   * line to it CROSSES), records: { bands, space, use, statuses,
+   * defenses }, history: [] — resolved turns, rolls, and measured steps
+   * (MoveFacts) in one chronological run — intent?, style? }
    */
   'propose.turn': async (snapshot, config) => {
     const style = config?.style || snapshot?.style || '';
