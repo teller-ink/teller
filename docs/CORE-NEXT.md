@@ -2353,12 +2353,13 @@ BookReader fine-detail parity; the sha-256 display handle's URL role.
   flag would be a mechanic hiding in a field. The zero-rule belongs on
   the declaration instead — which then makes the merge fine (settled §1).
 - **Moving statuses into `kinds.status` under the CURRENT model.**
-  Correct call at the time, and `ARCHITECTURE.md` records `tags` as
+  Correct call at the time, and `ARCHITECTURE.md` recorded `tags` as
   "kind zero." **This doc supersedes that** — under §2 there is no
   un-kinded bucket, because every list is a list. Conditions and
   descriptors become two declared lists, which is what actually fixes
-  the Gunslinger bug. Fold the `ARCHITECTURE.md` section when this
-  merges.
+  the Gunslinger bug. *(`ARCHITECTURE.md` folded 2026-08-24; the
+  section now records the supersession instead of arguing the other
+  way.)*
 - **A clean-slate rewrite of the seat.** Convergence instead: every step
   ships and the table keeps working.
 
