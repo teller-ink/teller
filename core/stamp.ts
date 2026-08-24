@@ -27,6 +27,7 @@ import {
   type Entry,
   type Ref,
 } from './entity.ts';
+import { toPoolEffects, type PoolEffect } from './effects.ts';
 import { mergeById, mergeNamed } from './merge.ts';
 import { newId } from './id.ts';
 
@@ -58,6 +59,14 @@ export type Template = {
   page?: number;
   /** How many upgrades the thing takes. A number the author wrote down; nothing here reads it. */
   slots?: number;
+  /**
+   * What FITTING this to something does to that thing's dice — an
+   * upgrade's, a round's. The stamp itself does nothing with them: a
+   * fitting's arithmetic is a reading of the thing it's fitted TO,
+   * computed at the point of use (`amendStats`, `core/effects.ts`),
+   * which is why it is carried here and applied nowhere near here.
+   */
+  effects?: PoolEffect[];
   /**
    * A BUNDLE: template ids this entry unpacks into when acquired — an
    * outfit that is really eight things. Carried so whoever unpacks one
@@ -198,6 +207,12 @@ export function toTemplate(raw: unknown): Template | undefined {
   if (group) out.group = group;
   if (typeof o.page === 'number' && Number.isFinite(o.page)) out.page = o.page;
   if (typeof o.slots === 'number' && Number.isFinite(o.slots)) out.slots = o.slots;
+  // The fitting's arithmetic, kept whole. Dropping it here was the
+  // quiet half of the same bug the rest of this comment describes: an
+  // upgrade whose effects fell off the serialization is a Damage +1B
+  // that adds nothing, and the table reads the unamended pool all fight.
+  const effects = toPoolEffects(o.effects);
+  if (effects.length) out.effects = effects;
   const contents = Array.isArray(o.contents)
     ? o.contents.map((id) => String(id ?? '').trim()).filter(Boolean)
     : [];

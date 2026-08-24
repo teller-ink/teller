@@ -241,6 +241,25 @@ describe('toTemplate', () => {
     });
   });
 
+  it('carries a fitting’s effects — dropping them is a Damage +1B that adds nothing', () => {
+    expect(
+      toTemplate({
+        id: 'upg_bite',
+        name: 'Bite +1R',
+        type: 'Damage',
+        effects: [
+          { op: 'add', dice: '1R', range: 'near' },
+          { op: 'sing', to: 'the moon' },
+        ],
+      }),
+    ).toEqual({
+      id: 'upg_bite',
+      name: 'Bite +1R',
+      type: 'Damage',
+      effects: [{ op: 'add', dice: '1R', range: 'near' }],
+    });
+  });
+
   it('takes the old world’s `counters` in as a list — under the author’s own word, never renamed', () => {
     // Which list a system files its counters in is the SYSTEM's
     // business (rule 2). Core preserves the key it was handed and
