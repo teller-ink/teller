@@ -14,7 +14,7 @@
 
 import { exportProblems, loadCampaign, type Loaded } from '../core/boot.ts';
 import type { LoadedPlugin, PluginProblem } from '../core/plugins.ts';
-import { findEntry, sameName, withoutEntry, type Entity } from '../core/entity.ts';
+import { findEntry, refIn, sameName, withoutEntry, type Entity } from '../core/entity.ts';
 import { kindFor, setEntry, toKindDef, type KindDef } from '../core/kind.ts';
 import { resolve, stamp } from '../core/stamp.ts';
 import {
@@ -29,6 +29,9 @@ import {
 } from '../core/store.ts';
 import type { Ref } from '../core/entity.ts';
 import { applyTurnOp, toTurnState, type TurnOp, type TurnState } from './turn.ts';
+// The window an undo walks — the same bound the rows of one deploy are
+// collected under, because they are collected for exactly that walk.
+import { UNDO_WINDOW } from './undo.ts';
 import { withDeployed, withoutEntities, type Deploying } from './boards.ts';
 import { movesBetween, type MoveRecord } from './geometry.ts';
 
@@ -51,9 +54,18 @@ export type EncounterFoe = {
 };
 
 /**
+ * A foe the recipe names that this host can't stamp — the template
+ * isn't in the merged stack, because the pack that carries it isn't
+ * installed (or the campaign's own copy was deleted).
+ */
+export type MissingFoe = { templateId: string; name?: string };
+
+/**
  * What a deploy did. `placed` and `unplaced` are the loud half: a fight
  * that wrote down positions and found no board must say that, because
  * silence reads as "the map is fine" and the Warden finds out mid-fight.
+ * `missing` is the same half again, one step earlier — a foe with no
+ * template used to come up short in a count nobody was counting.
  */
 export type DeployResult = {
   deployed: Entity[];
@@ -63,6 +75,10 @@ export type DeployResult = {
   placed: number;
   /** Why nothing was placed, when the recipe expected somewhere to place it. */
   unplaced?: string;
+  /** How many of this fight's LAST generation this deploy cleared away first. */
+  cleared: number;
+  /** Foes named by the recipe and absent from this host — by name (rule 9). */
+  missing: MissingFoe[];
 };
 
 /** Which slots resolution stamps through — the stampable ones this loop knows. */
@@ -176,12 +192,17 @@ export class Session {
     slot: string,
     templateId: string,
     actor: string,
-    opts: { name?: string; thick?: boolean; parentId?: string } = {},
+    opts: {
+      name?: string;
+      thick?: boolean;
+      parentId?: string;
+      refs?: Record<string, Ref | Ref[]>;
+    } = {},
   ): Entity | undefined {
     const template = this.loaded.templateOf(slot)(templateId);
     if (!template) return undefined;
     const entity = this.campaign.create(
-      stamp(template, { name: opts.name, thick: opts.thick }),
+      stamp(template, { name: opts.name, thick: opts.thick, refs: opts.refs }),
       actor,
       opts.parentId,
     );
@@ -363,11 +384,54 @@ export class Session {
   }
 
   /**
+   * Everything this fight put on the table last time — the entities
+   * carrying its `refs.encounter` mark, parents before children so a
+   * restore can put them back in that order.
+   *
+   * The mark is what makes the reset possible at all: `refs.from` says
+   * which MONSTER a foe is, and four Bark Watchers from four different
+   * fights are indistinguishable by it. Anything stamped before the
+   * mark existed carries none and is therefore nobody's to clear —
+   * correct, and the only honest reading of a foe whose deploy nobody
+   * wrote down.
+   */
+  #deployedBy(encounterId: string): { entity: Entity; parent?: string }[] {
+    const out: { entity: Entity; parent?: string }[] = [];
+    const walk = (parentId: string, marked: boolean) => {
+      for (const child of this.campaign.children(parentId)) {
+        const mine =
+          marked || refIn(child.refs, 'encounter')?.id === encounterId;
+        if (mine) out.push({ entity: child, parent: parentId });
+        walk(child.id, mine);
+      }
+    };
+    walk(this.campaign.root().id, false);
+    return out;
+  }
+
+  /**
    * Deploy a prepared fight (§13: the encounter is PREP — a campaign
    * template; deploying stamps instances, and the recipe stays
    * pristine so it can run again for another posse). Each foe stamps
    * THIN and joins the turn order by link; what the fight does to them
    * is theirs, not the recipe's.
+   *
+   * **Deploying is a RESET, not an append.** Running the same fight
+   * again means "start this fight again", so whatever THIS encounter
+   * stamped last time goes first — entities, their rows in the order,
+   * their tokens on every board — and then the roster is stamped
+   * fresh. Without it a second press doubles the roster and a fourth
+   * gives the Warden four generations of the same four foes, which is
+   * how this was found (at a table, mid-fight).
+   *
+   * Entities the DM edited since the last deploy are still THIS
+   * encounter's and clear with the rest — that is what starting again
+   * means, and the event log keeps their story either way (rule 3).
+   *
+   * The whole thing is ONE action in the log: every row it writes is
+   * named by a single `encounter.deployed` event carrying the state it
+   * replaced, so `/undo` peels the generation back in one press exactly
+   * the way a delete's cascade does (`server/undo.ts`).
    */
   deployEncounter(
     encounterId: string,
@@ -375,22 +439,45 @@ export class Session {
   ): DeployResult | undefined {
     const raw = this.campaign.templateRaw(encounterId);
     if (!raw || typeof raw !== 'object') return undefined;
-    const enc = raw as { foes?: EncounterFoe[] };
+    const enc = raw as { name?: string; foes?: EncounterFoe[] };
+
+    // Everything below this rowid is this deploy's own work — the
+    // high-water mark `/undo` uses, for the same reason.
+    const mark = this.campaign.events({ limit: 1 })[0]?.id ?? 0;
+    const turnAtStart = this.turnState();
+    const boardsAtStart = this.campaign.boardStates();
+
+    // -- the reset. The cascade machinery does the work: `remove` takes
+    // each foe's turn row and its tokens with it, one logged write at a
+    // time, and the payload below claims all of them.
+    const cleared = this.#deployedBy(encounterId);
+    for (const { entity } of cleared) {
+      if (this.campaign.get(entity.id)) this.remove(entity.id, actor);
+    }
+
     const deployed: Entity[] = [];
+    const missing: MissingFoe[] = [];
     // Where each one starts, when the recipe said — collected as the
     // foes stamp so a token lands on the instance, not the template.
     const standing: Deploying[] = [];
     for (const foe of enc.foes ?? []) {
       if (!foe.templateId) continue;
-      // A foe whose template is missing is skipped and shows up as the
-      // count coming up short — reported by absence, never faked.
+      // A foe whose template is missing is REPORTED BY NAME. It used to
+      // be skipped in silence and show up as the count coming up short,
+      // which is a fact nobody was counting: "you don't have this" beats
+      // an encounter that deploys half-empty at the table (rule 9).
       const template = this.loaded.templateOf('bestiary')(foe.templateId);
-      if (!template) continue;
+      if (!template) {
+        const named = foe.name?.trim();
+        missing.push({ templateId: foe.templateId, ...(named ? { name: named } : {}) });
+        continue;
+      }
       const count = Math.max(1, Math.min(50, Math.floor(foe.count ?? 1)));
       const base = foe.name?.trim() || template.name;
       for (let n = 1; n <= count; n++) {
         const entity = this.stampFrom('bestiary', foe.templateId, actor, {
           name: count > 1 ? `${base} ${n}` : base,
+          refs: { encounter: { id: encounterId, name: enc.name?.trim() || 'a fight' } },
         });
         if (!entity) continue;
         deployed.push(entity);
@@ -420,17 +507,48 @@ export class Session {
     // the floor.
     const boardId = this.activeBoardId();
     const board = boardId && this.shelf.board(boardId) ? boardId : null;
-    const out: DeployResult = { deployed, turn, board, placed: 0 };
-    if (!standing.length) return out;
-    if (!board) {
+    const out: DeployResult = {
+      deployed,
+      turn,
+      board,
+      placed: 0,
+      cleared: cleared.length,
+      missing,
+    };
+    if (standing.length && !board) {
       out.unplaced = boardId
         ? `no board ${boardId} on this host — ${standing.length} foe(s) joined the order with nowhere to stand`
         : `no active board — ${standing.length} foe(s) joined the order with nowhere to stand`;
-      return out;
+    } else if (standing.length && board) {
+      const { data, placed } = withDeployed(this.campaign.boardState(board), standing);
+      if (placed) this.putBoardState(board, data, actor);
+      out.placed = placed;
     }
-    const { data, placed } = withDeployed(this.campaign.boardState(board), standing);
-    if (placed) this.putBoardState(board, data, actor);
-    out.placed = placed;
+
+    // One row for the whole action. It carries the table as it was —
+    // the generation that went, where everyone was standing, whose turn
+    // it was — and claims every log row this deploy wrote, so the press
+    // AFTER the undo steps past them instead of re-undoing what it
+    // already put back (`server/undo.ts`, the delete cascade's law).
+    const events = this.campaign
+      .events({ limit: UNDO_WINDOW })
+      .filter((e) => e.id > mark)
+      .map((e) => e.id);
+    const boardsBefore = boardsAtStart.filter(({ boardId: id, data }) => {
+      const now = this.campaign.boardState(id);
+      return JSON.stringify(now ?? null) !== JSON.stringify(data ?? null);
+    });
+    this.campaign.append(encounterId, actor, 'encounter.deployed', {
+      name: enc.name?.trim() || undefined,
+      created: deployed.map((e) => e.id),
+      cleared,
+      cascade: {
+        events,
+        turn: turnAtStart,
+        ...(boardsBefore.length ? { boards: boardsBefore } : {}),
+      },
+    });
+    this.changed('events');
     return out;
   }
 

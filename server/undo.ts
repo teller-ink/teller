@@ -14,6 +14,13 @@
 //     fighting each other (undo, undo, undo walks three edits back).
 //     A revert also names the rows its own inverse write produced, so
 //     the second undo doesn't simply redo the first.
+// A DEPLOY is the other one, and the same shape: deploying a fight is
+// a RESET (clear what this encounter stamped last time, stamp it
+// fresh), which is many writes and exactly one thing the Warden did.
+// So `encounter.deployed` carries the table as it was — the generation
+// it cleared, the order, the boards — and names every row it wrote, and
+// one press peels the whole generation back (`Session.deployEncounter`).
+//
 // A DELETION is the one row that undoes more than itself. An entity's
 // place at the table — its row in the order, its token on a board —
 // points at it by id, so deleting takes those with it (`Session.remove`)
@@ -159,6 +166,10 @@ function invertible(event: EventRow): boolean {
       // Only the rows that carried the whole order back; a bare `{op}`
       // (an older build's) is a record of a move nobody can replay.
       return p.before !== undefined;
+    case 'encounter.deployed':
+      // One press peels one generation: what it stamped, and what it
+      // cleared to stamp it (`Session.deployEncounter`).
+      return Array.isArray(p.created) && Array.isArray(p.cleared);
     default:
       return false;
   }
@@ -177,7 +188,11 @@ function describe(session: Session, event: EventRow): Undoable {
     stored?.name ??
     (named && typeof named === 'object' && typeof named.name === 'string'
       ? named.name
-      : undefined);
+      : undefined) ??
+    // A row about something that isn't an entity at all — a deployed
+    // fight names itself, because "undo the deploy" wants the fight's
+    // word and there's no stored row to read it off.
+    (typeof p.name === 'string' ? p.name : undefined);
   const out: Undoable = {
     event: event.id,
     kind: event.kind,
@@ -275,6 +290,29 @@ function invert(session: Session, event: EventRow, actor: string): void {
     }
     case 'turn.updated': {
       session.restoreTurn(toTurnState(p.before), actor);
+      return;
+    }
+    case 'encounter.deployed': {
+      // The order is the deletion cascade's, twice over: take the new
+      // generation off the table BEFORE putting the old one back, and
+      // let nothing point at an entity that doesn't exist yet — so the
+      // created foes go, then the cleared ones return (parents first,
+      // as they were captured), and only then the order and the boards.
+      for (const id of (p.created as unknown[]) ?? []) {
+        if (typeof id === 'string' && session.campaign.get(id)) session.remove(id, actor);
+      }
+      for (const row of (p.cleared as unknown[]) ?? []) {
+        const held = row && typeof row === 'object' ? (row as Record<string, unknown>) : {};
+        const entity = entityOf(held.entity);
+        if (!entity) continue;
+        const parent = typeof held.parent === 'string' ? held.parent : undefined;
+        session.create(entity, actor, parent);
+      }
+      const cascade = cascadeOf(p);
+      if (cascade?.turn !== undefined) session.restoreTurn(toTurnState(cascade.turn), actor);
+      for (const board of cascade?.boards ?? []) {
+        session.putBoardState(board.boardId, board.data, actor);
+      }
       return;
     }
   }

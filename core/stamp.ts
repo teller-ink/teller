@@ -75,17 +75,23 @@ export type TemplateOf = (id: string) => Template | undefined;
  * Thin unless told otherwise. `name` lets a deployment christen the
  * instance ("Bark Watcher 2"); the ref keeps the template's own name
  * for degradation either way.
+ *
+ * `refs` is what the stamping ACTION knows and the template doesn't —
+ * which fight put this foe on the table (`refs.encounter`), so a second
+ * deploy can find its own last generation and clear it. `from` is
+ * teller's and can't be restated here: the link is the one thing a
+ * stamp is.
  */
 export function stamp(
   template: Template,
-  opts: { thick?: boolean; name?: string } = {},
+  opts: { thick?: boolean; name?: string; refs?: Record<string, Ref | Ref[]> } = {},
 ): Entity {
   const from: Ref = { id: template.id, name: template.name };
   const out: Entity = {
     id: newId('ent'),
     name: opts.name ?? template.name,
     lists: {},
-    refs: { from },
+    refs: { ...opts.refs, from },
   };
   if (template.type) out.type = template.type;
   if (opts.thick) {

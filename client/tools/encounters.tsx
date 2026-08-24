@@ -53,6 +53,17 @@ function foeLabel(foe: EncounterFoe, template: Template | undefined): string {
   return foe.name?.trim() || template?.name || 'missing foe';
 }
 
+/** What a foe this host can't stamp is called — the recipe's own word, else its id. */
+function nameOf(missing: { templateId: string; name?: string }): string {
+  return missing.name?.trim() || missing.templateId;
+}
+
+/** "a", "a and b", "a, b and c" — a sentence, because the status line is one. */
+function listed(names: string[]): string {
+  if (names.length < 2) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
 function FoeRow({
   foe,
   template,
@@ -288,6 +299,8 @@ function EncountersTool() {
         deployed?: { id: string; name: string }[];
         placed?: number;
         unplaced?: string;
+        cleared?: number;
+        missing?: { templateId: string; name?: string }[];
       }>(`/api/encounters/${enc.id}/deploy`, { method: 'POST' });
       // Where they went is half the answer, and the half that goes
       // wrong quietly: a staged fight that placed nothing says why.
@@ -297,7 +310,18 @@ function EncountersTool() {
         : out.placed
           ? `, ${out.placed} on the board`
           : '';
-      setStatus((s) => ({ ...s, [enc.id]: `${joined}${onMap}` }));
+      // Deploying again is a reset, so say what it took away — a roster
+      // that silently doubled is what this line exists to make visible.
+      const again = out.cleared ? `, the last ${out.cleared} cleared` : '';
+      // And a foe this host can't stamp is NAMED. Silence here read as
+      // "the fight is fine" and the Warden found out mid-combat.
+      const absent = out.missing ?? [];
+      const gone = absent.length
+        ? absent.length > 1
+          ? ` — ${listed(absent.map(nameOf))} aren't on this host: their packs aren't installed`
+          : ` — ${nameOf(absent[0])} isn't on this host: its pack isn't installed`
+        : '';
+      setStatus((s) => ({ ...s, [enc.id]: `${joined}${again}${onMap}${gone}` }));
     } catch (e) {
       setStatus((s) => ({ ...s, [enc.id]: String(e instanceof Error ? e.message : e) }));
     } finally {

@@ -184,13 +184,20 @@ describe('the runner over HTTP', () => {
     expect(run.body.turn.order).toHaveLength(2);
     expect(run.body.turn.order[0].entityId).toBe(run.body.deployed[0].id);
 
-    // Deploy again for another posse: the recipe never spent itself.
+    // Deploy again: the recipe never spent itself, and deploying is a
+    // RESET rather than an append — "start this fight again" clears
+    // what this encounter stamped last time and stamps it fresh, so
+    // the order holds one generation however many times it's pressed.
     const again = await call('POST', `/api/encounters/${made.body.id}/deploy`, {
       key: true,
       body: {},
     });
     expect(again.body.deployed).toHaveLength(2);
-    expect(again.body.turn.order).toHaveLength(4);
+    expect(again.body.cleared).toBe(2);
+    expect(again.body.turn.order).toHaveLength(2);
+    expect(again.body.turn.order.map((e: any) => e.entityId)).toEqual(
+      again.body.deployed.map((e: any) => e.id),
+    );
   });
 
   it('a seat scores its own row and drives nothing else', async () => {
@@ -295,17 +302,18 @@ describe('the runner over HTTP', () => {
     // the reeds is behind the screen, the two at the ford are not.
     expect(state.placements.map((p: any) => p.hidden)).toEqual([false, false, true]);
 
-    // Run it again for another posse: new foes, new tokens, and nobody
-    // standing twice.
+    // Run it again: new foes, new tokens, and the LAST generation gone
+    // from the board with them. Three minis on the table, not six.
     const again = await call('POST', `/api/encounters/${encounter}/deploy`, {
       key: true,
       body: {},
     });
     expect(again.body.placed).toBe(3);
+    expect(again.body.cleared).toBe(3);
     const after = session.campaign.boardState(boardId) as any;
     const ids = after.placements.map((p: any) => p.entityId);
-    expect(ids).toHaveLength(6);
-    expect(new Set(ids).size).toBe(6);
+    expect(ids).toHaveLength(3);
+    expect(ids).toEqual(again.body.deployed.map((e: any) => e.id));
   });
 
   it('a staged fight with no board up says so out loud', async () => {
