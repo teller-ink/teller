@@ -8,28 +8,47 @@ HP, conditions, party resources — goes on screens: a DM console, a
 table display, and a per-player seat card that runs on anything with a
 browser.
 
-System-agnostic by construction: characters are generic primitives
-(fields, counters, tags, notes) seeded by per-system templates that
-carry structure and vocabulary, never rules text.
+**teller runs on the table's own machine.** One person starts the host;
+every other screen in the room opens the address it prints and pairs
+with a code. There is no cloud in the play path, and a table with no
+internet works fine.
 
-## Dev
+System-agnostic by construction: an entity is named lists of named
+entries, and what a list MEANS is a declaration a system ships. teller
+ships empty — no game, no vocabulary, nobody's book. Systems, packs,
+panels and plugins are files you put on your own shelf.
+
+## Install
+
+```bash
+brew install teller-ink/tap/teller
+teller host        # prints the address every screen opens
+teller key         # the one secret; the DM's device unlocks with it
+```
+
+Your table lives in `~/.teller/` — campaigns, systems, packs, panels,
+plugins, books, art. Carry it on a stick if you like: `teller host
+/Volumes/…`.
+
+## Contributing
+
+Node ≥ 24, pnpm.
 
 ```bash
 pnpm install
-cp .dev.vars.example .dev.vars
-pnpm db:migrate:local
-pnpm dev          # http://localhost:4525
+pnpm host          # serve a table from this checkout
+pnpm client:dev    # client dev server against a running host
+pnpm typecheck     # two projects: host (core + server), client
+pnpm test          # vitest
 ```
 
-## Deploy
+`core/` is the kernel (storage, the merge, the event log, the small
+evaluators), `server/` is the doors, `client/` is the React app,
+`defaults/` ships with the install as the floor layer, and `examples/`
+is source you copy onto your own shelf.
 
-```bash
-pnpm db:migrate:remote   # first time + on new migrations
-pnpm deploy              # builds the SPA + deploys worker to teller.ink
-wrangler secret put DM_KEY   # first deploy only
-```
-
-See `CLAUDE.md` for architecture and the rules of the road.
+`CLAUDE.md` holds the thesis and the rules of the road;
+`docs/CORE-NEXT.md` is the canonical data model.
 
 ## License
 
