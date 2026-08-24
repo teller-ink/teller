@@ -66,7 +66,7 @@ import {
 } from '../core/plugins.ts';
 import { callDoor, whoOf } from './plugin-bridge.ts';
 import { grants, isPoint, POINTS, type Need, type Point } from '../core/registry.ts';
-import { fightGeometry } from './geometry.ts';
+import { bandsIn, fightGeometry, measureMove, type MoveRecord } from './geometry.ts';
 import {
   copyPanelToTable,
   defaultPanelDir,
@@ -1706,15 +1706,29 @@ export async function handleApi(
       // Records only — the two kinds `server/undo.ts` also treats as
       // records, because they changed no state and say what the table
       // saw.
+      //
+      // WHO MOVED rides in the same list, in the same order, and
+      // arrives MEASURED (`server/geometry.ts`). It is here rather than
+      // in its own section because a step and a swing are the same kind
+      // of fact — a thing that happened on somebody's turn — and the
+      // one question a reader has about a step is what it did to the
+      // distance, which is a number teller already has and must never
+      // ask anybody else to work out.
+      const bands = bandsIn(session.loaded.declarations('bands'));
       const history = session.campaign
-        .events({ limit: 80 })
-        .filter((e) => e.kind === 'turn.resolved' || e.kind === 'dice.rolled')
-        .slice(0, 12)
+        .events({ limit: 120 })
+        .filter(
+          (e) =>
+            e.kind === 'turn.resolved' || e.kind === 'dice.rolled' || e.kind === 'token.moved',
+        )
+        .slice(0, 18)
         .reverse()
-        .map((e) => ({
-          kind: e.kind,
-          ...(e.payload && typeof e.payload === 'object' ? (e.payload as object) : {}),
-        }));
+        .map((e) => {
+          const payload =
+            e.payload && typeof e.payload === 'object' ? (e.payload as object) : {};
+          if (e.kind !== 'token.moved') return { kind: e.kind, ...payload };
+          return { kind: e.kind, ...measureMove(payload as MoveRecord, board, bands) };
+        });
       widest = {
         round: turn.round,
         order: turn.order.map((e, i) => {
