@@ -348,6 +348,68 @@ describe('GET /api/public', () => {
     expect((await call('GET', '/api/events', {})).status).toBe(401);
   });
 
+  // -- the table notice --------------------------------------------------
+  //
+  // The law it has to satisfy is the one this whole file is about, read
+  // from the other end: a notice is IN the payload every passive screen
+  // renders, and a note is not — because the DM typed one FOR the room
+  // and aimed the other at one person.
+
+  it('there is no notice until somebody puts one up', async () => {
+    const table = await passiveScreen();
+    expect((await call('GET', '/api/public', { display: table })).body.notice).toBe(null);
+  });
+
+  it('reaches the outward glass, and comes down again', async () => {
+    const table = await passiveScreen();
+    const up = await call('POST', '/api/notice', { key: true, body: { text: '  break  ' } });
+    expect(up.status).toBe(200);
+    expect(up.body.notice).toMatchObject({ text: 'break' });
+
+    const seen = await call('GET', '/api/public', { display: table });
+    expect(seen.body.notice.text).toBe('break');
+    expect(typeof seen.body.notice.at).toBe('string');
+
+    // Empty words are the way down — one door, both directions.
+    const down = await call('POST', '/api/notice', { key: true, body: { text: '   ' } });
+    expect(down.body.notice).toBe(null);
+    expect((await call('GET', '/api/public', { display: table })).body.notice).toBe(null);
+  });
+
+  it('is the DM\'s to write and nobody else\'s', async () => {
+    const table = await passiveScreen();
+    expect((await call('POST', '/api/notice', { display: table, body: { text: 'x' } })).status)
+      .toBe(401);
+    expect((await call('POST', '/api/notice', { body: { text: 'x' } })).status).toBe(401);
+    expect((await call('GET', '/api/public', { display: table })).body.notice).toBe(null);
+  });
+
+  it('both directions are in the log (rule 3)', async () => {
+    await call('POST', '/api/notice', { key: true, body: { text: 'everyone up' } });
+    await call('POST', '/api/notice', { key: true, body: { text: '' } });
+    const log = (await call('GET', '/api/events?limit=20', { key: true })).body;
+    const kinds = log.map((e: { kind: string }) => e.kind);
+    expect(kinds).toContain('notice.posted');
+    expect(kinds).toContain('notice.cleared');
+    const posted = log.find((e: { kind: string }) => e.kind === 'notice.posted');
+    expect(posted.payload).toMatchObject({ text: 'everyone up' });
+  });
+
+  it('is not a note: a passed one still reaches nobody through this payload', async () => {
+    const table = await passiveScreen();
+    await call('POST', '/api/notice', { key: true, body: { text: 'the room hears this' } });
+    await call('POST', '/api/notes', {
+      key: true,
+      body: { text: 'only barrett hears this', to: [barrett] },
+    });
+    const snapshot = await call('GET', '/api/public', { display: table });
+    expect(snapshot.body.notice.text).toBe('the room hears this');
+    expect(JSON.stringify(snapshot.body)).not.toContain('only barrett');
+    expect(snapshot.body.notes).toBeUndefined();
+    // And the note door still answers a passive screen with nothing.
+    expect((await call('GET', '/api/notes/mine', { display: table })).body).toEqual([]);
+  });
+
   it('board-state answers the DM fully and a watcher safely', async () => {
     session.putBoardState(
       boardId,

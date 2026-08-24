@@ -408,11 +408,28 @@ export type PublicSnapshot = {
   turn: PublicTurn;
   board: PublicBoard | null;
   handout: PublicHandout | null;
+  /** The line the DM put up for the room. Null means the glass is clear. */
+  notice: PublicNotice | null;
 };
+
+/** What the whole table is being told — never anything aimed at one player. */
+export type PublicNotice = { text: string; at: string };
 
 export function publicSnapshot(): Promise<PublicSnapshot> {
   return api<PublicSnapshot>('/api/public');
 }
+
+/**
+ * Put a line up on the shared glass, or take it down with empty words.
+ *
+ * One door both ways (`server/notice.ts`): a notice is not a note, it
+ * is not stored with the campaign, and it reaches the room through the
+ * public snapshot every passive surface already renders.
+ */
+export function setNotice(text: string): Promise<{ notice: PublicNotice | null }> {
+  return api<{ notice: PublicNotice | null }>('/api/notice', { body: { text } });
+}
+
 
 // ---- handouts and passed notes ----------------------------------------
 //

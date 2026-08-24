@@ -21,6 +21,7 @@ import {
 } from '../lib/api.ts';
 import { DECLARED, PUBLIC, useLive } from '../lib/use-session.ts';
 import { useWakeLock } from '../lib/use-wake-lock.ts';
+import { ConnectionHint } from '../components/ConnectionHint.tsx';
 import { barsOf, chipLabel, chipsOf, kinds, type KindDef } from './passive.ts';
 
 const VITALITY_WORDS: Record<string, string> = {
@@ -61,9 +62,15 @@ export function BadgeView({ entityId }: { entityId: string }) {
   const snapshot = useLive<PublicSnapshot>(publicSnapshot, [], { on: PUBLIC });
   const defs = useLive<KindDef[]>(kinds, [], { on: DECLARED });
 
-  if (!snapshot.data) return <main className="p-8 text-stone-600">…</main>;
+  if (!snapshot.data) {
+    return (
+      <main className="p-8 text-stone-600">
+        <ConnectionHint />…
+      </main>
+    );
+  }
 
-  const { campaign, roster, turn } = snapshot.data;
+  const { campaign, roster, turn, notice } = snapshot.data;
   const entity = roster.find((e) => e.id === entityId);
   // Pointed at somebody the campaign no longer has: say so rather than
   // sit blank, and never show the id — it identifies nothing to anyone
@@ -71,6 +78,7 @@ export function BadgeView({ entityId }: { entityId: string }) {
   if (!entity) {
     return (
       <main className="flex h-dvh flex-col items-center justify-center gap-2 overflow-hidden">
+        <ConnectionHint />
         <p className="font-serif text-4xl text-stone-600">nobody here</p>
         <p className="text-lg text-stone-700">this screen is pointed at a stranger</p>
       </main>
@@ -94,6 +102,16 @@ export function BadgeView({ entityId }: { entityId: string }) {
         up ? 'bg-amber-950/40 ring-8 ring-inset ring-amber-600' : ''
       }`}
     >
+      <ConnectionHint />
+      {/* The room's line, on the room-facing side of the rail. A NOTE
+          never reaches a badge (server/notes.ts) precisely because this
+          panel is aimed outward; a notice is aimed outward too, which
+          is what makes it the one thing that belongs here. */}
+      {notice && (
+        <p className="animate-pulse rounded-2xl bg-amber-700 px-8 py-3 text-center font-serif text-4xl text-stone-950 shadow-lg shadow-amber-900/50">
+          {notice.text}
+        </p>
+      )}
       <header className="text-center">
         <h1 className="font-serif text-6xl text-stone-100">{entity.name}</h1>
         {up && (

@@ -115,6 +115,7 @@ import {
 } from './story.ts';
 import { toRights } from '../core/bundle.ts';
 import { notesOf, passNote, visibleTo, type NoteHandout } from './notes.ts';
+import { setNotice } from './notice.ts';
 import { publicBoardState, publicSnapshot } from './public.ts';
 import { ACTIVE_CAMPAIGN, Host, Session, type EntryEdit } from './session.ts';
 import { peekUndo, undo } from './undo.ts';
@@ -1180,6 +1181,7 @@ export async function handleApi(
     return reply(200, publicSnapshot(session));
   }
 
+
   // Which system and packs this campaign runs on — the manifest's refs,
   // rewritten. An ABSENT (or emptied) pack list is not "no packs": it
   // restores the default, every pack for the system in arrival order,
@@ -1999,6 +2001,32 @@ export async function handleApi(
       session.changed('notes');
       return reply(201, note);
     }
+  }
+
+  // -- the table notice -------------------------------------------------
+  //
+  // ONE door, both directions: words put a line up on the shared glass,
+  // empty takes it down. There is no GET, deliberately — a notice is
+  // part of the public snapshot every passive surface already renders
+  // whole (`server/notice.ts`), and a second way to read it would be a
+  // second answer to drift from the first. The console reads it from
+  // the same snapshot everyone else does.
+  if (method === 'POST' && head === 'notice' && !a) {
+    if (!canDm(auth)) return denied();
+    const body = await bodyOf(req);
+    const raw = typeof body.text === 'string' ? body.text : '';
+    const notice = setNotice(session, raw);
+    // Rule 3, both ways round: taking a notice down is a change to what
+    // the room can see, and a log that only recorded the putting-up
+    // would say the table has been on BREAK since Tuesday.
+    session.campaign.append(
+      null,
+      actorOf(auth, String(body.actor ?? '')),
+      notice ? 'notice.posted' : 'notice.cleared',
+      notice ? { text: notice.text } : {},
+    );
+    session.changed('notice');
+    return reply(200, { notice });
   }
 
   // Deploy a prepared fight: stamp the foes, seed the order.

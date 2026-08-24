@@ -44,6 +44,7 @@ import { numberOf } from '../core/entity.ts';
 import { kindFor, toKindDef, type KindDef } from '../core/kind.ts';
 import type { Board } from '../core/store.ts';
 import { activeHandout, type Handout } from './handouts.ts';
+import { noticeOf, type Notice } from './notice.ts';
 import type { Session } from './session.ts';
 import type { TurnState } from './turn.ts';
 
@@ -115,6 +116,14 @@ export type PublicSnapshot = {
   turn: TurnState;
   board: PublicBoard | null;
   handout: PublicHandout | null;
+  /**
+   * The line the DM put up for the ROOM, and the one thing in here
+   * that was never redacted from anything — a notice is words the DM
+   * typed FOR the players (`server/notice.ts`). A passed NOTE is still
+   * absent and always will be: aimed at one person, answered
+   * per-screen, and this payload goes to the whole table.
+   */
+  notice: Notice | null;
 };
 
 /** §M-6's convention, and the client's: a foe says so on its type. */
@@ -262,6 +271,7 @@ export function publicSnapshot(session: Session): PublicSnapshot {
     turn: session.turnState(),
     board: activeBoard(session),
     handout: publicHandout(activeHandout(session)),
+    notice: noticeOf(session),
   };
 }
 

@@ -16,6 +16,11 @@
 //     press of the same one: "put the frame away" is a different
 //     intention from "show this", and a toggle that turns showing into
 //     hiding depending on state is how you blank the table by accident.
+//   * PUT UP A NOTICE writes one line for the WHOLE ROOM, which is the
+//     third act and the one the port had lost. It sits here because it
+//     is the same desk: show everyone a picture, tell everyone a line,
+//     or slide one person a scrap. Passive glass renders it and can
+//     never take it down (rule 6) — clearing is a press on this screen.
 //   * PASS TO… posts a note, which is delivered per-screen and reaches
 //     nobody it wasn't addressed to (`server/notes.ts`). Passing to
 //     NOBODY IN PARTICULAR is passing to the whole table — the same
@@ -36,6 +41,7 @@ import {
   passNote,
   publicSnapshot,
   saveHandout,
+  setNotice,
   showHandout,
   uploadHandout,
   type Handout,
@@ -47,6 +53,27 @@ import { PUBLIC, useLive } from '../lib/use-session.ts';
 import { btn, btnGhost, btnPrimary, card, input, sectionLabel } from '../lib/ui.ts';
 
 type RosterRow = { id: string; name: string; type?: string | null };
+
+/**
+ * The lines this table puts up often, as the merged stack declares
+ * them — `notices`, a system-or-pack slot like any other.
+ *
+ * teller ships NONE, and that is the whole reason this is a
+ * declaration and not an array in this file. The old app hardcoded four
+ * buttons whose words belonged to one game; the kernel owns no
+ * vocabulary (§M-2), so the chips arrive from the layer that has words
+ * and a host with none simply gets the box you type in.
+ */
+function noticePresets(): Promise<string[]> {
+  return api<unknown[]>('/api/stack/declarations/notices').then((raw) =>
+    raw.flatMap((item) => {
+      if (typeof item === 'string') return item.trim() ? [item.trim()] : [];
+      const text = (item as { text?: unknown; name?: unknown })?.text ??
+        (item as { name?: unknown })?.name;
+      return typeof text === 'string' && text.trim() ? [text.trim()] : [];
+    }),
+  );
+}
 
 /** A name for a file nobody bothered to name — 'wanted-poster.png' → 'wanted poster'. */
 function nameFor(filename: string): string {
@@ -71,6 +98,7 @@ function HandoutsTool() {
     on: ['entities'],
   });
   const { data: recent, reload: reloadNotes } = useLive(passedNotes, [], { on: ['notes'] });
+  const { data: presets } = useLive(noticePresets, [], { on: ['plugins'] });
 
   // Every thumbnail's ticketed url in one pass — one hook however many
   // pictures the gallery grew (`client/lib/art.ts`).
@@ -88,6 +116,10 @@ function HandoutsTool() {
   const [text, setText] = useState('');
   const [attached, setAttached] = useState<string | null>(null);
   const [to, setTo] = useState<string[]>([]);
+
+  /** The line being typed for the room. The one that's UP lives on the
+   *  snapshot, so this box never has to be told what it already said. */
+  const [notice, setNoticeDraft] = useState('');
 
   if (!list) return null;
 
@@ -138,6 +170,12 @@ function HandoutsTool() {
     );
   };
 
+  const showing = snapshot?.notice ?? null;
+  const post = (words: string) => {
+    setNoticeDraft(words);
+    guard(setNotice(words), reloadActive);
+  };
+
   const attachedName = list.find((h) => h.id === attached)?.name;
   const canPass = Boolean(text.trim() || attached);
 
@@ -148,6 +186,54 @@ function HandoutsTool() {
           {problem}
         </p>
       )}
+
+      {/* THE ROOM'S LINE. First on the screen because it is the
+          loudest thing here and the fastest to reach for — 'everybody
+          take five' is typed mid-sentence, not hunted for. */}
+      <section className={`${card} space-y-2`}>
+        <div className="flex items-center justify-between gap-3">
+          <span className={sectionLabel}>Table notice</span>
+          {showing && (
+            <button className={btn} disabled={busy} onClick={() => post('')}>
+              take it down
+            </button>
+          )}
+        </div>
+
+        {showing && (
+          <p className="rounded-md bg-amber-800/80 px-3 py-2 text-center font-serif text-2xl text-stone-950">
+            {showing.text}
+          </p>
+        )}
+
+        {(presets ?? []).length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {(presets ?? []).map((preset) => (
+              <button
+                key={preset}
+                className="rounded-full bg-stone-800 px-2.5 py-1 text-xs text-stone-300 transition-colors hover:bg-amber-800 hover:text-stone-50"
+                disabled={busy}
+                onClick={() => post(preset)}
+              >
+                {preset}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <input
+            className={`${input} min-w-0 flex-1`}
+            placeholder="a line for the whole room…"
+            value={notice}
+            onChange={(e) => setNoticeDraft(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && notice.trim() && post(notice)}
+          />
+          <button className={btn} disabled={busy || !notice.trim()} onClick={() => post(notice)}>
+            put it up
+          </button>
+        </div>
+      </section>
 
       <section className={`${card} space-y-3`}>
         <div className="flex items-center justify-between gap-3">

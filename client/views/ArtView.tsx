@@ -27,11 +27,18 @@ import { useEffect, useState } from 'react';
 import { fileUrl, publicSnapshot, type PublicSnapshot } from '../lib/api.ts';
 import { PUBLIC, useLive } from '../lib/use-session.ts';
 import { useWakeLock } from '../lib/use-wake-lock.ts';
+import { ConnectionHint } from '../components/ConnectionHint.tsx';
 
 export function ArtView() {
   useWakeLock();
   const snapshot = useLive<PublicSnapshot>(publicSnapshot, [], { on: PUBLIC });
   const handout = snapshot.data?.handout ?? null;
+  // A NOTICE does come here, and the distinction above is exactly why:
+  // a passed note is aimed at one player, a notice is the DM's words
+  // for the room, and this is the room's own glass. It sits over the
+  // picture rather than beside it — the frame is full-bleed and a line
+  // nobody can see is a line nobody was told.
+  const notice = snapshot.data?.notice ?? null;
   const [src, setSrc] = useState<string | undefined>(undefined);
 
   // Keyed by the KEY, not the row: renaming a handout must not make the
@@ -53,9 +60,17 @@ export function ArtView() {
     };
   }, [key]);
 
+  const banner = notice && (
+    <p className="pointer-events-none absolute inset-x-6 top-6 z-10 animate-pulse rounded-2xl bg-amber-700 px-8 py-3 text-center font-serif text-4xl text-stone-950 shadow-lg shadow-amber-900/50">
+      {notice.text}
+    </p>
+  );
+
   if (handout && src) {
     return (
-      <main className="flex h-dvh items-center justify-center overflow-hidden bg-stone-950">
+      <main className="relative flex h-dvh items-center justify-center overflow-hidden bg-stone-950">
+        <ConnectionHint />
+        {banner}
         <img
           src={src}
           alt={handout.name}
@@ -66,7 +81,9 @@ export function ArtView() {
   }
 
   return (
-    <main className="flex h-dvh flex-col items-center justify-center gap-3 overflow-hidden bg-stone-950">
+    <main className="relative flex h-dvh flex-col items-center justify-center gap-3 overflow-hidden bg-stone-950">
+      <ConnectionHint />
+      {banner}
       <h1 className="font-serif text-5xl text-stone-800">teller</h1>
       {snapshot.data && (
         <p className="text-lg text-stone-800">{snapshot.data.campaign.name}</p>
