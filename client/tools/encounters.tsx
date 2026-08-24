@@ -2,14 +2,19 @@
 // app's EncountersPanel (src/components/EncountersPanel.tsx).
 //
 // The recipe shrank with the data model. The old `Placement` carried
-// per-foe overrides (a health max, starting tags, hidden-behind-the-
-// screen) because each foe was its OWN entity row from the moment it
-// was prepped. Deploying an encounter in core-next stamps THIN
-// (`Session.deployEncounter`, `core/stamp.ts`) — a foe is a template
-// reference plus a count until the table drops it on, so the recipe
-// itself is just `{ templateId, name?, count? }`. Overriding a
-// deployed foe's Health is the roster/entity panel's job now, not
-// this one's.
+// per-foe overrides (a health max, starting tags) because each foe was
+// its OWN entity row from the moment it was prepped. Deploying an
+// encounter in core-next stamps THIN (`Session.deployEncounter`,
+// `core/stamp.ts`) — a foe is a template reference plus a count until
+// the table drops it on. Overriding a deployed foe's Health is the
+// roster/entity panel's job now, not this one's.
+//
+// What did NOT shrink is WHERE a foe starts: a fight staged on a map
+// writes `u`/`v` per foe and whether it's waiting out of sight, and
+// deploying puts those tokens on the active board. This panel doesn't
+// stage yet (the board editor does the staging), but the type says so —
+// it used to declare a narrower recipe than the one on disk, and a
+// panel that saved a foe through this shape dropped its position.
 //
 // Card and section grammar kept verbatim from the old panel: a list of
 // encounter cards, one expanded at a time, deploy/delete per card, an
@@ -26,7 +31,17 @@ import { useLive } from '../lib/use-session.ts';
 import { btn, btnGhost, btnPrimary, card, input, sectionLabel } from '../lib/ui.ts';
 import { TemplateSheet } from '../components/encounters/TemplateSheet.tsx';
 
-type EncounterFoe = { templateId: string; name?: string; count?: number };
+/** One foe as the recipe writes it down — `server/session.ts` is the twin. */
+type EncounterFoe = {
+  templateId: string;
+  name?: string;
+  count?: number;
+  /** Map space (docs/BATTLEMAP.md), when the fight was staged on a board. */
+  u?: number;
+  v?: number;
+  /** Waiting behind the screen — flows to the token deploy places. */
+  hidden?: boolean;
+};
 type EncounterTemplate = {
   id: string;
   name: string;
@@ -269,11 +284,20 @@ function EncountersTool() {
   const deploy = async (enc: EncounterTemplate) => {
     setBusyId(enc.id);
     try {
-      const out = await api<{ deployed?: { id: string; name: string }[] }>(
-        `/api/encounters/${enc.id}/deploy`,
-        { method: 'POST' },
-      );
-      setStatus((s) => ({ ...s, [enc.id]: `${out.deployed?.length ?? 0} joined the order` }));
+      const out = await api<{
+        deployed?: { id: string; name: string }[];
+        placed?: number;
+        unplaced?: string;
+      }>(`/api/encounters/${enc.id}/deploy`, { method: 'POST' });
+      // Where they went is half the answer, and the half that goes
+      // wrong quietly: a staged fight that placed nothing says why.
+      const joined = `${out.deployed?.length ?? 0} joined the order`;
+      const onMap = out.unplaced
+        ? ` — ${out.unplaced}`
+        : out.placed
+          ? `, ${out.placed} on the board`
+          : '';
+      setStatus((s) => ({ ...s, [enc.id]: `${joined}${onMap}` }));
     } catch (e) {
       setStatus((s) => ({ ...s, [enc.id]: String(e instanceof Error ? e.message : e) }));
     } finally {
