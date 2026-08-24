@@ -126,6 +126,58 @@ const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), 'public');
 // when built, so the vanilla files remain the fallback until they die.
 const DIST = join(dirname(fileURLToPath(import.meta.url)), 'dist');
 
+/** The repo root — where `package.json` lives, next to `server/`. */
+const ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * What version of teller this is, read off the shipped `package.json`.
+ *
+ * One reading, because two would drift: `teller version` prints this and
+ * `/api/health` answers with it, so a host can never tell a script one
+ * number and a human another.
+ */
+export function tellerVersion(): string {
+  try {
+    const pkg: unknown = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+    return (pkg as { version?: string }).version ?? '0.0.0';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * The fallback that can serve yesterday's client, said OUT LOUD.
+ *
+ * `server/public` is the vanilla snapshot and it is committed; `dist` is
+ * built by `pnpm client:build` and gitignored. With no dist the server
+ * quietly falls back — which on 2026-08-24 served a months-stale client
+ * to a whole table, and every seat broke with "this build doesn't know
+ * the block 'vitals'". The silence was the bug, not the fallback: the
+ * brew tarball always carries dist, so refusing would only break the
+ * legitimate vanilla path while helping nobody.
+ *
+ * Takes the dist directory so it can be tested against a real folder
+ * rather than the one this process happens to have been installed into.
+ */
+export function staleClientWarning(dist: string = DIST): string | undefined {
+  if (existsSync(join(dist, 'index.html'))) return undefined;
+  return [
+    '',
+    '  ┌───────────────────────────────────────────────────────────┐',
+    '  │  NO BUILT CLIENT — serving the vanilla fallback           │',
+    '  └───────────────────────────────────────────────────────────┘',
+    '',
+    `  ${dist} has no index.html, so every screen in the room gets`,
+    `  the committed snapshot in ${PUBLIC} instead.`,
+    '',
+    '  That snapshot can be months old. Seats will break on blocks it',
+    '  has never heard of, and the error will name the block, not this.',
+    '',
+    '  The way through:  pnpm client:build',
+    '',
+  ].join('\n');
+}
+
 /**
  * `body` is JSON, unless `bytes` is set — the one exception, and it
  * exists because an archive is a file and a file is not JSON. Keeping it
@@ -613,6 +665,27 @@ export async function handleApi(
   const parts = url.pathname.split('/').filter(Boolean); // ['api', …]
   if (parts[0] !== 'api') return undefined;
   const [, head, a, b] = parts;
+
+  // -- is anybody home? -------------------------------------------------
+  //
+  // Unauthenticated, and BORING BY DESIGN. Knowing the host is up grants
+  // nothing (rule 7): authority comes from the key or from a role the DM
+  // assigned, and neither is reachable from here. So this answers with
+  // the three facts a kiosk's watchdog or a `curl` in a shell script
+  // actually needs — that it's teller, which version, and which campaign
+  // is loaded — and NOTHING else. No key material, no displays, no
+  // paths: every one of those is a fact about the table, and a fact
+  // about the table belongs behind an assignment.
+  //
+  // Zero headers on purpose. The dumbest client in the room curls this
+  // bare, so it must not want a key, a display id, or a ticket.
+  if (method === 'GET' && head === 'health' && !a) {
+    return reply(200, {
+      app: 'teller',
+      version: tellerVersion(),
+      campaign: host.session?.campaign.slug ?? null,
+    });
+  }
 
   // -- screens ----------------------------------------------------------
 
@@ -2826,6 +2899,9 @@ export async function boot(args: Record<string, string>) {
   for (const p of plugins.problems) console.log(`  PLUGIN PROBLEM ${p.dir}: ${p.problem}`);
   // The host's own terminal is the DM's device — this is `teller key`.
   console.log(`  DM key: ${key}  (open /?console and paste it)`);
+  // Last, so it's the thing still on screen when the addresses print.
+  const stale = staleClientWarning();
+  if (stale) console.log(stale);
 }
 
 if (import.meta.main) await boot(parseArgs(process.argv.slice(2)));

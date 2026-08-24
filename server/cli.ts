@@ -11,15 +11,12 @@
 // server/index.ts` runs — a CLI that reimplements the boot is a CLI
 // that drifts from it.
 
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
 import { loadDmKey } from './auth.ts';
-import { boot } from './index.ts';
-
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+import { boot, tellerVersion } from './index.ts';
 
 // THE FOLD FLIPPED THIS (2026-08-24). The rebuild lived in
 // `~/.teller-next` while the old world still held `~/.teller`; with
@@ -85,15 +82,10 @@ function flag(opts: Record<string, string | true>, name: string): string | undef
   return typeof value === 'string' ? value : value === true ? '' : undefined;
 }
 
-function version(): string {
-  try {
-    const pkg: unknown = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
-    const found = (pkg as { version?: string }).version;
-    return found ?? '0.0.0';
-  } catch {
-    return 'unknown';
-  }
-}
+// `teller version` and `/api/health` say the same number because they
+// read it in the same place (`tellerVersion`, server/index.ts) — two
+// readings of one package.json is two readings that can disagree.
+const version = tellerVersion;
 
 /** Every address a screen in this room could reach us on. */
 function addresses() {
