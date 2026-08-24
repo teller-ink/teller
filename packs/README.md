@@ -5,19 +5,23 @@ that come up mid-game, and the bestiary that goes with them. Rulebook
 excerpts for your own table, or homebrew.
 
 **A pack is an archive — and a folder.** Drop a `.pack` into
-`~/.teller/packs/` and the host sweeps it in within ten seconds; drop an
-unzipped *directory* there and it installs identically. No restart, no
-upload step. The Rules panel's "add a pack" does the same through the
-browser, and packs that arrived that way get written back out as
-folders, so the shelf always shows everything this host has.
+`~/.teller/packs/` and the host sweeps it in; drop an unzipped
+*directory* there and it installs identically. The sweep runs on boot
+and on demand (`POST /api/shelf/sweep`, from the console's shelf), and
+it is VERSION-GATED — bump `version` in `pack.json` or the edit won't
+reinstall. There is deliberately no upload door: a pack arrives on the
+filesystem, the way a book does.
 
 The two forms are the same format for different jobs:
 
 - **A folder is what you author in.** Open `bestiary.json`, fix the foe,
-  bump `version` in `pack.json` — live within ten seconds. No zipping,
-  no copying, no upload.
-- **An archive is what you hand someone.** `GET /api/packs/:id/file`
-  builds one on demand, art included.
+  bump `version` in `pack.json`, sweep — live. No zipping, no copying,
+  no upload.
+- **An archive is what you hand someone.** `GET /api/packs/:id/export`
+  builds one on demand, art included. (There is no `.system` export to
+  match it — doors 2 and 3 hold that until the kind declaration is
+  settled, so a `systems/<name>/` folder is the only serialization
+  there is.)
 
 ```
 wiw-guidebook/            ← or wiw-guidebook.pack, zipped
@@ -124,9 +128,11 @@ anyone, and it's the same deal books have always had.
   {
     "id": "npc_example_varmint",
     "name": "Example Varmint",
-    "fields": [{ "key": "defense", "label": "Defense", "value": "3G" }],
-    "counters": [{ "id": "ctr_hp", "name": "Health", "current": 24, "max": 24 }],
-    "tags": [],
+    "lists": {
+      "defense": [{ "name": "Defense", "value": "3G" }],
+      "counters": [{ "name": "Health", "value": 24, "max": 24 }],
+      "conditions": []
+    },
     "page": 186
   }
 ]
@@ -284,10 +290,15 @@ Four rules, and each one is load-bearing:
   rides — keyed by the `pak_` or `sys_` id whose folder carries the
   file). Until it's enabled the DATA loads and the code does not — the
   console says so rather than pretending the folder is inert.
-- **Three imports resolve, and `system` is not one of them.** `react`,
-  `react/jsx-runtime` and `teller`. A presentation may not import
-  `system`, because it *is* the system; the compiler refuses it out
-  loud. Anything else you import gets bundled into the output.
+- **Four specifiers resolve, and bare `system` is not one of them for a
+  pack.** `react`, `react/jsx-runtime`, `teller`, and `system/<name>` —
+  one file from the active system's `exports/` folder, named RELATIVELY
+  (§M-4a: the system's id is spelled once, in `pack.json`, so the
+  declaration and the import can never disagree). Bare `system` is the
+  merged presentation index, which a pack RIDES — importing it is a
+  cycle, and the compiler refuses it out loud (`PACK_IMPORTS` in
+  `core/compile.ts`). A missing export refuses out loud too, naming all
+  three parties. Anything else you import gets bundled into the output.
 - **A presentation carries no facts.** Entity, records, catalogue, the
   write door — all arrive as props. The folder owns look and behaviour;
   the campaign owns the numbers.
@@ -324,13 +335,13 @@ a real statement, and it's how a file decides whether it supersedes what
 the host already has: a file only overwrites a stored pack when its
 version is strictly **greater**. Equal versions leave the stored one
 alone, because it may have been edited on the host and that edit is a
-person's decision (rule 1). Uploading through the console is explicit
-intent and always replaces.
+person's decision (rule 1) — which is why an unbumped edit doesn't
+reinstall, and why bumping is the whole ritual.
 
 ### Which packs a campaign uses
 
 A campaign declares its packs by id, **in precedence order**, in the
-console's Rules panel under "running on". When two packs print the same
+console's shelf tool under THIS CAMPAIGN. When two packs print the same
 foe, **the later one wins** — name the base, then what layers on top.
 Per-foe exceptions are the "printed in 2 books" picker in the bestiary.
 
@@ -388,14 +399,14 @@ the same book. Attach both.
 
 The reference identifies; it never authorises. A pack whose book isn't
 on this host works completely — the console just says the book is
-missing instead of offering a page you can't open. You can attach and
-detach books from the Rules panel without editing JSON.
+missing instead of offering a page you can't open.
 
-### `npcs` — the bestiary the pack brings
+### `bestiary.json` — the foes the pack brings
 
-`NpcBlueprint`s: `id`, `name`, `fields`, `counters`, `tags`. Having the
-pack means having the foes, the way having the book on the shelf does,
-instead of every new campaign starting empty.
+Entity-shaped templates: `id`, `name`, optional `type`, `lists`,
+`notes`, `children`, plus the shelf limbs (`group`, `page`, `slots`).
+Having the pack means having the foes, the way having the book on the
+shelf does, instead of every new campaign starting empty.
 
 Ids must be **stable** — `npc_<system>_<name>` is the convention — and
 they're what a campaign's own copy collides with. On a collision **the
