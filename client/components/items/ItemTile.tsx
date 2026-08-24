@@ -11,6 +11,7 @@
 
 import type { Amendment } from '../../../core/effects.ts';
 import type { Entity, Entry, Ref } from '../../../core/entity.ts';
+import { ledgerOf, sayLedger, shortOf, type Price } from '../../../core/spend.ts';
 import type { DiceRecord } from '../../lib/dice.ts';
 import { writeChildEntry, writeRef } from '../../lib/refs.ts';
 import { SheetPanel } from '../sheet/SheetPanel.tsx';
@@ -158,10 +159,10 @@ export function ItemTile({
   ammoPool?: Entity[];
   /** This item's own priced entry, read off ITS stats (the weapon's own Grit box). */
   costEntry?: Entry;
-  /** Spend the character's cost counter + extras + one chambered round — resolved by the SCREEN, which holds the character-level balances this tile doesn't. */
-  onFireCost?: (total: number) => void;
+  /** Spend the whole ledger — each price from its own counter — plus one chambered round. Written by the SCREEN, which holds the character's counters; the LEDGER is this tile's, so what's drawn and what's debited are one computation. */
+  onFireCost?: (ledger: Price[]) => void;
   /** The item's additional prices (`use.costs`), already resolved against this item's own stats. */
-  extras?: { counter: string; amount: number }[];
+  extras?: Price[];
   /** "fitted to <weapon name>" — an upgrade wearing where it's bolted on. */
   fittedTo?: string;
   /** The system's dice, so a range draws the printed track and not just the dice owned. */
@@ -213,21 +214,45 @@ export function ItemTile({
   // on the action record — the mechanic stated as data, never inferred
   // from the shape of a cost. The rest are reference, and reference
   // doesn't wear a reticle.
-  const armable = actions.filter(
-    (a) => a.arms === true && typeof a.cost === 'number' && a.cost > 0,
-  );
+  //
+  // And only on an ARMING screen. That's the old app's own rule, kept
+  // verbatim (`src/components/counters/Sheet.tsx`: `acts={arming ?
+  // acts : []}`, "an Ability is fireable — it costs Grit — but nothing
+  // loads into a speech and you don't aim one"). The scope is the
+  // SCREEN's declaration (`screens[].arms`), never anything read off
+  // the item: a per-turn move rides the screen its system said it
+  // rides, and an ability, a jar of pills and a saddlebag wear no
+  // reticle however they're priced.
+  const armable = arming
+    ? actions.filter((a) => a.arms === true && typeof a.cost === 'number' && a.cost > 0)
+    : [];
   const armedCost = armable
     .filter((a) => armed.includes(a.name))
     .reduce((n, a) => n + a.cost, 0);
-  const total = price + armedCost + extras.reduce((n, e) => n + e.amount, 0);
+  // THE LEDGER: this thing's own price and whatever's armed against the
+  // cost counter, then each extra currency against its own (§spend).
+  // Never one number — the sum of two currencies is not a price in
+  // either of them.
+  const ledger = ledgerOf([
+    { counter: use?.costCounter ?? '', amount: price + armedCost },
+    ...extras,
+  ]);
+  const owed = ledger.find(
+    (p) => p.counter.toLowerCase() === (use?.costCounter ?? '').toLowerCase(),
+  );
+  const alsoOwed = ledger.filter((p) => p !== owed);
   // Every price must clear: the main counter AND each of the item's
   // extra currencies. Unaffordable is DISABLED, not clamped — teller
   // declines to automate a spend the counter can't cover, and the
   // steppers stay right there for the table to rule otherwise (rule 1).
-  const short = [
-    ...(available !== undefined && available < total ? [use?.costCounter] : []),
-    ...extras.filter((e) => (balances[e.counter] ?? 0) < e.amount).map((e) => e.counter),
-  ].filter((n): n is string => Boolean(n));
+  // A balance nobody told us reads as bottomless rather than empty for
+  // the MAIN counter (a surface that doesn't hold the character's
+  // pockets must not grey out its trigger), and as empty for an extra,
+  // which is what a counter you don't have is.
+  const short = shortOf(ledger, {
+    ...balances,
+    ...(use?.costCounter ? { [use.costCounter]: available ?? Infinity } : {}),
+  });
 
   return (
     <SheetPanel title={child.name} fill={fill} className="w-full">
@@ -318,7 +343,7 @@ export function ItemTile({
               style={{ borderColor: 'var(--sheet-accent, #f59e0b)', color: 'var(--sheet-accent, #f59e0b)' }}
               disabled={short.length > 0}
               onClick={() => {
-                onFireCost?.(total);
+                onFireCost?.(ledger);
                 if (chambered) {
                   const roundsHere = poolEntryOf(chambered);
                   if (roundsHere) {
@@ -330,13 +355,24 @@ export function ItemTile({
               }}
               aria-label={`${verb} ${child.name}${
                 armedCost > 0 ? ` with ${armed.join(' and ')}` : ''
-              }: spend ${total} ${use?.costCounter}${
-                extras.length ? ` and ${extras.map((e) => `${e.amount} ${e.counter}`).join(' and ')}` : ''
-              }${chambered ? ` and one ${chambered.name}` : ''}${
-                short.length ? ` (not enough ${short.join(', ')})` : ''
-              }`}
+              }: spend ${sayLedger(ledger)}${
+                chambered ? ` and one ${chambered.name}` : ''
+              }${short.length ? ` (not enough ${short.join(', ')})` : ''}`}
             >
-              {verb} −{total} {use?.costCounter}
+              {/* The price on the face is the one counter the trigger
+                  is priced in — the old app's grammar (`{verb} −{n}
+                  {costCounter}`). The thing's other currencies are
+                  stat rows above, each already wearing its own name,
+                  and the whole ledger is said in full to a screen
+                  reader. What must never happen is what did: two
+                  currencies added together and printed against one
+                  name. */}
+              {verb} −{owed?.amount ?? 0} {use?.costCounter}
+              {alsoOwed.map((p) => (
+                <span key={p.counter} className="ml-1.5 opacity-70">
+                  −{p.amount} {p.counter}
+                </span>
+              ))}
             </button>
           )}
           </div>

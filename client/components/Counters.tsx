@@ -15,7 +15,7 @@ import { useState } from 'react';
 import type { Entry } from '../../core/entity.ts';
 import { expandPool, type DiceRecord } from '../lib/dice.ts';
 import type { RuleHit } from '../lib/rules.ts';
-import { Starburst } from './sheet/SheetPanel.tsx';
+import { SheetPanel, Starburst } from './sheet/SheetPanel.tsx';
 
 // ---- shared primitives (ported from counters/shared.tsx) --------------
 
@@ -169,6 +169,94 @@ export function BigGauge({
         />
       </div>
     </div>
+  );
+}
+
+// ---- Tally — a small counter drawn as marks (ported from sheet/TallyPanel.tsx) --
+
+/** Past this many boxes a row stops being readable — the old app's line. */
+const BOXES_LIMIT = 12;
+
+/**
+ * Would this counter draw as tick boxes? A capped counter with a
+ * smallish ceiling. Exported so a screen can route a slot-shaped gauge
+ * here and leave a big bar gauge (34/50) on the bar it wants — the old
+ * app's `boxable`, entry-shaped.
+ */
+export function boxable(entry: Entry): boolean {
+  return isGauge(entry) && (entry.max ?? 0) <= BOXES_LIMIT;
+}
+
+/**
+ * The printed sheet's tick boxes — a counter you fill in one mark at a
+ * time, ported from the old app's `TallyPanel` with its classNames
+ * intact. Generic on purpose (rule 2): this knows "a counter with a
+ * smallish max, shown as boxes", and not one word of any system.
+ *
+ * TELLER's floor rather than a system presentation, which is the §M-3
+ * sort: nothing here is anybody's face — marks counting a counter is
+ * function — and it belongs with the neighbours it's drawn beside
+ * (`Reticle`, `Pocket`, `ItemTile`), all of which are the client's own.
+ * A system that wants its own face for this summons one the way the
+ * sheet's gauges do; the floor keeps the marks.
+ *
+ * Tapping a box proposes a value — tap the fourth to set 4, tap the
+ * last filled one to untick it — and the steppers do what steppers do.
+ * All ordinary counter arithmetic: event-logged, undoable, and the
+ * console can type over it (rule 1).
+ */
+export function Tally({
+  entry,
+  note,
+  onWrite,
+}: {
+  entry: Entry;
+  note?: string;
+  onWrite: (value: number) => void;
+}) {
+  const max = entry.max ?? 0;
+  const current = numberOf(entry);
+  return (
+    <SheetPanel title={entry.name} note={note} fill className="w-full">
+      <div className="flex min-h-0 flex-1 flex-wrap content-center items-center justify-center gap-2">
+        <Step
+          sign="−"
+          label={`decrease ${entry.name}`}
+          onClick={() => onWrite(stepValue(entry, -1))}
+        />
+        <div className="flex flex-wrap items-center justify-center gap-1.5">
+          {Array.from({ length: max }, (_, i) => {
+            const filled = i < current;
+            return (
+              <button
+                key={i}
+                type="button"
+                aria-label={`set ${entry.name} to ${
+                  filled && i === current - 1 ? i : i + 1
+                }`}
+                // Tapping the last filled box unticks it; any other box
+                // means "this many".
+                onClick={() => onWrite(filled && i === current - 1 ? i : i + 1)}
+                className="h-8 w-8 rounded-[3px] border-2 transition-colors"
+                style={
+                  filled
+                    ? {
+                        background: 'var(--sheet-accent, #f59e0b)',
+                        borderColor: 'var(--sheet-accent, #f59e0b)',
+                      }
+                    : { borderColor: '#a8a29e' }
+                }
+              />
+            );
+          })}
+        </div>
+        <Step
+          sign="+"
+          label={`increase ${entry.name}`}
+          onClick={() => onWrite(stepValue(entry, 1))}
+        />
+      </div>
+    </SheetPanel>
   );
 }
 

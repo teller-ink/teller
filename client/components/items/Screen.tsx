@@ -7,12 +7,13 @@
 
 import { useState } from 'react';
 import type { Entity, Entry } from '../../../core/entity.ts';
+import type { Price } from '../../../core/spend.ts';
 import { useAmendments } from '../../lib/amend.ts';
 import { firedArmed, toggleArmed, useArmed } from '../../lib/armed.ts';
 import type { DiceRecord } from '../../lib/dice.ts';
 import { usePanelNote } from '../../lib/rules.ts';
 import type { BlockCtx, Glass } from '../../panels/render.tsx';
-import { BigGauge } from '../Counters.tsx';
+import { BigGauge, boxable, Tally } from '../Counters.tsx';
 import { ItemTile } from './ItemTile.tsx';
 import { Pocket } from './Purse.tsx';
 import type { CurrencyRecord, ScreenDecl, UseRecord } from './types.ts';
@@ -144,21 +145,18 @@ export function CarriedScreen({
   const write = (target: { list: string; entry: Entry }, value: number) =>
     ctx.write?.({ list: target.list, name: target.entry.name, value });
 
-  const fireCost = (item: Entity, total: number) => {
-    if (!use?.costCounter) return;
-    const cost = findWithList(entity, use.costCounter);
-    // `total` already carries whatever was armed — one squeeze, one
-    // debit, one undo — so the only thing left is to burn the lock:
-    // what was armed is spent until the counter refills.
-    if (cost) write(cost, Math.max(0, numberOf(cost.entry) - total));
-    firedArmed();
-    for (const c of use.costs ?? []) {
-      const stat = (item.lists.stats ?? []).find((s) => s.name === c.counter);
-      const amount = numberOf(stat);
-      if (!amount) continue;
-      const bal = findWithList(entity, c.counter);
-      if (bal) write(bal, Math.max(0, numberOf(bal.entry) - amount));
+  // One squeeze: every price in the tile's ledger comes off ITS OWN
+  // counter, and nothing is spent twice or spent somewhere it wasn't
+  // named. The tile computed the ledger — the same list it drew and
+  // priced its trigger from — so there is no second arithmetic here to
+  // drift from the first.
+  const fireCost = (ledger: Price[]) => {
+    for (const price of ledger) {
+      const pot = findWithList(entity, price.counter);
+      if (pot) write(pot, Math.max(0, numberOf(pot.entry) - price.amount));
     }
+    // What was armed rode along in the ledger; burn the lock.
+    firedArmed();
   };
 
   const mounted = ctx.glass === 'mounted';
@@ -182,18 +180,40 @@ export function CarriedScreen({
     />
   );
 
-  const gauges = tallies.map(({ entry, list }) => (
-    <div key={entry.name} className={`flex flex-col gap-2 ${tileWidth(ctx.glass)}`}>
-      <BigGauge entry={entry} onWrite={(v) => ctx.write?.({ list, name: entry.name, value: v })} />
-    </div>
-  ));
+  // A declared counter on a carried screen is a TILE like the things
+  // beside it, and how it's drawn is the counter's own shape: a small
+  // capped one (the Ace tally under the abilities it pays for) wears
+  // the printed sheet's tick boxes; anything bigger keeps the bar
+  // gauge. The old app's `boxable` routing, restored — the port had
+  // put every declared counter on the big gauge.
+  const gauges = tallies.map(({ entry, list }) => {
+    const onWrite = (v: number) => ctx.write?.({ list, name: entry.name, value: v });
+    return (
+      <div key={entry.name} className={`flex flex-col gap-2 ${tileWidth(ctx.glass)}`}>
+        {boxable(entry) ? (
+          <Tally entry={entry} note={note(entry.name)} onWrite={onWrite} />
+        ) : (
+          <BigGauge entry={entry} onWrite={onWrite} />
+        )}
+      </div>
+    );
+  });
 
   const tile = (item: Entity, armed: boolean) => {
     const costEntry = use?.costCounter
       ? (item.lists.stats ?? []).find((s) => s.name.toLowerCase() === use.costCounter!.toLowerCase())
       : undefined;
-    const extras = (use?.costs ?? []).flatMap((c) => {
-      const stat = (item.lists.stats ?? []).find((s) => s.name === c.counter);
+    // The item's additional prices: the stat this thing carries for
+    // each declared extra, spent from the counter the system named.
+    // Matched on the counter's name and then on the declaration's
+    // field key, because a stat is named in this world and keyed in
+    // the old one, and a pack authored either way should still pay.
+    const extras: Price[] = (use?.costs ?? []).flatMap((c) => {
+      const stat = (item.lists.stats ?? []).find(
+        (s) =>
+          s.name.toLowerCase() === c.counter.toLowerCase() ||
+          s.name.toLowerCase() === (c.field ?? '').toLowerCase(),
+      );
       const amount = numberOf(stat);
       return amount > 0 ? [{ counter: c.counter, amount }] : [];
     });
@@ -208,7 +228,7 @@ export function CarriedScreen({
           ammoPool={ammoPool}
           costEntry={costEntry}
           extras={extras}
-          onFireCost={(total) => fireCost(item, total)}
+          onFireCost={fireCost}
           fittedTo={fittedTo.get(item.id)}
           amended={amendments.get(item.id)}
           actions={use?.actions ?? []}
