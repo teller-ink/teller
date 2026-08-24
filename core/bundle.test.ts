@@ -134,6 +134,16 @@ describe('assemble and parse', () => {
     expect(() => parseStory(zip)).toThrow(/not a \.story/);
   });
 
+  it('refuses a pre-fold bundle by name, not as a corrupt file', () => {
+    // The old world's manifest was teller.json (versions 1-2). "Not a
+    // .story" would be true and useless — the refusal names the format
+    // and the way through.
+    const old = writeArchive([
+      { name: 'teller.json', data: Buffer.from(JSON.stringify({ teller: 2, name: 'x' })) },
+    ]);
+    expect(() => parseStory(old)).toThrow(/pre-fold/);
+  });
+
   it('reads forgivingly: a garbled section is empty, not fatal', () => {
     const zip = writeArchive([
       { name: 'story.json', data: Buffer.from(JSON.stringify({ ...manifest, teller: 2 })) },

@@ -464,6 +464,19 @@ export function parseStory(bytes: Buffer): StoryFile {
   }
   const manifest = toManifest(archiveJson(files, MANIFEST));
   if (!manifest) {
+    // The old world's manifest was `teller.json` (versions 1 and 2 —
+    // see STORY_VERSION). Neither can be read into the entity store,
+    // and "not a .story" would send the one person this happens to
+    // hunting a corrupt file instead of a superseded format — refuse
+    // by name, with the way through.
+    if (archiveJson(files, 'teller.json')) {
+      throw new Error(
+        'this is a pre-fold bundle (teller.json, versions 1-2) — the old ' +
+          "world's shape can't be imported. Rebuild the campaign on this " +
+          'host and export a fresh .story; the old file remains readable ' +
+          'by the old app in git history.',
+      );
+    }
     throw new Error(`no ${MANIFEST} — this archive is not a .story`);
   }
   const assets = new Map<string, Buffer>();
