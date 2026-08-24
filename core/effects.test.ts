@@ -332,6 +332,7 @@ describe('amendStats — what the fittings work out', () => {
       printed: '3R',
       value: '4R',
       by: ['Bite +1R'],
+      steps: [{ by: 'Bite +1R', text: 'Near Reach +1R' }],
     });
     // Every other stat is absent, so a caller renders what it stored.
     expect(out.get('far reach')).toBeUndefined();
@@ -371,6 +372,13 @@ describe('amendStats — what the fittings work out', () => {
       printed: '3R',
       value: '4R2W',
       by: ['Bite', 'Bite Again', 'Hot Load'],
+      // The working, in the order it happened — the ledger a breakdown
+      // reads out under the amended number.
+      steps: [
+        { by: 'Bite', text: 'Near Reach +1R' },
+        { by: 'Bite Again', text: 'Near Reach +2R' },
+        { by: 'Hot Load', text: 'Near Reach 2R → 2W' },
+      ],
     });
   });
 

@@ -348,6 +348,14 @@ export type Amendment = {
   value: string;
   /** What amended it, in the order it was applied. */
   by: string[];
+  /**
+   * The working, one line per effect that landed — what it did and
+   * what did it, in order. The chip says WHO at a glance (`by`); this
+   * is the ledger behind it, so a surface can open "printed 0, +1G
+   * Iron Breastplate" without re-deriving anything or knowing what an
+   * effect is.
+   */
+  steps: { by: string; text: string }[];
 };
 
 /**
@@ -364,7 +372,10 @@ export function amendStats(
   fittings: Fitting[],
   faces: Record<string, string[]>,
 ): Map<string, Amendment> {
-  const working = new Map<string, { printed: string; counts: Counts; by: string[] }>();
+  const working = new Map<
+    string,
+    { printed: string; counts: Counts; by: string[]; steps: { by: string; text: string }[] }
+  >();
   for (const fitting of fittings) {
     for (const effect of fitting.effects) {
       const target = effectTarget(stats, fitting.range ?? effect.range);
@@ -378,6 +389,10 @@ export function amendStats(
         printed: held?.printed ?? String(target.value ?? ''),
         counts: next,
         by: [...(held?.by ?? []), fitting.name],
+        steps: [
+          ...(held?.steps ?? []),
+          { by: fitting.name, text: describePoolEffect(effect, target.name) },
+        ],
       });
     }
   }
@@ -387,7 +402,13 @@ export function amendStats(
     // A fitting that worked out to the printed number amended nothing,
     // and saying so would credit it with a change it didn't make.
     if (value === held.printed) continue;
-    out.set(name.toLowerCase(), { name, printed: held.printed, value, by: held.by });
+    out.set(name.toLowerCase(), {
+      name,
+      printed: held.printed,
+      value,
+      by: held.by,
+      steps: held.steps,
+    });
   }
   return out;
 }
