@@ -2297,7 +2297,10 @@ glass, presets from a `notices` declaration — never the kernel's
 words), handouts on the board view, and the starter system as an
 install-floor fallback (§M-6b). Tests 719 → 756 across the day.
 
-**Tier 2 — real, queued, post-fold is fine:**
+**Tier 2 — real, queued, post-fold is fine** (filed to Linear
+2026-08-24 as TEL-111…TEL-124; the camera overlay stays TEL-77 and
+the readable log stays TEL-5 — Linear is the queue, this list is the
+record of what the audit found):
 
 - One-press `table/clear` (old: delete all NPCs + tokens + order rows).
 - Campaign DELETE and a dedicated rename door.
