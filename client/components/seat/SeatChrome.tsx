@@ -51,7 +51,7 @@ import { useSeams, type SeatTab } from './seams.tsx';
 
 type Records = Record<string, Record<string, unknown>>;
 
-const RECORD_SLOTS = ['accents', 'dials', 'brand', 'portraits', 'pins', 'use', 'currency', 'icons', 'groups', 'dice', 'marks', 'spends', 'vocabulary'];
+const RECORD_SLOTS = ['accents', 'dials', 'brand', 'portraits', 'pins', 'use', 'carry', 'currency', 'icons', 'groups', 'dice', 'marks', 'spends', 'vocabulary'];
 
 /** Every declared screen's own claimed counters, lower-cased, in one set. */
 function screenClaims(screens: ScreenDecl[]): Set<string> {

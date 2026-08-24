@@ -132,6 +132,18 @@ export * from '../components/items/Purse.tsx';
 
 // -- the blocks helpers already exported from panels/blocks.tsx --------------
 export { entriesOf, entryNamed, accentOf, dialOf, pinsOf, shaped } from '../panels/blocks.tsx';
+// What draws a DIALLED counter, with teller's own floor controls under
+// it (the hand of cards): a panel asking for `dials[name]` gets the
+// system's face if it ships one and teller's if it doesn't, rather than
+// each panel testing for one word it knows.
+export { dialFace } from '../panels/blocks.tsx';
+// What the subject is WEARING, worked out against their own stats — the
+// reading a printed sheet's plate shows beside a stored value (§K's
+// `refs.worn`). Exported because the sheet that draws Defense is the
+// SYSTEM's own block, not teller's, and a reading it cannot reach is a
+// reading nobody sees.
+export { useWorn } from '../panels/blocks.tsx';
+export type { Amendment } from '../../core/effects.ts';
 
 // -- the render seam (client/panels/render.tsx) ------------------------------
 export { registerBlock, Refusal, RenderBlock, PanelSurface } from '../panels/render.tsx';

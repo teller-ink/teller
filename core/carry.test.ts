@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   amendingIn,
+  carriable,
   carryIn,
   handsOf,
   heldIn,
@@ -70,6 +71,21 @@ describe('carryIn — reading forgivingly', () => {
   it('drops a price with no counter or no amount rather than half-reading it', () => {
     const decl = carryIn({ states: [{ name: 'paws', swap: { counter: 'Vigour' } }] });
     expect(stateIn(decl, 'paws')?.swap).toBeUndefined();
+  });
+});
+
+describe('carriable — which kinds are things you carry', () => {
+  it('is everything when the system named no kinds', () => {
+    expect(carriable('knack', DECL)).toBe(true);
+    expect(carriable(undefined, DECL)).toBe(true);
+  });
+
+  it('is only the named kinds when it named some', () => {
+    const decl = carryIn({ states: [{ name: 'paws' }], kinds: ['tool', 'Pelt'] });
+    expect(carriable('tool', decl)).toBe(true);
+    expect(carriable('pelt', decl)).toBe(true);
+    expect(carriable('knack', decl)).toBe(false);
+    expect(carriable('tool', undefined)).toBe(false);
   });
 });
 

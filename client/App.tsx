@@ -163,7 +163,7 @@ function PanelRoute({
   const records = useLive(
     () =>
       Promise.all(
-        ['accents', 'dials', 'brand', 'portraits', 'dice', 'marks'].map((slot) =>
+        ['accents', 'dials', 'brand', 'portraits', 'dice', 'marks', 'carry'].map((slot) =>
           api<Record<string, unknown>>(`/api/stack/record/${slot}`).then(
             (r) => [slot, r] as const,
           ),
@@ -292,7 +292,7 @@ function Console() {
   const records = useLive(
     () =>
       Promise.all(
-        ['accents', 'dials', 'brand', 'portraits', 'dice', 'marks'].map((slot) =>
+        ['accents', 'dials', 'brand', 'portraits', 'dice', 'marks', 'carry'].map((slot) =>
           api<Record<string, unknown>>(`/api/stack/record/${slot}`).then(
             (r) => [slot, r] as const,
           ),

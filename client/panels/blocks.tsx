@@ -92,6 +92,25 @@ function dialable(entry: Entry): boolean {
 }
 
 /**
+ * WHAT THE SUBJECT IS WEARING, folded into their own stats — one call,
+ * because every surface that draws a person's stats wants the same
+ * answer and none of them should have to assemble it (a pack's own
+ * sheet block included: this is exported through the `teller` seam).
+ *
+ * The map is keyed by the stat's lower-cased name and is EMPTY unless
+ * something worn actually changed something, so a caller renders the
+ * stored value and asks no questions.
+ */
+export function useWorn(ctx: BlockCtx): Map<string, Amendment> {
+  const carry = useMemo(() => carryIn(ctx.records.carry), [ctx.records.carry]);
+  return useWornAmendments(
+    subject(ctx),
+    carry,
+    ctx.records.dice as DiceRecord | undefined,
+  );
+}
+
+/**
  * TELLER'S OWN DIAL CONTROLS — the registry §D's contact log describes,
  * where the cylinder sat while it was teller furniture and where `cards`
  * has been waiting for a body ("`cards` awaits its control the same
@@ -205,7 +224,14 @@ export function pinsOf(ctx: BlockCtx, e: Entity | undefined, entry: Entry): Entr
  * (`SeatChrome.tsx`).
  */
 export function shaped(ctx: BlockCtx, e: Entity | undefined, entry: Entry): boolean {
-  return pinsOf(ctx, e, entry).length > 0 || Boolean(dialFace(ctx, entry));
+  // The dial word is compared literally here, and ONLY here, on purpose:
+  // this decides what the printed SHEET shows, and the answer is "the
+  // two plates it prints" — a counter dialled something else (the Ace
+  // hand) is claimed by the screen its system put it on, and widening
+  // this would quietly redesign a page nobody asked to redesign. What a
+  // dial DRAWS AS is `dialFace`'s question and is fully general; which
+  // counters earn a place on this one page is a different question.
+  return pinsOf(ctx, e, entry).length > 0 || (dialOf(ctx, entry) === 'cylinder' && dialable(entry));
 }
 
 function filterEntries(entries: Entry[], filter: unknown, names?: unknown): Entry[] {
@@ -415,8 +441,10 @@ function SheetListBlock({
   // WHAT'S WORN, folded into the stats it changes (§K's `refs.worn`,
   // `client/lib/amend.ts`). Computed here and stored nowhere: the
   // printed 0 stays the stored value and the reading is the reading.
-  const carry = useMemo(() => carryIn(ctx.records.carry), [ctx.records.carry]);
-  const worn = useWornAmendments(e, carry, ctx.records.dice as DiceRecord | undefined);
+  // (§9's own posture: the sheet's own block is not the only surface
+  // that draws these — the shelf's `vitals` block draws the same plate,
+  // so the reading is a shared hook rather than this file's secret.)
+  const worn = useWorn(ctx);
   const shown = entries.filter((entry) => shaped(ctx, e, entry));
   if (!shown.length) return null;
   return (

@@ -67,6 +67,16 @@ export type CarryDecl = {
   handsStat?: string;
   /** What a thing takes when it doesn't say. */
   hands?: number;
+  /**
+   * WHICH KINDS of thing are carried at all. A knack is not stowed in a
+   * saddlebag and cannot be worn, and offering to put one in your hands
+   * is the surface asking a question with no sensible answer.
+   *
+   * Declared rather than inferred, and absent means EVERYTHING: teller
+   * has no idea which of a system's kinds are physical, and a system
+   * whose every kind is a thing you hold should not have to say so.
+   */
+  kinds?: string[];
 };
 
 function asRecord(raw: unknown): Record<string, unknown> {
@@ -114,7 +124,19 @@ export function carryIn(raw: unknown): CarryDecl | undefined {
   if (handsStat) out.handsStat = handsStat;
   const hands = countIn(record.hands);
   if (hands !== undefined) out.hands = hands;
+  const kinds = (Array.isArray(record.kinds) ? record.kinds : [])
+    .map((k) => String(k ?? '').trim())
+    .filter(Boolean);
+  if (kinds.length) out.kinds = kinds;
   return out;
+}
+
+/** Is this the kind of thing a person carries at all? */
+export function carriable(type: string | undefined, decl: CarryDecl | undefined): boolean {
+  if (!decl) return false;
+  if (!decl.kinds) return true;
+  const want = (type ?? '').toLowerCase();
+  return decl.kinds.some((k) => k.toLowerCase() === want);
 }
 
 /** The state by its slot name, or nothing. */

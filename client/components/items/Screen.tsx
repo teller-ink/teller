@@ -6,11 +6,11 @@
 // this port.
 
 import { useMemo, useState } from 'react';
-import { bandsIn } from '../../../core/bands.ts';
 import { carryIn } from '../../../core/carry.ts';
 import type { Entity, Entry } from '../../../core/entity.ts';
 import type { Price } from '../../../core/spend.ts';
 import { useAmendments } from '../../lib/amend.ts';
+import { useBands } from '../../lib/ladder.ts';
 import { firedArmed, toggleArmed, useArmed } from '../../lib/armed.ts';
 import type { DiceRecord } from '../../lib/dice.ts';
 import { useSystemFaces } from '../../lib/presentations.ts';
@@ -108,7 +108,7 @@ export function CarriedScreen({
   // reaches (the range ladder) and how a thing is carried. Both are
   // memoised because both are parsed out of records that arrive whole
   // on every stack change.
-  const bands = useMemo(() => bandsIn(ctx.records.bands), [ctx.records.bands]);
+  const bands = useBands();
   const carry = useMemo(() => carryIn(ctx.records.carry), [ctx.records.carry]);
   // The turn's armed moves, and the refill that releases their locks.
   // The balance is read here because it's the CHARACTER's counter, not

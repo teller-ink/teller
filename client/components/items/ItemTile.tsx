@@ -11,7 +11,7 @@
 
 import { useState } from 'react';
 import { acrossGround, bandsOn, type Band } from '../../../core/bands.ts';
-import type { CarryDecl, CarryLoad } from '../../../core/carry.ts';
+import { carriable, type CarryDecl, type CarryLoad } from '../../../core/carry.ts';
 import type { Amendment } from '../../../core/effects.ts';
 import type { Entity, Entry, Ref } from '../../../core/entity.ts';
 import { ledgerOf, sayLedger, shortOf, type Price } from '../../../core/spend.ts';
@@ -484,7 +484,7 @@ export function ItemTile({
               exclusive and the system may declare any number of them;
               and quiet, because choosing where your knife lives is not
               the interesting part of a fight. */}
-          {carry && person && (
+          {carry && person && carriable(child.type, carry) && (
             <CarryControl
               person={person}
               child={child}
