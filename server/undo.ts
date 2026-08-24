@@ -26,7 +26,9 @@
 //     showed, what the arithmetic was). Undoing one would mean
 //     un-rolling a die the table watched land — the values a turn
 //     MOVED went through the ordinary entry door and each has its own
-//     undoable row. So records are skipped, not inverted. Same for
+//     undoable row. `token.moved` is the same shape: it is a note
+//     BESIDE the board write that carried the placement, not the write
+//     itself. So records are skipped, not inverted. Same for
 //     `campaign.created`, and for board writes, which log the fact
 //     without a before.
 //   - anything whose payload can't state the before (a turn op logged
@@ -64,6 +66,10 @@ export const UNDO_WINDOW = 500;
 const RECORDS = new Set([
   'dice.rolled',
   'turn.resolved',
+  // A step's own note. Where the token ACTUALLY is lives in the board's
+  // row, written by the same PUT, so stepping this back would either do
+  // nothing or claim to have moved a mini nobody touched.
+  'token.moved',
   'shop.opened',
   'shop.closed',
   'shop.sold',

@@ -36,7 +36,7 @@
 import { existsSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { refIn } from '../core/entity.ts';
-import type { BoardFacts, TokenFacts } from '../core/registry.ts';
+import type { BoardFacts, MoveFacts, TokenFacts } from '../core/registry.ts';
 import type { Session } from './session.ts';
 
 /** Natural pixel dimensions — the one thing only the image itself knows. */
@@ -321,6 +321,12 @@ export function fightGeometry(session: Session, actingId?: string): BoardFacts {
           t.awayBand = { name: band.name, ...(band.world ? { world: band.world } : {}) };
         }
       }
+      // And the ground in the way, which is a fact about the PATH and
+      // not about either end of it (see `zonesCrossed`).
+      if (grid) {
+        const crossed = zonesCrossed(from, t, zones, grid);
+        if (crossed.length) t.between = crossed;
+      }
     }
   }
 
@@ -352,4 +358,213 @@ export function fightGeometry(session: Session, actingId?: string): BoardFacts {
       'the creature whose turn it is has no token on this board, so no distance was measured';
   } else facts.unmeasured = 'nobody is acting, so no distance was measured';
   return facts;
+}
+
+// ---------------------------------------------------------------------
+// WHO WENT WHERE — the same three rules, applied to the round before.
+//
+// A board state is a photograph, and a photograph cannot say that
+// anybody moved. The old assistant told a creature who had closed on it
+// and who had backed off, by band, and the new world had nothing to
+// tell it with: placements are overwritten in place and the only row
+// the log carried was `board.updated`, which says a board changed and
+// not one thing about the fight.
+//
+// So the fact is MADE here, by diffing, and it is made narrowly on
+// purpose. A drag lands as a whole-state PUT — placements, fog, zones
+// and the view arrive together — so a write that repainted a zone or
+// re-aimed the table must produce no movement at all, or the history
+// fills with creatures that stood perfectly still.
+
+/** One token's step, as the log keeps it. Map space, because that's the stored truth. */
+export type MoveRecord = {
+  boardId: string;
+  placementId?: string;
+  /** The entity that moved, when the token is somebody. */
+  by?: string;
+  byName: string;
+  /** Behind the screen at the moment it moved. */
+  hidden?: boolean;
+  from: { u: number; v: number };
+  to: { u: number; v: number };
+  round?: number;
+};
+
+/** A placement as the diff reads it — id, who, where, and nothing else. */
+type Standing = { placementId?: string; entityId?: string; label?: string; hidden: boolean; u: number; v: number };
+
+function standingIn(data: unknown): Standing[] {
+  const state = (data && typeof data === 'object' ? data : {}) as { placements?: unknown };
+  const raw = Array.isArray(state.placements) ? (state.placements as StoredPlacement[]) : [];
+  return raw.flatMap((p): Standing[] => {
+    const u = num(p.u);
+    const v = num(p.v);
+    if (u === undefined || v === undefined) return [];
+    return [
+      {
+        ...(typeof p.id === 'string' ? { placementId: p.id } : {}),
+        ...(typeof p.entityId === 'string' ? { entityId: p.entityId } : {}),
+        ...(typeof p.label === 'string' && p.label.trim() ? { label: p.label.trim() } : {}),
+        hidden: p.hidden === true,
+        u,
+        v,
+      },
+    ];
+  });
+}
+
+/** How near two map-space points have to be to count as the same spot. */
+const STILL = 1e-6;
+
+/**
+ * What MOVED between two board states — nothing else, ever.
+ *
+ * Tokens are matched by their placement id, and by entity id for a
+ * state old enough not to have one. Three writes deliberately produce
+ * nothing:
+ *
+ *   * a token that ARRIVED (deployed, dropped from the roster) — an
+ *     arrival is not a step, and reporting it as one would have a
+ *     creature "moving" out of nowhere on the round it was placed;
+ *   * a token that LEFT — same fact from the other end;
+ *   * a write that touched the view, the fog or the paint and left
+ *     every u/v exactly where it was.
+ */
+export function movesBetween(
+  before: unknown,
+  after: unknown,
+): { placementId?: string; entityId?: string; label?: string; hidden: boolean; from: { u: number; v: number }; to: { u: number; v: number } }[] {
+  const was = standingIn(before);
+  const now = standingIn(after);
+  const byPlacement = new Map(was.flatMap((s) => (s.placementId ? [[s.placementId, s] as const] : [])));
+  const byEntity = new Map(was.flatMap((s) => (s.entityId ? [[s.entityId, s] as const] : [])));
+  const out = [];
+  for (const to of now) {
+    const from =
+      (to.placementId ? byPlacement.get(to.placementId) : undefined) ??
+      (to.entityId ? byEntity.get(to.entityId) : undefined);
+    if (!from) continue;
+    if (Math.abs(from.u - to.u) < STILL && Math.abs(from.v - to.v) < STILL) continue;
+    out.push({
+      ...(to.placementId ? { placementId: to.placementId } : {}),
+      ...(to.entityId ? { entityId: to.entityId } : {}),
+      ...(to.label ? { label: to.label } : {}),
+      hidden: to.hidden,
+      from: { u: from.u, v: from.v },
+      to: { u: to.u, v: to.v },
+    });
+  }
+  return out;
+}
+
+/**
+ * A step, MEASURED — how far, and whether it closed the gap on whoever
+ * is acting.
+ *
+ * The direction is worked out here for the same reason every distance
+ * is: a reader handed two coordinate pairs and asked whether one of
+ * them got nearer will do trigonometry, and will eventually do it
+ * generously. Toward and away are teller's to say.
+ *
+ * The acting creature's OWN step gets no direction — "toward yourself"
+ * is not a fact — but it still gets a distance, because how far a
+ * creature went last round is how it judges what this one can afford.
+ */
+export function measureMove(
+  record: MoveRecord,
+  board: BoardFacts,
+  bands: Band[],
+): MoveFacts {
+  const facts: MoveFacts = { name: record.byName };
+  if (record.round !== undefined) facts.round = record.round;
+  if (record.hidden) facts.hidden = true;
+  if (!board.present) return facts;
+  const width = board.board.widthInches;
+  const tall = board.board.heightInches;
+  if (!width || !tall) return facts;
+  const at = (p: { u: number; v: number }) => ({ x: p.u * width, y: p.v * tall });
+  const span = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+    round1(Math.hypot(b.x - a.x, b.y - a.y));
+
+  const went = span(at(record.from), at(record.to));
+  facts.wentInches = went;
+  if (board.grid) facts.wentSquares = Math.round(went);
+  const far = bandOf(went, bands);
+  if (far) facts.wentBand = { name: far.name, ...(far.world ? { world: far.world } : {}) };
+
+  const acting = board.tokens.find((t) => t.acting);
+  if (!acting) return facts;
+  if (record.by && record.by === acting.entityId) {
+    facts.mine = true;
+    return facts;
+  }
+  const here = at(acting);
+  const was = span(here, at(record.from));
+  const is = span(here, at(record.to));
+  facts.wasAwayInches = was;
+  facts.nowAwayInches = is;
+  const wasBand = bandOf(was, bands);
+  const nowBand = bandOf(is, bands);
+  if (wasBand) facts.wasBand = { name: wasBand.name, ...(wasBand.world ? { world: wasBand.world } : {}) };
+  if (nowBand) facts.nowBand = { name: nowBand.name, ...(nowBand.world ? { world: nowBand.world } : {}) };
+  // Half an inch, the old implementation's threshold: a step that
+  // circles at the same reach is neither an approach nor a retreat, and
+  // calling it one would put intent in the reader's mouth.
+  const delta = was - is;
+  facts.sense = Math.abs(delta) < 0.5 ? 'neither' : delta > 0 ? 'toward' : 'away';
+  return facts;
+}
+
+/**
+ * WHAT LIES BETWEEN — the painted ground a straight line crosses.
+ *
+ * Standing-in is a fact about a tile; this is a fact about a PATH, and
+ * it is the one that changes a decision. A creature will cross open
+ * sand without a thought and will think twice about six squares of
+ * fire, so the ground in the way is a real reason to go around, wait,
+ * or pick a different target.
+ *
+ * Sampled in quarter-cell steps rather than rasterised properly,
+ * because this feeds a sentence and not a physics engine, and a quarter
+ * of a square is finer than any ruling it could change.
+ *
+ * A zone EITHER END is standing in is left out: both ends are already
+ * reported as standing in it, and repeating it here would read as a
+ * second, separate patch to be crossed.
+ */
+export function zonesCrossed(
+  from: { u: number; v: number },
+  to: { u: number; v: number },
+  zones: { name: string; cells: [number, number][]; hidden?: boolean }[],
+  grid: { cols: number; rows: number },
+): { name: string; cells: number; hidden?: boolean }[] {
+  const a = cellOf(from.u, from.v, grid);
+  const b = cellOf(to.u, to.v, grid);
+  const ends = new Set([`${a[0]},${a[1]}`, `${b[0]},${b[1]}`]);
+  const held = new Set(
+    zones
+      .filter((z) => z.cells.some((c) => ends.has(`${c[0]},${c[1]}`)))
+      .map((z) => z.name),
+  );
+  const ax = from.u * grid.cols;
+  const ay = from.v * grid.rows;
+  const bx = to.u * grid.cols;
+  const by = to.v * grid.rows;
+  const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) * 4));
+  const seen = new Set<string>();
+  const hit = new Map<string, { cells: number; hidden?: boolean }>();
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const key = `${Math.floor(ax + (bx - ax) * t)},${Math.floor(ay + (by - ay) * t)}`;
+    if (ends.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    for (const zone of zones) {
+      if (held.has(zone.name)) continue;
+      if (!zone.cells.some((c) => `${c[0]},${c[1]}` === key)) continue;
+      const at = hit.get(zone.name) ?? { cells: 0, ...(zone.hidden ? { hidden: true } : {}) };
+      at.cells += 1;
+      hit.set(zone.name, at);
+    }
+  }
+  return [...hit.entries()].map(([name, what]) => ({ name, ...what }));
 }

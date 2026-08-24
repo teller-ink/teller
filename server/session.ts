@@ -30,6 +30,7 @@ import {
 import type { Ref } from '../core/entity.ts';
 import { applyTurnOp, toTurnState, type TurnOp, type TurnState } from './turn.ts';
 import { withDeployed, withoutEntities, type Deploying } from './boards.ts';
+import { movesBetween, type MoveRecord } from './geometry.ts';
 
 /**
  * One foe in a prepared fight, as the recipe writes it down.
@@ -433,8 +434,43 @@ export class Session {
     return out;
   }
 
+  /**
+   * The board as it stands — and, beside it, WHO MOVED to make it so.
+   *
+   * `board.updated` says a board changed and not one thing about the
+   * fight, which is why a proposer asked who had closed on it could
+   * only be told nothing. So every write is diffed against the state it
+   * replaces and each genuine step gets its own record row (rule 3),
+   * filed against whoever took it.
+   *
+   * It is a RECORD, in `server/undo.ts`'s exact sense: the placement it
+   * describes is already in the board's own row, and undoing the note
+   * would either do nothing or undo the move twice. And it is narrow on
+   * purpose — a drag arrives as a whole-state PUT carrying fog, paint
+   * and the table's aim as well, so a write that repainted a zone logs
+   * no movement at all (`movesBetween`).
+   */
   putBoardState(boardId: string, data: unknown, actor: string): void {
+    const moved = movesBetween(this.campaign.boardState(boardId), data);
     this.campaign.putBoardState(boardId, data, actor);
+    if (moved.length) {
+      const round = this.turnState().round;
+      for (const step of moved) {
+        const named = step.entityId ? this.campaign.get(step.entityId)?.name : undefined;
+        const record: MoveRecord = {
+          boardId,
+          ...(step.placementId ? { placementId: step.placementId } : {}),
+          ...(step.entityId ? { by: step.entityId } : {}),
+          byName: named ?? step.label ?? 'an unnamed token',
+          ...(step.hidden ? { hidden: true } : {}),
+          from: step.from,
+          to: step.to,
+          ...(round === undefined ? {} : { round }),
+        };
+        this.campaign.append(step.entityId ?? null, actor, 'token.moved', record);
+      }
+      this.changed('events');
+    }
     this.changed('board');
   }
 

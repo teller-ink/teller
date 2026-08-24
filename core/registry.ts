@@ -358,6 +358,50 @@ export type TokenFacts = {
    * of them.
    */
   awayBand?: { name: string; world?: string };
+  /**
+   * The painted ground the straight line from the acting token CROSSES
+   * to reach this one — what you'd have to get through, as opposed to
+   * what anyone is standing in.
+   *
+   * A zone either end already stands in is left out; that end is
+   * reported as standing in it, and saying it twice would read as a
+   * second patch in the way. Absent when nothing is painted between
+   * them, which is the ordinary case and says nothing rather than
+   * saying 'none'.
+   */
+  between?: { name: string; cells: number; hidden?: boolean }[];
+};
+
+/**
+ * ONE STEP SOMEBODY TOOK, measured — the round before, told as facts.
+ *
+ * A board state is a photograph and cannot say that anybody moved, so
+ * teller keeps the step in the log and measures it here. Every number
+ * is teller's: how far it went, how far off it was, how far off it is
+ * now, and — the one that changes a decision — whether that CLOSED the
+ * gap on whoever is acting. A reader handed two coordinate pairs and
+ * asked to work out 'toward' will do trigonometry, and eventually do it
+ * generously.
+ */
+export type MoveFacts = {
+  /** Whose step it was, by name. */
+  name: string;
+  round?: number;
+  /** The acting creature's own step. It gets a distance, never a direction. */
+  mine?: boolean;
+  /** Behind the screen when it moved. Kept — this rides a DM-gated need. */
+  hidden?: boolean;
+  /** How far it went, in the board's true inches. */
+  wentInches?: number;
+  wentSquares?: number;
+  wentBand?: { name: string; world?: string };
+  /** The gap on the acting creature, before and after the step. */
+  wasAwayInches?: number;
+  nowAwayInches?: number;
+  wasBand?: { name: string; world?: string };
+  nowBand?: { name: string; world?: string };
+  /** Measured here, never derived downstream. Absent for the acting creature's own step. */
+  sense?: 'toward' | 'away' | 'neither';
 };
 
 export type ZoneFacts = {
