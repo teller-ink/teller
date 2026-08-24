@@ -180,7 +180,7 @@ export function ItemTile({
    */
   amended?: Map<string, Amendment>;
   /** The system's per-turn moves (`use.actions`) — armed here, paid at fire. */
-  actions?: { name: string; cost: number; text?: string }[];
+  actions?: { name: string; cost: number; text?: string; arms?: boolean }[];
   /** Which of them are armed, and which are used up until the counter refills. */
   armed?: string[];
   spent?: string[];
