@@ -179,13 +179,29 @@ export function locate(
 
 type Counts = Record<string, number>;
 
-/** The pool as counts per die letter, or nothing if it isn't one. */
+/**
+ * The pool as counts per die letter, or nothing if it isn't one.
+ *
+ * **Zero IS a pool — the empty one** (2026-08-24). A stat printed `0`
+ * is a handful of no dice, not a value that failed to parse, and the
+ * difference decides whether a person's own stat can be amended at all:
+ * a Defense of 0 with a breastplate on reads `1G`, and before this it
+ * read 0 with the armour silently doing nothing. Same rule as §M-8's
+ * "absent is zero" one rung down — the base value of a thing counted in
+ * dice is no dice.
+ *
+ * Everything else that isn't a printed pool still comes back untouched:
+ * `Used`, `$12.00` and a paragraph of prose are not empty pools, they
+ * are not pools.
+ */
 export function poolCounts(
   value: unknown,
   faces: Record<string, string[]>,
 ): Counts | undefined {
+  if (value === 0) return {};
   if (typeof value !== 'string') return undefined;
   const text = value.replace(/\s+/g, '');
+  if (/^0+$/.test(text)) return {};
   if (!/^(?:\d+[A-Za-z])+$/.test(text)) return undefined;
   const counts: Counts = {};
   for (const [, n, letter] of text.matchAll(/(\d+)([A-Za-z])/g)) {

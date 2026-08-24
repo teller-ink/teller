@@ -35,6 +35,7 @@
 
 import { existsSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
+import { bandOf, bandsIn, type Band } from '../core/bands.ts';
 import { refIn } from '../core/entity.ts';
 import type { BoardFacts, MoveFacts, TokenFacts } from '../core/registry.ts';
 import type { Session } from './session.ts';
@@ -158,45 +159,12 @@ export function cellOf(
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
 /**
- * ONE RUNG OF THE SYSTEM'S RANGE LADDER, as it declares one.
- *
- * `from` is inclusive, `to` exclusive, both in the board's true
- * inches; `world` is what that reach is in the fiction. Nothing here
- * knows any game's rungs — a system with no `bands` declaration has no
- * ladder and every distance stays a bare measurement.
+ * The system's range ladder lives in `core/bands.ts` — a sheet reads it
+ * too (what a weapon reaches at each rung), and one parser for one
+ * declaration is the whole rule. Re-exported here so every caller of
+ * geometry's own `Band`/`bandsIn`/`bandOf` kept its import.
  */
-export type Band = { name: string; from?: number; to?: number; world?: string };
-
-/** The declared rungs, read forgivingly out of whatever the layer wrote. */
-export function bandsIn(raw: unknown): Band[] {
-  return (Array.isArray(raw) ? raw : []).flatMap((item): Band[] => {
-    const b = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
-    const name = typeof b.name === 'string' ? b.name.trim() : '';
-    if (!name) return [];
-    const band: Band = { name };
-    if (num(b.from) !== undefined) band.from = num(b.from);
-    if (num(b.to) !== undefined) band.to = num(b.to);
-    if (typeof b.world === 'string' && b.world.trim()) band.world = b.world.trim();
-    return [band];
-  });
-}
-
-/**
- * What a measurement IS, in the system's own words.
- *
- * Table inches are teller's unit and nobody's world, and the
- * conversion is TELLER'S to do — a reader asked to map a number onto a
- * ladder will eventually map it generously, which is how a melee
- * attack got thrown across a clearing to dodge a fire. Handing over
- * both spellings costs one string and settles the argument: the number
- * is the evidence, the band is the vocabulary.
- */
-export function bandOf(inches: number, bands: Band[]): Band | undefined {
-  for (const b of bands) {
-    if (inches >= (b.from ?? 0) && (b.to === undefined || inches < b.to)) return b;
-  }
-  return undefined;
-}
+export { bandOf, bandsIn, type Band };
 
 type StoredPlacement = {
   id?: unknown;

@@ -142,6 +142,13 @@ describe('pools', () => {
     expect(poolCounts(7, faces)).toBeUndefined();
   });
 
+  it('reads zero as the EMPTY pool — no dice is a handful, nought is not prose', () => {
+    expect(poolCounts(0, faces)).toEqual({});
+    expect(poolCounts('0', faces)).toEqual({});
+    expect(poolText(poolCounts(0, faces)!, faces)).toBe('');
+    expect(amendPool(0, { kind: 'pool', group: 'arts', op: 'add', dice: '1R' }, faces)).toBe('1R');
+  });
+
   it('add adds', () => {
     expect(amendPool('2R', { kind: 'pool', group: 'arts', op: 'add', dice: '1R' }, faces)).toBe('3R');
   });
