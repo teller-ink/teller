@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createCampaign, openShelf } from '../core/store.ts';
 import { serve } from './index.ts';
 import { Session } from './session.ts';
-import { publicBoardState, vitalityOf } from './public.ts';
+import { isParty, publicBoardState, publicTurn, vitalityOf } from './public.ts';
 import type { KindDef } from '../core/kind.ts';
 
 const KEY = 'test-key-0123456789abcdef';
@@ -53,6 +53,81 @@ describe('vitality, off the first max-bearing entry', () => {
     ).toBe('bloodied');
     expect(vitalityOf({ resources: [{ name: 'Sand', value: 3 }] }, KINDS)).toBeUndefined();
     expect(vitalityOf({}, KINDS)).toBeUndefined();
+  });
+});
+
+describe('who is on the party’s side, asked fail-closed', () => {
+  const TRADES = new Set(['marshal', 'trapper']);
+
+  it('lets in the declared word and the declared trades, and nothing else', () => {
+    expect(isParty({ type: 'pc' }, TRADES)).toBe(true);
+    expect(isParty({ type: 'Marshal' }, TRADES)).toBe(true);
+    // The trade as creation might have cased it, and as a human retyped it.
+    expect(isParty({ type: 'trapper' }, TRADES)).toBe(true);
+    expect(isParty({ type: ' Trapper ' }, TRADES)).toBe(true);
+  });
+
+  it('everything else is a foe — including the words nobody typed', () => {
+    expect(isParty({ type: 'foe' }, TRADES)).toBe(false);
+    expect(isParty({ type: 'npc' }, TRADES)).toBe(false);
+    expect(isParty({ type: 'vendor' }, TRADES)).toBe(false);
+    expect(isParty({ type: 'Sheriff' }, TRADES)).toBe(false);
+    // The one that put numbers on the glass: a foe whose template
+    // never said the word.
+    expect(isParty({}, TRADES)).toBe(false);
+    expect(isParty({ type: '   ' }, TRADES)).toBe(false);
+  });
+
+  it('a system with no trades leaves `pc` as the only way in', () => {
+    const none: Set<string> = new Set();
+    expect(isParty({ type: 'pc' }, none)).toBe(true);
+    expect(isParty({ type: 'Marshal' }, none)).toBe(false);
+  });
+});
+
+describe('the turn order, with the ambush taken out of it', () => {
+  const order = [
+    { id: 't1', entityId: 'e1' },
+    { id: 't2', entityId: 'hidden' },
+    { id: 't3', label: '3 coyotes' },
+  ];
+  const hidden = new Set(['hidden']);
+  const at = (turn: number | null) =>
+    publicTurn({ order, turn, round: 2 }, hidden);
+
+  it('drops the hidden row and keeps the bare label', () => {
+    expect(at(0).order).toEqual([order[0], order[2]]);
+    expect(at(0).round).toBe(2);
+  });
+
+  it('follows the acting row when it survives', () => {
+    expect(at(0).turn).toBe(0);
+    expect(at(2).turn).toBe(1);
+  });
+
+  it('lands on the next surviving row when the acting one was hidden', () => {
+    expect(at(1).turn).toBe(1);
+    // …and wraps, rather than pointing past the end.
+    expect(
+      publicTurn(
+        { order: [order[0], { id: 't2', entityId: 'hidden' }], turn: 1, round: 1 },
+        hidden,
+      ).turn,
+    ).toBe(0);
+  });
+
+  it('points at nobody when nobody was acting, or nobody is left', () => {
+    expect(at(null).turn).toBe(null);
+    expect(publicTurn({ order: [order[1]], turn: 0, round: 1 }, hidden)).toEqual({
+      order: [],
+      turn: null,
+      round: 1,
+    });
+  });
+
+  it('hands back the very same state when nothing was hidden', () => {
+    const state = { order, turn: 1, round: 1 };
+    expect(publicTurn(state, new Set())).toBe(state);
   });
 });
 
@@ -134,6 +209,20 @@ describe('GET /api/public', () => {
     return hello.body.display.id;
   }
 
+  /** A screen the DM pointed at one character — authority, not a watcher. */
+  async function seatScreen(entityId: string): Promise<string> {
+    const hello = await call('POST', '/api/displays/hello', { body: {} });
+    await call('POST', '/api/displays/claim', {
+      key: true,
+      body: { code: hello.body.display.code },
+    });
+    await call('PATCH', `/api/displays/${hello.body.display.id}`, {
+      key: true,
+      body: { role: 'seat', params: { entityId } },
+    });
+    return hello.body.display.id;
+  }
+
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'teller-public-'));
     const shelf = openShelf(dir);
@@ -141,7 +230,10 @@ describe('GET /api/public', () => {
       id: 'sys_test',
       name: 'Testing',
       version: 1,
-      data: { kinds: KINDS },
+      // The trades are the system's own declaration, and they are what
+      // says who is on the party's side — a live character wears its
+      // trade in `type`, because that is what creation writes there.
+      data: { kinds: KINDS, trades: [{ name: 'Marshal' }, { name: 'Trapper' }] },
     });
     shelf.putPack({
       id: 'pak_test',
@@ -175,6 +267,7 @@ describe('GET /api/public', () => {
     barrett = session.create(
       {
         name: 'Barrett',
+        type: 'Marshal',
         notes: 'owes money in three counties',
         lists: {
           resources: [{ name: 'Vigour', value: 5, max: 10 }],
@@ -424,5 +517,202 @@ describe('GET /api/public', () => {
     expect(watching.status).toBe(200);
     expect(watching.body.placements).toEqual([{ label: 'seen', u: 0, v: 0 }]);
     expect(JSON.stringify(watching.body)).not.toContain('unseen');
+  });
+
+  // -- the fail-closed party rule, through the door -----------------------
+  //
+  // The audit of 2026-08-24 found the side taken off `type`, a field
+  // that holds three different things depending on who wrote it. These
+  // pin all three arrivals at the boundary rather than at the function.
+
+  const rosterOf = async (id: string) => {
+    const { body } = await call('GET', '/api/public', { key: true });
+    return body.roster.find((e: any) => e.id === id);
+  };
+
+  it('an entity nobody typed a word onto is a foe, not the posse', async () => {
+    const nameless = session.create(
+      { name: 'Something In The Reeds', lists: { resources: [{ name: 'Vigour', value: 9, max: 9 }] } } as never,
+      'console',
+    ).id;
+    const row = await rosterOf(nameless);
+    expect(row.side).toBe('foe');
+    expect(row.lists.resources).toBeUndefined();
+    expect(row.vitality).toBe('healthy');
+  });
+
+  it('an `npc` is a foe too — the word means somebody else’s sheet', async () => {
+    const sheriff = session.create(
+      { name: 'Sheriff Pike', type: 'npc', lists: { resources: [{ name: 'Vigour', value: 4, max: 8 }] } } as never,
+      'console',
+    ).id;
+    const row = await rosterOf(sheriff);
+    expect(row.side).toBe('foe');
+    expect(row.lists).toEqual({});
+    // The ceiling is gone with the rest; only the band survives.
+    expect(row.vitality).toBe('bloodied');
+  });
+
+  it('the declared word gets in, cased however a human cased it', async () => {
+    const pc = session.create(
+      { name: 'Ida', type: 'pc', lists: { resources: [{ name: 'Vigour', value: 7, max: 10 }] } } as never,
+      'console',
+    ).id;
+    const trade = session.create(
+      { name: 'Cassidy', type: 'trapper', lists: { resources: [{ name: 'Vigour', value: 6, max: 10 }] } } as never,
+      'console',
+    ).id;
+    expect((await rosterOf(pc)).side).toBe('party');
+    expect((await rosterOf(pc)).lists.resources).toEqual([
+      { name: 'Vigour', value: 7, max: 10 },
+    ]);
+    expect((await rosterOf(trade)).side).toBe('party');
+    expect((await rosterOf(trade)).lists.resources).toEqual([
+      { name: 'Vigour', value: 6, max: 10 },
+    ]);
+  });
+
+  // -- the ambush, and the character still being made ---------------------
+
+  it('a hidden foe is absent from the roster AND the order, not merely tokenless', async () => {
+    await call('PUT', '/api/campaign/refs', { key: true, body: { board: boardId } });
+    session.turnOp({ op: 'add', entityId: barrett }, 'console');
+    session.turnOp({ op: 'add', entityId: watcher }, 'console');
+    session.putBoardState(
+      boardId,
+      {
+        placements: [
+          { id: 'plc_a', entityId: barrett, u: 0.1, v: 0.5 },
+          { id: 'plc_b', entityId: watcher, u: 0.8, v: 0.5, hidden: true },
+        ],
+      },
+      'console',
+    );
+
+    const { body } = await call('GET', '/api/public', { key: true });
+    expect(body.roster.map((e: any) => e.id)).toEqual([barrett]);
+    expect(body.turn.order.map((e: any) => e.entityId)).toEqual([barrett]);
+    expect(JSON.stringify(body)).not.toContain('Watcher');
+
+    // A token anyone can see is a reveal: the same entity standing
+    // openly elsewhere on the board keeps its name.
+    session.putBoardState(
+      boardId,
+      {
+        placements: [
+          { id: 'plc_b', entityId: watcher, u: 0.8, v: 0.5, hidden: true },
+          { id: 'plc_c', entityId: watcher, u: 0.2, v: 0.2 },
+        ],
+      },
+      'console',
+    );
+    const shown = await call('GET', '/api/public', { key: true });
+    expect(shown.body.roster.map((e: any) => e.id)).toContain(watcher);
+  });
+
+  it('the pointer follows the fight when the hidden one is acting', async () => {
+    await call('PUT', '/api/campaign/refs', { key: true, body: { board: boardId } });
+    session.turnOp({ op: 'add', entityId: watcher }, 'console');
+    session.turnOp({ op: 'add', entityId: barrett }, 'console');
+    session.turnOp({ op: 'next' }, 'console'); // the watcher is acting
+    session.putBoardState(
+      boardId,
+      { placements: [{ id: 'plc_b', entityId: watcher, u: 0.8, v: 0.5, hidden: true }] },
+      'console',
+    );
+
+    // The console still sees the truth: two rows, the hidden one acting.
+    const dm = await call('GET', '/api/turn', { key: true });
+    expect(dm.body.order).toHaveLength(2);
+    expect(dm.body.turn).toBe(0);
+
+    // The room sees one row, and the highlight is on it — never on the
+    // wrong name, which is the whole reason the index is remapped.
+    const { body } = await call('GET', '/api/public', { key: true });
+    expect(body.turn.order.map((e: any) => e.entityId)).toEqual([barrett]);
+    expect(body.turn.turn).toBe(0);
+
+    // …and when the visible one takes the turn, the pointer is still on it.
+    session.turnOp({ op: 'next' }, 'console');
+    const after = await call('GET', '/api/public', { key: true });
+    expect(after.body.turn.turn).toBe(0);
+  });
+
+  it('a half-made character is prep, and prep is nobody’s but the DM’s', async () => {
+    const draft = session.create(
+      { name: 'Unnamed', type: 'pc', lists: { meta: [{ name: 'draft' }] } } as never,
+      'console',
+    ).id;
+    const { body } = await call('GET', '/api/public', { key: true });
+    expect(body.roster.map((e: any) => e.id)).not.toContain(draft);
+    expect(JSON.stringify(body)).not.toContain('Unnamed');
+
+    // Clearing the mark is the last step of creation, and it is what
+    // puts the character in the room.
+    session.writeEntry(draft, { list: 'meta', name: 'draft', remove: true } as never, 'console');
+    const after = await call('GET', '/api/public', { key: true });
+    expect(after.body.roster.map((e: any) => e.id)).toContain(draft);
+  });
+
+  // -- the two doors beside the snapshot ---------------------------------
+  //
+  // `/api/entities` and `/api/turn` are behind `canWatch`, which is how
+  // the ambush and the draft walked out past the whole redaction law.
+  // They answer a watcher from the same redactor now, and the console
+  // and the seat keep the truth.
+
+  describe('a watch-only credential gets the redacted answer', () => {
+    let table: string;
+
+    beforeEach(async () => {
+      table = await passiveScreen();
+      await call('PUT', '/api/campaign/refs', { key: true, body: { board: boardId } });
+      session.turnOp({ op: 'add', entityId: barrett }, 'console');
+      session.turnOp({ op: 'add', entityId: watcher }, 'console');
+      session.putBoardState(
+        boardId,
+        { placements: [{ id: 'plc_b', entityId: watcher, u: 0.8, v: 0.5, hidden: true }] },
+        'console',
+      );
+      session.create(
+        { name: 'Unnamed', type: 'pc', lists: { meta: [{ name: 'draft' }] } } as never,
+        'console',
+      );
+    });
+
+    it('the roster door hands over exactly what the snapshot would', async () => {
+      const snapshot = await call('GET', '/api/public', { display: table });
+      const watching = await call('GET', '/api/entities', { display: table });
+      expect(watching.status).toBe(200);
+      expect(watching.body).toEqual(
+        snapshot.body.roster.map((e: any) => ({ id: e.id, name: e.name, type: e.type ?? null })),
+      );
+      expect(JSON.stringify(watching.body)).not.toContain('Watcher');
+      expect(JSON.stringify(watching.body)).not.toContain('Unnamed');
+    });
+
+    it('and someone else’s children never travel through it at all', async () => {
+      const watching = await call('GET', `/api/entities?parent=${barrett}`, { display: table });
+      expect(watching.body).toEqual([]);
+    });
+
+    it('the turn door hands over the snapshot’s order and pointer', async () => {
+      const snapshot = await call('GET', '/api/public', { display: table });
+      const watching = await call('GET', '/api/turn', { display: table });
+      expect(watching.body).toEqual(snapshot.body.turn);
+      expect(watching.body.order.map((e: any) => e.entityId)).toEqual([barrett]);
+    });
+
+    it('the console and the seat keep the truth', async () => {
+      const seat = await seatScreen(barrett);
+      for (const opts of [{ key: true }, { display: seat }]) {
+        const roster = await call('GET', '/api/entities', opts);
+        expect(roster.body.map((e: any) => e.name)).toEqual(
+          expect.arrayContaining(['Barrett', 'Watcher', 'Unnamed']),
+        );
+        const turn = await call('GET', '/api/turn', opts);
+        expect(turn.body.order.map((e: any) => e.entityId)).toEqual([barrett, watcher]);
+      }
+    });
   });
 });

@@ -118,7 +118,12 @@ import {
 import { toRights } from '../core/bundle.ts';
 import { notesOf, passNote, visibleTo, type NoteHandout } from './notes.ts';
 import { setNotice } from './notice.ts';
-import { publicBoardState, publicSnapshot } from './public.ts';
+import {
+  publicBoardState,
+  publicEntityList,
+  publicSnapshot,
+  publicTurnState,
+} from './public.ts';
 import { ACTIVE_CAMPAIGN, Host, Session, type EntryEdit } from './session.ts';
 import { peekUndo, undo } from './undo.ts';
 import type { TurnOp } from './turn.ts';
@@ -1443,6 +1448,21 @@ export async function handleApi(
     if (method === 'GET') {
       const parent =
         url.searchParams.get('parent') ?? session.loaded.manifest.id;
+      // A screen that may only WATCH gets the roster the room may see
+      // and not the one the console keeps (the audit, 2026-08-24): this
+      // door handed out the ambush and the half-made character by name,
+      // a corridor around the snapshot's whole law. It answers from the
+      // same redactor now — one law, two doors, so they cannot drift.
+      // Someone else's children never travel publicly at all, which is
+      // the header's own rule about `children`, so a watcher asking
+      // after any other parent is answered with nothing rather than
+      // with the roster it didn't ask for.
+      if (!canPrep(auth)) {
+        return reply(
+          200,
+          parent === session.loaded.manifest.id ? publicEntityList(session) : [],
+        );
+      }
       return reply(
         200,
         session.campaign
@@ -1964,7 +1984,15 @@ export async function handleApi(
   // -- the turn order (rule 5). Everyone reads; the DM drives; a seat
   // may submit exactly one thing — a score for its own entity's row.
   if (head === 'turn' && !a) {
-    if (method === 'GET') return reply(200, session.turnState());
+    // …and everyone reads a DIFFERENT list: the console and a seat get
+    // the order as it stands, a screen that may only watch gets the
+    // order the room may see — the ambush out of it and the pointer
+    // re-aimed (`publicTurn`). Same reason as the roster door above,
+    // found in the same audit: a hidden combatant was announcing itself
+    // through the one endpoint nobody thought of as player-facing.
+    if (method === 'GET') {
+      return reply(200, canPrep(auth) ? session.turnState() : publicTurnState(session));
+    }
     if (method === 'POST') {
       const body = await bodyOf(req);
       const op = body as unknown as TurnOp;

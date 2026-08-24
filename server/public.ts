@@ -10,6 +10,15 @@
 //     stripped and a qualitative `vitality` substitutes — a STATE, not
 //     a number, safe on a screen the players are looking at.
 //   * Party members keep their numbers; they are on the table anyway.
+//     Who counts as one is DECLARED and asked fail-closed (`isParty`) —
+//     the audit of 2026-08-24 found the question asked the other way
+//     round, and a foe nobody typed a word onto came through as posse.
+//   * A HIDDEN THING IS HIDDEN EVERYWHERE. The same audit found the
+//     ambush's token stripped from the board while its name rode the
+//     roster and the turn order out to the same screen, so both are cut
+//     by `hiddenOnActiveBoard` and the turn's pointer re-aimed after.
+//   * A DRAFT IS PREP. A half-made character belongs to the console
+//     until creation clears its mark.
 //   * `notes` never travel, for anyone.
 //   * `children` never travel — what a character carries is their own
 //     business, and a passive surface has no use for a weapon list.
@@ -40,13 +49,13 @@
 // party member keeps everything either way.
 
 import type { Entity, Entry } from '../core/entity.ts';
-import { numberOf } from '../core/entity.ts';
+import { isDraft, numberOf } from '../core/entity.ts';
 import { kindFor, toKindDef, type KindDef } from '../core/kind.ts';
 import type { Board } from '../core/store.ts';
 import { activeHandout, type Handout } from './handouts.ts';
 import { noticeOf, type Notice } from './notice.ts';
 import type { Session } from './session.ts';
-import type { TurnState } from './turn.ts';
+import type { TurnEntry, TurnState } from './turn.ts';
 
 /**
  * Where the number stands, qualitatively. Deliberately `down` and not
@@ -126,9 +135,55 @@ export type PublicSnapshot = {
   notice: Notice | null;
 };
 
-/** §M-6's convention, and the client's: a foe says so on its type. */
-export function isFoe(entity: { type?: string }): boolean {
-  return entity.type === 'foe';
+/**
+ * WHO IS ON THE PARTY'S SIDE — the one question the whole redaction
+ * hangs off, asked FAIL-CLOSED (the adversarial audit, 2026-08-24).
+ *
+ * It used to be asked the other way round — `type === 'foe'` meant foe
+ * and everything else was party — and that read the type field as
+ * though it held a side. It never did. `type` is DOUBLE-BOOKED: a live
+ * character carries its TRADE there (creation writes `type: trade.name`
+ * — "Marshal", "Trapper"), the roster bar mints `npc`/`pc`, and a foe
+ * stamped from a template whose author never typed the word arrives
+ * with no type at all. Every one of those fell through to "party" and
+ * put a full sheet of numbers on the glass in the middle of the room.
+ *
+ * So the question is now asked from the party's end, where the answer
+ * is DECLARED rather than assumed: an entity is party if it says `pc`,
+ * or if its type is one of the trades the system declares — the same
+ * list creation picked the trade from. Everything else — `npc`, `foe`,
+ * `vendor`, a word nobody recognises, no word at all — gets the foe
+ * treatment: a name and a vitality band, no numbers, no lists. A system
+ * that declares no trades leaves `pc` as the only way in, which is the
+ * honest floor and not a failure.
+ *
+ * **The known cost, stated rather than discovered**: a friendly NPC —
+ * the sheriff fighting beside the posse — now has its numbers hidden on
+ * player-facing glass. That is the constitution's own line ("NPC numbers
+ * never shown", rule 6), not a regression; the real fix is a STORED
+ * side a human can set and overrule (TEL-126), which is rule 1's answer
+ * to every question this shape raises. Until it exists, over-stripping
+ * is the safe direction and always was.
+ */
+export function isParty(entity: { type?: string }, trades: ReadonlySet<string>): boolean {
+  const type = (entity.type ?? '').trim().toLowerCase();
+  if (!type) return false;
+  return type === 'pc' || trades.has(type);
+}
+
+/**
+ * The trades this table's stack declares, lowered for the comparison —
+ * `declarations('trades')` is the same merged slot the creation engine
+ * reads (`system/creation`), so the two can't drift into disagreeing
+ * about what a Marshal is.
+ */
+export function tradeNames(session: Session): Set<string> {
+  const out = new Set<string>();
+  for (const item of session.loaded.declarations('trades')) {
+    const name = (item as { name?: unknown })?.name;
+    if (typeof name === 'string' && name.trim()) out.add(name.trim().toLowerCase());
+  }
+  return out;
 }
 
 function kindsOf(session: Session): KindDef[] {
@@ -180,8 +235,12 @@ export function vitalityOf(
  * stamp's ceiling lives in its template, and a vitality computed off
  * the stored half alone would be blank for every deployed foe.
  */
-export function publicEntity(reading: Entity, kinds: KindDef[]): PublicEntity {
-  const foe = isFoe(reading);
+export function publicEntity(
+  reading: Entity,
+  kinds: KindDef[],
+  trades: ReadonlySet<string>,
+): PublicEntity {
+  const foe = !isParty(reading, trades);
   const lists: Record<string, Entry[]> = {};
   for (const [list, entries] of Object.entries(reading.lists ?? {})) {
     if (foe && !tagLike(kinds, list)) continue;
@@ -258,17 +317,121 @@ export function activeBoard(session: Session): PublicBoard | null {
   return { board, state: publicBoardState(session.campaign.boardState(id) ?? null) };
 }
 
+/**
+ * WHO IS LYING IN WAIT — the entities whose only tokens on the active
+ * board are hidden ones.
+ *
+ * Stripping the token was never enough (the audit, 2026-08-24). The
+ * placement came out of the board state and the ambusher's NAME rode
+ * the public roster and the public turn order anyway, so the table read
+ * "Pondweed Peril, healthy" off the board view of a scene it could not
+ * see a token in. A hidden thing is hidden in every payload or it is
+ * not hidden.
+ *
+ * "Only" is the load-bearing word: an entity standing openly somewhere
+ * on the same board has already been shown to the room, and taking its
+ * name away would leave its own visible token nameless. So a placement
+ * anyone can see counts as a reveal, and the ambush is the entity whose
+ * every placement here is hidden.
+ */
+export function hiddenOnActiveBoard(session: Session): Set<string> {
+  const hidden = new Set<string>();
+  const boardId = session.activeBoardId();
+  if (!boardId) return hidden;
+  const state = session.campaign.boardState(boardId);
+  const placements = (state as { placements?: unknown })?.placements;
+  if (!Array.isArray(placements)) return hidden;
+  const open = new Set<string>();
+  for (const item of placements) {
+    if (!item || typeof item !== 'object') continue;
+    const { entityId, hidden: veiled } = item as { entityId?: unknown; hidden?: unknown };
+    if (typeof entityId !== 'string' || !entityId) continue;
+    (veiled ? hidden : open).add(entityId);
+  }
+  for (const id of open) hidden.delete(id);
+  return hidden;
+}
+
+/**
+ * The roster a passive screen may see: furniture out (§14), DRAFTS out,
+ * ambushers out, and everything that remains redacted by the party rule
+ * above.
+ *
+ * Drafts leave for the same reason prep does (the audit, 2026-08-24): a
+ * half-made character is somebody mid-sentence at the console — its
+ * `meta` mark and its half-filled stats are the making of it, not the
+ * table's business — and creation clears the mark at the last step, so
+ * the moment there is a character there is a roster row.
+ */
+export function publicRoster(session: Session): PublicEntity[] {
+  const kinds = kindsOf(session);
+  const trades = tradeNames(session);
+  const hidden = hiddenOnActiveBoard(session);
+  return session.campaign
+    .children(session.campaign.root().id)
+    .filter((entity) => !FURNITURE_TYPES.includes(entity.type ?? ''))
+    .filter((entity) => !hidden.has(entity.id))
+    .map((entity) => session.reading(entity))
+    .filter((reading) => !isDraft(reading))
+    .map((reading) => publicEntity(reading, kinds, trades));
+}
+
+/**
+ * The turn order a passive screen may see — the ambush taken out of the
+ * list, and the pointer moved to follow it.
+ *
+ * Filtering an ordered list without re-aiming its index is how a
+ * highlight ends up on the wrong name, which is worse than showing
+ * nothing: if the acting row survived, the index finds it again by id;
+ * if the acting row was the hidden one, the index lands on the next
+ * surviving row after it, wrapping — the turn is still passing, the
+ * table just isn't told whose it is while the thing in the reeds takes
+ * it.
+ */
+export function publicTurn(turn: TurnState, hidden: ReadonlySet<string>): TurnState {
+  const shown = (entry: TurnEntry) => !(entry.entityId && hidden.has(entry.entityId));
+  const order = turn.order.filter(shown);
+  if (order.length === turn.order.length) return turn;
+  let at: number | null = null;
+  if (turn.turn !== null && order.length) {
+    for (let n = 0; n < turn.order.length; n++) {
+      const candidate = turn.order[(turn.turn + n) % turn.order.length];
+      if (candidate && shown(candidate)) {
+        at = order.findIndex((e) => e.id === candidate.id);
+        break;
+      }
+    }
+  }
+  return { ...turn, order, turn: at === -1 ? null : at };
+}
+
+/** The same turn, asked of the session — one call for the two doors. */
+export function publicTurnState(session: Session): TurnState {
+  return publicTurn(session.turnState(), hiddenOnActiveBoard(session));
+}
+
+/**
+ * The roster as the ROSTER DOOR answers it (`GET /api/entities`) for a
+ * caller who may only watch: identity and nothing else, cut by exactly
+ * the filters the snapshot uses. One redactor, two doors — the audit
+ * found them disagreeing, and a second spelling of "what may the room
+ * see" is a second thing to forget to fix.
+ */
+export function publicEntityList(session: Session): {
+  id: string;
+  name: string;
+  type: string | null;
+}[] {
+  return publicRoster(session).map((e) => ({ id: e.id, name: e.name, type: e.type ?? null }));
+}
+
 /** The whole snapshot, assembled once so no passive screen assembles anything. */
 export function publicSnapshot(session: Session): PublicSnapshot {
-  const kinds = kindsOf(session);
   const manifest = session.campaign.root();
   return {
     campaign: { slug: session.campaign.slug, name: manifest.name },
-    roster: session.campaign
-      .children(manifest.id)
-      .filter((entity) => !FURNITURE_TYPES.includes(entity.type ?? ''))
-      .map((entity) => publicEntity(session.reading(entity), kinds)),
-    turn: session.turnState(),
+    roster: publicRoster(session),
+    turn: publicTurnState(session),
     board: activeBoard(session),
     handout: publicHandout(activeHandout(session)),
     notice: noticeOf(session),
