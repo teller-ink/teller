@@ -151,17 +151,14 @@ export function zoneBase(effect: string): { fill: string; opacity: number; core?
   }
 }
 
-/** Token colours — the deployment palette, sides rather than species. */
-export const TOKEN_COLORS = [
-  '#d6d3d1',
-  '#38bdf8',
-  '#65a30d',
-  '#dc2626',
-  '#d97706',
-  '#a855f7',
-  '#f472b6',
-  '#0f766e',
-];
+/**
+ * Token colours — the deployment palette, sides rather than species.
+ *
+ * Re-exported rather than declared: deploying a fight colours tokens
+ * server-side now, so the list lives in `core/tokens.ts` where both ends
+ * can read the same one.
+ */
+export { TOKEN_COLORS } from '../../../core/tokens.ts';
 
 /** Base sizes, in true inches. A 1" base is the default everywhere. */
 export const SIZES = [0.5, 1, 2, 3, 4, 6, 8];
