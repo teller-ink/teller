@@ -7,6 +7,8 @@
 
 import { useState } from 'react';
 import type { Entity, Entry } from '../../../core/entity.ts';
+import { useAmendments } from '../../lib/amend.ts';
+import { firedArmed, toggleArmed, useArmed } from '../../lib/armed.ts';
 import type { DiceRecord } from '../../lib/dice.ts';
 import { usePanelNote } from '../../lib/rules.ts';
 import type { BlockCtx, Glass } from '../../panels/render.tsx';
@@ -18,6 +20,14 @@ import type { CurrencyRecord, ScreenDecl, UseRecord } from './types.ts';
 function numberOf(entry: Entry | undefined): number {
   return typeof entry?.value === 'number' ? entry.value : 0;
 }
+
+/** The same read, keeping "there isn't one" distinct from zero. */
+function numberOfOrNothing(entry: Entry | undefined): number | undefined {
+  return typeof entry?.value === 'number' ? entry.value : undefined;
+}
+
+/** One empty list, so a character with no children doesn't rebuild the reading every render. */
+const NOTHING: Entity[] = [];
 
 /** A top-level entry, and which list it lives in — the sparse door needs both. */
 function findWithList(e: Entity, name: string): { list: string; entry: Entry } | undefined {
@@ -79,13 +89,27 @@ export function CarriedScreen({
   const note = usePanelNote();
 
   const entity = ctx.entity as Entity | undefined;
-  if (!entity) return <p className="p-4 text-sm text-stone-500">no entity to show</p>;
-
   const use = ctx.records.use as UseRecord | undefined;
   const dice = ctx.records.dice as DiceRecord | undefined;
+  const children = entity?.children ?? NOTHING;
+  // What's bolted on and what's chambered, folded into the pools they
+  // amend — the reading the table rolls, computed here and stored
+  // nowhere (§8). Asked for before the no-entity door below, like every
+  // other hook.
+  const amendments = useAmendments(children, dice);
+  // The turn's armed moves, and the refill that releases their locks.
+  // The balance is read here because it's the CHARACTER's counter, not
+  // any one weapon's.
+  const wallet = entity && use?.costCounter ? findWithList(entity, use.costCounter) : undefined;
+  const { armed: armedActs, spent: spentActs } = useArmed(
+    numberOfOrNothing(wallet?.entry),
+    entity?.id ?? '',
+  );
+
+  if (!entity) return <p className="p-4 text-sm text-stone-500">no entity to show</p>;
+
   const currency = ctx.records.currency as CurrencyRecord | undefined;
   const icons = (ctx.records.icons as Record<string, string> | undefined) ?? {};
-  const children = entity.children ?? [];
   const wanted = new Set((screen.kinds ?? []).map((k) => k.toLowerCase()));
   const held = children.filter((c) => {
     const kind = (c.type ?? '').toLowerCase();
@@ -123,7 +147,11 @@ export function CarriedScreen({
   const fireCost = (item: Entity, total: number) => {
     if (!use?.costCounter) return;
     const cost = findWithList(entity, use.costCounter);
+    // `total` already carries whatever was armed — one squeeze, one
+    // debit, one undo — so the only thing left is to burn the lock:
+    // what was armed is spent until the counter refills.
     if (cost) write(cost, Math.max(0, numberOf(cost.entry) - total));
+    firedArmed();
     for (const c of use.costs ?? []) {
       const stat = (item.lists.stats ?? []).find((s) => s.name === c.counter);
       const amount = numberOf(stat);
@@ -182,6 +210,11 @@ export function CarriedScreen({
           extras={extras}
           onFireCost={(total) => fireCost(item, total)}
           fittedTo={fittedTo.get(item.id)}
+          amended={amendments.get(item.id)}
+          actions={use?.actions ?? []}
+          armed={armedActs}
+          spent={spentActs}
+          onToggleAction={toggleArmed}
           dice={dice}
           currency={currency}
           available={

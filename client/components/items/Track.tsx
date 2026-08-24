@@ -27,6 +27,7 @@
 // of boxes on the printed page, and the ✶ sits once beside the Model
 // rather than on each range.
 
+import type { Amendment } from '../../../core/effects.ts';
 import { expandPool, type DiceRecord } from '../../lib/dice.ts';
 
 /** Past this a value is a word on a line, not a number in a box. */
@@ -103,13 +104,25 @@ export function StatRow({
   label,
   value,
   dice,
+  amended,
 }: {
   label: string;
   value: string;
   dice?: DiceRecord;
+  /**
+   * What the fittings work out, when that differs from the print
+   * (`amendStats`, `core/effects.ts`). The AMENDED number is what the
+   * table reads — a rifle wearing Damage +1B rolls the amended pool —
+   * and the row says what amended it, because a number that changed
+   * for a reason nobody can see is the thing rule 1 exists to prevent.
+   * The printed value stays stored and is one tap from being read (the
+   * title) or typed over.
+   */
+  amended?: Amendment;
 }) {
-  const pool = looksLikePool(value, dice);
-  const prose = !pool && value.length > PROSE;
+  const shown = amended?.value ?? value;
+  const pool = looksLikePool(shown, dice);
+  const prose = !pool && shown.length > PROSE;
   const Label = (
     <span
       className={`break-words text-[0.7rem] uppercase leading-tight tracking-[0.1em] ${
@@ -124,7 +137,7 @@ export function StatRow({
     return (
       <div className="flex flex-col gap-0.5 py-1">
         {Label}
-        <span className="break-words text-[0.8rem] leading-snug text-stone-300">{value}</span>
+        <span className="break-words text-[0.8rem] leading-snug text-stone-300">{shown}</span>
       </div>
     );
   }
@@ -132,7 +145,20 @@ export function StatRow({
     <div className="flex items-center gap-2 py-0.5">
       {Label}
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-        <PoolValue value={value} dice={dice} />
+        <PoolValue value={shown} dice={dice} />
+        {/* WHO amended it, on the row it amended — a chip rather than a
+            hover, because the rail bar has no pointer and a panel
+            nobody can hover must still explain its own numbers. The
+            title carries the print for whoever does have one. */}
+        {amended && (
+          <span
+            className="break-words text-[0.6rem] uppercase leading-tight tracking-[0.08em]"
+            style={{ color: 'var(--sheet-accent, #f59e0b)' }}
+            title={`printed ${amended.printed} · ${amended.by.join(' · ')}`}
+          >
+            {amended.by.join(' · ')}
+          </span>
+        )}
       </div>
     </div>
   );

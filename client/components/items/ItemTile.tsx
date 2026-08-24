@@ -9,10 +9,12 @@
 // itself counts down (ammo's rounds, an ability's uses), and the
 // chamber-select-plus-trigger for anything `use` prices.
 
+import type { Amendment } from '../../../core/effects.ts';
 import type { Entity, Entry, Ref } from '../../../core/entity.ts';
 import type { DiceRecord } from '../../lib/dice.ts';
 import { writeChildEntry, writeRef } from '../../lib/refs.ts';
 import { SheetPanel } from '../sheet/SheetPanel.tsx';
+import { Reticle } from './Reticle.tsx';
 import { StatRow } from './Track.tsx';
 import type { CurrencyRecord, UseRecord } from './types.ts';
 
@@ -139,6 +141,11 @@ export function ItemTile({
   currency,
   available,
   balances = {},
+  amended,
+  actions = [],
+  armed = [],
+  spent = [],
+  onToggleAction,
 }: {
   characterId: string;
   child: Entity;
@@ -165,6 +172,19 @@ export function ItemTile({
   available?: number;
   /** What each `use.costs` counter holds, same job. */
   balances?: Record<string, number>;
+  /**
+   * What this thing's fittings work out, by stat name lower-cased
+   * (`useAmendments`) — the reading the table rolls. Absent for a stat
+   * nothing touched, which is every stat on a thing with nothing
+   * bolted on.
+   */
+  amended?: Map<string, Amendment>;
+  /** The system's per-turn moves (`use.actions`) — armed here, paid at fire. */
+  actions?: { name: string; cost: number; text?: string }[];
+  /** Which of them are armed, and which are used up until the counter refills. */
+  armed?: string[];
+  spent?: string[];
+  onToggleAction?: (name: string) => void;
 }) {
   const chamberedRef = child.refs?.chambered as Ref | undefined;
   const chambered = ammoPool.find((a) => a.id === chamberedRef?.id);
@@ -180,7 +200,23 @@ export function ItemTile({
   const price = numberOf(costEntry);
   const fireable = Boolean(onFireCost) && Boolean(use) && costEntry !== undefined && price > 0;
   const verb = use?.verbs?.[child.type ?? ''] ?? use?.verb ?? 'Use';
-  const total = price + extras.reduce((n, e) => n + e.amount, 0);
+  // An armed action rides on the same squeeze — one price, one write,
+  // one undo. Aim's cost is the turn's, not the weapon's, which is why
+  // it arrives here rather than being read off the item.
+  //
+  // Only an action with a PRICE can be armed, and that is the whole
+  // filter: deduct-at-fire is the mechanism, so a move whose cost the
+  // system didn't state has nothing to ride along on. The declaration
+  // lists what the turn's moves ARE (eight of them, most priced by what
+  // you do with them — a Move costs by the distance, an Improvise by
+  // the Warden); the ones carrying a flat number are the ones a trigger
+  // can pay for. The rest are reference, and reference doesn't wear a
+  // reticle.
+  const armable = actions.filter((a) => typeof a.cost === 'number' && a.cost > 0);
+  const armedCost = armable
+    .filter((a) => armed.includes(a.name))
+    .reduce((n, a) => n + a.cost, 0);
+  const total = price + armedCost + extras.reduce((n, e) => n + e.amount, 0);
   // Every price must clear: the main counter AND each of the item's
   // extra currencies. Unaffordable is DISABLED, not clamped — teller
   // declines to automate a spend the counter can't cover, and the
@@ -194,7 +230,12 @@ export function ItemTile({
     <SheetPanel title={child.name} fill={fill} className="w-full">
       <div className={`flex flex-col gap-1 ${fill ? 'min-h-0 flex-1' : ''}`}>
         {costEntry && (
-          <StatRow label={costEntry.name} value={String(costEntry.value ?? '')} dice={dice} />
+          <StatRow
+            label={costEntry.name}
+            value={String(costEntry.value ?? '')}
+            dice={dice}
+            amended={amended?.get(costEntry.name.toLowerCase())}
+          />
         )}
         {bodyRows.map((field) => (
           <StatRow
@@ -202,6 +243,7 @@ export function ItemTile({
             label={field.name}
             value={String(field.value ?? '')}
             dice={dice}
+            amended={amended?.get(field.name.toLowerCase())}
           />
         ))}
 
@@ -240,6 +282,32 @@ export function ItemTile({
             </select>
           )}
 
+          {/* The turn's moves, one reticle each, on the trigger row
+              where the price they add is felt. Arm it here or on any
+              other weapon — same state, one Aim. */}
+          {fireable &&
+            armable.map((action) => {
+              const isArmed = armed.includes(action.name);
+              const isSpent = spent.includes(action.name);
+              const broke = available !== undefined && !isArmed && available < action.cost;
+              return (
+                <Reticle
+                  key={action.name}
+                  armed={isArmed}
+                  spent={isSpent}
+                  disabled={broke || !onToggleAction}
+                  label={
+                    isSpent
+                      ? `${action.name}: used this turn — back when your ${use?.costCounter} reloads`
+                      : `${action.name}: +${action.cost} ${use?.costCounter} on your next shot. ${
+                          action.text ?? ''
+                        }`
+                  }
+                  onToggle={() => onToggleAction?.(action.name)}
+                />
+              );
+            })}
+
           {fireable && (
             <button
               type="button"
@@ -257,7 +325,9 @@ export function ItemTile({
                   }
                 }
               }}
-              aria-label={`${verb} ${child.name}: spend ${total} ${use?.costCounter}${
+              aria-label={`${verb} ${child.name}${
+                armedCost > 0 ? ` with ${armed.join(' and ')}` : ''
+              }: spend ${total} ${use?.costCounter}${
                 extras.length ? ` and ${extras.map((e) => `${e.amount} ${e.counter}`).join(' and ')}` : ''
               }${chambered ? ` and one ${chambered.name}` : ''}${
                 short.length ? ` (not enough ${short.join(', ')})` : ''
