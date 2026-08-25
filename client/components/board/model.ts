@@ -27,25 +27,34 @@
 /**
  * Fog's vocabulary is not declared here — it lives in `core/fog.ts`,
  * because the console, the server and the table all have to agree
- * about what a base means and three copies of that agreement is three
+ * about where the dark is, and three copies of that agreement is three
  * chances to disagree. Re-exported rather than re-declared, the way
  * `TOKEN_COLORS` is, so every existing import still reads `model.ts`.
+ *
+ * `allCells` lives there too now: the migration on the server has to
+ * cover a whole map, and it and the editor's "cover all" must mean the
+ * same thing to the cell.
  */
 import type { Area, Cell, Fog } from '../../../core/fog.ts';
 
 export {
-  areaFogged,
-  flatFog,
+  allCells,
+  areaStatus,
+  cellKey,
+  clear,
+  coverAll,
+  darken,
   fogVisible,
+  hasCell,
   newAreaId,
+  NO_FOG,
+  restCells,
   toFog,
-  withAreaFogged,
-  withoutArea,
   type Area,
+  type AreaStatus,
   type Cell,
-  type FlatFog,
   type Fog,
-  type FogBase,
+  type Grid,
 } from '../../../core/fog.ts';
 
 /**
@@ -118,14 +127,6 @@ export type Board = {
 };
 
 export const DEFAULT_VIEW: BoardView = { mode: 'fit', zoom: 1, cu: 0.5, cv: 0.5 };
-
-/**
- * A board nobody has fogged. `clear` with nothing covered renders as no
- * fog at all, which is rule 1's floor written as a default: reaching
- * for the tool, opening the workshop, or shaping an area leaves the
- * table showing its map.
- */
-export const DEFAULT_FOG: Fog = { base: 'clear', revealed: [], fogged: [], areas: [] };
 
 /**
  * The ground markers a painted layer can be. Environmental, not
@@ -225,12 +226,6 @@ export function cellOf(
   ];
 }
 
-export const cellKey = (cell: Cell) => `${cell[0]},${cell[1]}`;
-
-export function hasCell(cells: Cell[], cell: Cell): boolean {
-  return cells.some((c) => c[0] === cell[0] && c[1] === cell[1]);
-}
-
 export function withoutCell(cells: Cell[], cell: Cell): Cell[] {
   return cells.filter((c) => !(c[0] === cell[0] && c[1] === cell[1]));
 }
@@ -263,15 +258,4 @@ export function withIds(state: BoardState): BoardState {
     ...state,
     placements: placements.map((p) => (p.id ? p : { ...p, id: localId('plc') })),
   };
-}
-
-/** Every cell of the map, for revealing or covering the lot at once. */
-export function allCells(grid: { cols: number; rows: number } | null): Cell[] {
-  if (!grid) return [];
-  const out: Cell[] = [];
-  const rows = Math.ceil(grid.rows);
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < grid.cols; c++) out.push([c, r]);
-  }
-  return out;
 }

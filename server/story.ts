@@ -59,6 +59,7 @@ import {
   type Campaign,
   type Shelf,
 } from '../core/store.ts';
+import { migrateBoardFog } from './boards.ts';
 import { declaredBooks } from './books.ts';
 import type { Session } from './session.ts';
 
@@ -540,6 +541,13 @@ export function importLayer(
   if (sections.assets && file.assets.size && session.dataDir) {
     assetsOnto(session.dataDir, file, report);
   }
+
+  // A story written before fog became one set can land a legacy blob on
+  // a table that is already open, which is the one arrival campaign-open
+  // migration cannot catch. Run it here, after the pictures — the
+  // migration needs the image's proportions to know how big "everything
+  // is dark" was (`server/boards.ts`).
+  migrateBoardFog(session.shelf, campaign, session.dataDir, actor);
 
   // History stays with the table that lived it. Layering another
   // table's log into a running one would interleave two games and hand

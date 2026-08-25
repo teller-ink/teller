@@ -41,7 +41,7 @@ import { applyTurnOp, toTurnState, type TurnOp, type TurnState } from './turn.ts
 import { UNDO_WINDOW } from './undo.ts';
 import {
   countEntities,
-  promoteFogRegions,
+  migrateBoardFog,
   withDeployed,
   withoutEntities,
   type Deploying,
@@ -187,11 +187,13 @@ export class Session {
     this.dataDir = dataDir;
     this.room = room ?? new Room();
     this.loaded = loadCampaign(shelf, campaign, dataDir);
-    // The one structural migration a state serializer can't do for
-    // itself: fog regions are named geography and belong on the board
-    // row, which is only reachable from here (`server/boards.ts`). A
-    // no-op on every campaign that has already opened once.
-    promoteFogRegions(shelf, campaign);
+    // The structural migrations a state serializer can't do for itself:
+    // a fog region is named geography and belongs on the board row, and
+    // a world that was DARK has no cells written down until something
+    // knows how big the map is. Both are only reachable from here
+    // (`server/boards.ts`). A no-op on every campaign that has already
+    // opened once.
+    migrateBoardFog(shelf, campaign, dataDir);
   }
 
   /** Re-run the resolution law — after a pack upgrade, on the sweep's signal. */

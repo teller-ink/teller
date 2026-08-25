@@ -22,14 +22,14 @@ import { Host } from './session.ts';
 import { tokenColor } from '../core/tokens.ts';
 import {
   extFor,
-  promoteFogRegions,
+  migrateBoardFog,
   saveBoardBytes,
   toGrid,
   toWidthInches,
   withDeployed,
   withoutEntities,
 } from './boards.ts';
-import { areaFogged, flatFog, toFog } from '../core/fog.ts';
+import { areaStatus, toFog } from '../core/fog.ts';
 
 let dir: string;
 let shelf: Shelf;
@@ -431,17 +431,51 @@ describe('areas — the named layer, and which door it comes in through', () => 
     const { body } = await api('PATCH', `/api/boards/${id}`, { widthInches: 24 });
     expect(body.areas).toHaveLength(1);
   });
+
+  // The editor's round trip, through the two doors it actually uses:
+  // paint the dark into the FIGHT, name the patch onto the BOARD, then
+  // forget the name. What this pins is the seam — naming a patch and
+  // forgetting it are both writes to the map and NEITHER touches the
+  // dark, because an area is geometry and carries no fog state at all.
+  it('promoting a patch and dropping it again never moves the dark', async () => {
+    const id = await board();
+    const session = host.session!;
+    const dark = [
+      [0, 0],
+      [1, 1],
+    ];
+    session.putBoardState(id, { fog: { dark } }, 'console');
+
+    const named = await api('PATCH', `/api/boards/${id}`, {
+      areas: [{ name: 'the vault', cells: dark }],
+    });
+    const area = named.body.areas[0];
+    expect(area.id).toMatch(/^are_/);
+    expect(areaStatus(toFog((session.campaign.boardState(id) as any).fog), area)).toBe('fogged');
+    expect((session.campaign.boardState(id) as any).fog).toEqual({ dark });
+
+    await api('PATCH', `/api/boards/${id}`, { areas: [] });
+    expect(shelf.board(id)?.areas).toBeUndefined();
+    expect((session.campaign.boardState(id) as any).fog).toEqual({ dark });
+  });
 });
 
-// The one structural migration: a fog region is a named place, and a
-// named place belongs to the map. It runs at campaign open because
-// that is the only moment the board row and the fight state are both
-// in hand — and it must leave the table looking exactly as it did.
-describe('old fog regions, promoted at campaign open', () => {
-  it('moves the shapes to the board, the reveal flags to the fight, and changes nothing visible', async () => {
+// The structural migrations. A fog region is a named place and a named
+// place belongs to the map; a world that was DARK has no cells written
+// down at all. Both run at campaign open, because that is the only
+// moment the board row, the fight state and the picture's own
+// proportions are all in hand — and both must leave the table looking
+// exactly as it did.
+describe('old fog, migrated at campaign open', () => {
+  /** A board with a declared width, so the picture gives it a grid. */
+  async function board(name: string, widthInches = 3): Promise<string> {
     const { body } = await upload(PNG);
-    const made = await api('POST', '/api/boards', { key: body.key, name: 'The Crossing' });
-    const id = made.body.id;
+    const made = await api('POST', '/api/boards', { key: body.key, name, widthInches });
+    return made.body.id;
+  }
+
+  it('moves the shapes to the board, the flags into the set, and changes nothing visible', async () => {
+    const id = await board('The Crossing');
     const session = host.session!;
     const before = {
       placements: [{ entityId: 'ent_1', u: 0.5, v: 0.5 }],
@@ -449,14 +483,14 @@ describe('old fog regions, promoted at campaign open', () => {
         on: true,
         revealed: [[0, 0]],
         regions: [
-          { id: 'r1', name: 'the vault', cells: [[9, 9]], revealed: false },
+          { id: 'r1', name: 'the vault', cells: [[2, 2]], revealed: false },
           { id: 'r2', name: 'the porch', cells: [[1, 1]], revealed: true },
         ],
       },
     };
     session.campaign.putBoardState(id, before, 'console');
 
-    expect(promoteFogRegions(shelf, session.campaign)).toBe(1);
+    expect(migrateBoardFog(shelf, session.campaign, dir)).toBe(1);
 
     const areas = shelf.board(id)!.areas!;
     expect(areas.map((a) => a.name)).toEqual(['the vault', 'the porch']);
@@ -464,25 +498,61 @@ describe('old fog regions, promoted at campaign open', () => {
     // The fight keeps its own half and nothing else moved.
     expect(after.placements).toEqual(before.placements);
     expect(after.fog.regions).toBeUndefined();
-    expect(areaFogged(toFog(after.fog), 'r1')).toBe(true);
-    expect(areaFogged(toFog(after.fog), 'r2')).toBe(false);
-    expect(flatFog(toFog(after.fog), areas)).toEqual({
-      base: 'dark',
-      revealed: [[0, 0], [1, 1]],
-      fogged: [],
-    });
+    expect(after.fog.on).toBeUndefined();
+    // The 1×1 picture at 3 inches wide is a 3×3 map: everything dark
+    // but the freehand cell and the lit porch, exactly as it rendered.
+    expect(toFog(after.fog).dark).toEqual([
+      [1, 0],
+      [2, 0],
+      [0, 1],
+      [2, 1],
+      [0, 2],
+      [1, 2],
+      [2, 2],
+    ]);
+    expect(areaStatus(toFog(after.fog), areas[0])).toBe('fogged');
+    expect(areaStatus(toFog(after.fog), areas[1])).toBe('lifted');
 
-    // Idempotent: the promoted fog carries a base, so a second open is
-    // a read and nothing more.
-    expect(promoteFogRegions(shelf, session.campaign)).toBe(0);
+    // Idempotent: the migrated fog is a set, so a second open is a read
+    // and nothing more.
+    expect(migrateBoardFog(shelf, session.campaign, dir)).toBe(0);
   });
 
-  it('leaves a board that never had regions entirely alone', async () => {
-    const { body } = await upload(PNG);
-    const made = await api('POST', '/api/boards', { key: body.key, name: 'Quiet' });
+  it('turns the phase-0 base into the same set, and eats its per-area state', async () => {
+    const id = await board('The Vault');
     const session = host.session!;
-    session.campaign.putBoardState(made.body.id, { fog: { on: false, revealed: [] } }, 'console');
-    expect(promoteFogRegions(shelf, session.campaign)).toBe(0);
-    expect(shelf.board(made.body.id)?.areas).toBeUndefined();
+    await api('PATCH', `/api/boards/${id}`, {
+      areas: [{ id: 'a1', name: 'the vault', cells: [[2, 2]] }],
+    });
+    session.campaign.putBoardState(
+      id,
+      {
+        fog: { base: 'clear', revealed: [], fogged: [[0, 0]], areas: [{ areaId: 'a1', fogged: true }] },
+      },
+      'console',
+    );
+
+    expect(migrateBoardFog(shelf, session.campaign, dir)).toBe(1);
+    const after = session.campaign.boardState(id) as any;
+    expect(after.fog).toEqual({ dark: [[0, 0], [2, 2]] });
+    expect(JSON.stringify(after.fog)).not.toContain('areaId');
+    // The area itself is untouched — it was always just geometry.
+    expect(shelf.board(id)!.areas).toEqual([{ id: 'a1', name: 'the vault', cells: [[2, 2]] }]);
+    expect(migrateBoardFog(shelf, session.campaign, dir)).toBe(0);
+  });
+
+  it('leaves a board that meant no fog entirely alone', async () => {
+    const id = await board('Quiet');
+    const session = host.session!;
+    session.campaign.putBoardState(id, { fog: { on: false, revealed: [] } }, 'console');
+    expect(migrateBoardFog(shelf, session.campaign, dir)).toBe(0);
+    expect(shelf.board(id)?.areas).toBeUndefined();
+  });
+
+  it('is a no-op on a board with no declared width — no cells was never any fog', async () => {
+    const id = await board('Unmeasured', 0);
+    const session = host.session!;
+    session.campaign.putBoardState(id, { fog: { on: true, revealed: [] } }, 'console');
+    expect(migrateBoardFog(shelf, session.campaign, dir)).toBe(0);
   });
 });

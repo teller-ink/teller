@@ -1,54 +1,65 @@
 // FOG, and the AREAS underneath it.
 //
-// One file, three readers: the console paints it, the server flattens
-// it for the room, and the table renders what arrives. Fog used to be
-// spelled out three times in three components; the moment it grew a
-// second base that stopped being survivable, so the vocabulary and the
-// arithmetic live here and everyone else imports them.
+// One file, three readers: the console paints it, the server hands it
+// to the room, and the table renders what arrives. Fog was spelled out
+// three times in three components once; the vocabulary and the
+// arithmetic live here now and everyone else imports them.
 //
-// THE BASE IS THE WHOLE IDEA (docs/BATTLEMAP-NEXT.md, phase 0). A map
-// has an untouched meaning, and which meaning it has is the Warden's
-// choice, not teller's:
+// THE WHOLE MODEL IS ONE SET:
 //
-//   * `dark` — the world is unlit and LIGHT is painted onto it. Today's
-//     behaviour verbatim: freehand `revealed` cells punch holes, and an
-//     area is lit when its fight-side state says it isn't fogged.
-//   * `clear` — the world is visible and DARKNESS is painted onto it.
-//     The new default, and the one a table actually reaches for: a
-//     board arrives showing its own artwork, and the barn goes black
-//     because someone painted it black, never because a tool was
-//     touched (rule 1 — fog never switches itself on).
+//     Fog = { dark: Cell[] }
 //
-// WHAT LIVES WHERE, and it is not a filing preference:
+// A cell is dark iff it is in the set. The ground is always clear.
+// There is nothing else to know, and nothing else to keep in sync.
 //
-//   * FREEHAND cells are FIGHT-SIDE (`revealed` under dark, `fogged`
-//     under clear), in `board_state` with the placements. Painting to
-//     reveal mid-fight is a gesture at speed and it must never write
-//     the shelf — play residue is not geography, and a board carried
-//     to another campaign should arrive without last Tuesday's
-//     brushstrokes on it.
-//   * AREAS are BOARD-SIDE — `{ id, name, cells }` on the shelf row,
-//     authored in prep, outliving the campaign that lit them. A name
-//     is the point: "lift the vault" is a thing a Warden can say, and
-//     the assistant will eventually say it back.
-//   * PER-AREA fog state is fight-side again (`fog.areas`), because
-//     whether the vault is lit is something that happened tonight.
+// THE RETHINK (Brian, 2026-08-24, hours after the base shipped). The
+// first cut of this file gave fog a BASE — `dark` worlds you painted
+// light into, `clear` worlds you painted darkness onto — plus a
+// freehand `revealed` list, a freehand `fogged` list, and a per-area
+// `AreaFog` state. Four sources of truth, and a brush whose meaning
+// depended on which one you were standing in. Every one of those was
+// accidental: a "dark world" is not a different KIND of map, it is a
+// map with a lot of dark paint on it, and the dungeon posture that
+// motivated the base is one tap — cover all — not a mode. So the base
+// is gone, the two freehand lists collapsed into the one set they were
+// always halves of, and per-area fog state stopped existing.
 //
-// An area with no fight-side entry MATCHES ITS BASE — dark under dark,
-// clear under clear — so a freshly-authored area changes nothing until
-// somebody says otherwise, and a board with no fog key at all renders
-// as no fog.
+// TWO VERBS, NO MODES. `darken` puts cells in; `clear` takes them out.
+// The brush never changes meaning, and neither does "cover all" (every
+// cell of the calibrated grid) or "clear all" (the empty set). Bounded
+// by the grid throughout: no declared width means no cells means no
+// fog, exactly as before.
 //
-// Names and shapes never reach a passive screen: `flatFog` collapses
-// everything to one mask of cells (`server/public.ts`), so the table
-// learns WHERE the darkness is and never that the dark patch is called
-// "the vault".
+// AREAS ARE PURE GEOMETRY — `{ id, name, cells }` on the BOARD row,
+// authored in prep, outliving the campaign that lit them. They carry
+// NO fog state anywhere, tonight's or otherwise. "Fog the vault" and
+// "lift the vault" are verbs that add or remove that area's cells from
+// the set, and whether the vault is currently dark is DERIVED when
+// somebody asks (`areaStatus`) — never stored. A name is the point:
+// "lift the vault" is a thing a Warden can say, and the assistant will
+// eventually say it back.
+//
+// WHAT LIVES WHERE, and it is not a filing preference: the dark set is
+// FIGHT-SIDE, in `board_state` with the placements, because painting
+// mid-fight is a gesture at speed and must never write the shelf — play
+// residue is not geography, and a board carried to another campaign
+// should arrive without last Tuesday's brushstrokes on it. Areas are
+// BOARD-SIDE, because a room is where it is whoever is playing.
+//
+// Names and shapes never reach a passive screen. The set IS the mask,
+// so the public boundary ships it as-is (`server/public.ts`) and the
+// table learns WHERE the darkness is and never that the dark patch is
+// called "the vault".
 
 /** A grid cell, by index from the map's origin. */
 export type Cell = [number, number];
 
-/** What an untouched map means. */
-export type FogBase = 'dark' | 'clear';
+/**
+ * How many 1-inch cells a map has. `rows` may be fractional — a map is
+ * rarely a whole number of inches tall — so anything enumerating cells
+ * rounds it UP, the way the editor's own `cellOf` clamps to.
+ */
+export type Grid = { cols: number; rows: number };
 
 /**
  * A named patch of the map — inherent geography on the BOARD row, not
@@ -58,26 +69,23 @@ export type FogBase = 'dark' | 'clear';
  */
 export type Area = { id: string; name: string; cells: Cell[] };
 
-/** One area's state in THIS fight — the half that isn't geography. */
-export type AreaFog = { areaId: string; fogged: boolean };
+/**
+ * The dark, and that is all of it. A cell is dark iff it is in here;
+ * an empty set is a map with no fog on it, which is what a new board
+ * is (rule 1 — fog never switches itself on).
+ */
+export type Fog = { dark: Cell[] };
 
-export type Fog = {
-  base: FogBase;
-  /** Freehand light. Meaningful under `dark`. */
-  revealed: Cell[];
-  /** Freehand darkness. Meaningful under `clear`. */
-  fogged: Cell[];
-  areas: AreaFog[];
-};
+/** A board nobody has fogged. */
+export const NO_FOG: Fog = { dark: [] };
 
 /**
- * Fog with the areas folded in and the names taken out — what a
- * renderer draws and what a passive screen is allowed to know. Both
- * arrays are always present and exactly one of them is ever populated,
- * so there is one shape to render and no optional-chaining archaeology
- * at the far end.
+ * Where an area stands right now, DERIVED. `partial` is a real answer
+ * and not a rounding error — a room half-explored is a thing that
+ * happens, and calling it fogged or lifted would be a lie the Warden
+ * would then act on.
  */
-export type FlatFog = { base: FogBase; revealed: Cell[]; fogged: Cell[] };
+export type AreaStatus = 'lifted' | 'fogged' | 'partial';
 
 /**
  * An area's own id. Twelve hex characters behind a prefix, the same
@@ -91,6 +99,9 @@ export function newAreaId(): string {
   crypto.getRandomValues(bytes);
   return `are_${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
 }
+
+/** One cell's key in a set. The only place cell identity is spelled. */
+export const cellKey = (cell: Cell): string => `${cell[0]},${cell[1]}`;
 
 /**
  * A cell list, read defensively. Cells are opaque coordinates to
@@ -114,7 +125,7 @@ export function toArea(raw: unknown): Area | undefined {
 /**
  * The board's areas, narrowed — the serializer both edges run (rule 8).
  * Duplicate ids are dropped rather than merged: two rows claiming one
- * name for the fight state is the bug, and the first one written wins.
+ * id is the bug, and the first one written wins.
  */
 export function toAreas(raw: unknown): Area[] {
   if (!Array.isArray(raw)) return [];
@@ -129,156 +140,247 @@ export function toAreas(raw: unknown): Area[] {
   return out;
 }
 
-function toAreaFog(raw: unknown): AreaFog | undefined {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
-  const o = raw as { areaId?: unknown; fogged?: unknown };
-  if (typeof o.areaId !== 'string' || !o.areaId) return undefined;
-  return { areaId: o.areaId, fogged: o.fogged === true };
+// -- the set, and the two verbs -----------------------------------------
+
+/** Every cell of the map. No grid means no cells, which means no fog. */
+export function allCells(grid: Grid | null | undefined): Cell[] {
+  if (!grid) return [];
+  const out: Cell[] = [];
+  const rows = Math.ceil(grid.rows);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < grid.cols; c++) out.push([c, r]);
+  }
+  return out;
 }
 
-/** The fog as it was stored BEFORE the base — kept only so it can be read once more. */
-type LegacyFog = { on?: unknown; revealed?: unknown; regions?: unknown };
+/** Is this cell in the list? */
+export function hasCell(cells: Cell[], cell: Cell): boolean {
+  return cells.some((c) => c[0] === cell[0] && c[1] === cell[1]);
+}
+
+/** The same fog with these cells dark. Already-dark cells are not doubled. */
+export function darken(fog: Fog, cells: Cell[]): Fog {
+  const seen = new Set(fog.dark.map(cellKey));
+  const dark = [...fog.dark];
+  for (const cell of cells) {
+    const key = cellKey(cell);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    dark.push(cell);
+  }
+  return { dark };
+}
+
+/** The same fog with these cells lit. A cell nobody darkened is a no-op. */
+export function clear(fog: Fog, cells: Cell[]): Fog {
+  if (!cells.length) return fog;
+  const gone = new Set(cells.map(cellKey));
+  return { dark: fog.dark.filter((c) => !gone.has(cellKey(c))) };
+}
+
+/** Every cell of the map, dark. The dungeon posture, which is one tap. */
+export function coverAll(grid: Grid | null | undefined): Fog {
+  return { dark: allCells(grid) };
+}
+
+/** Is there anything to draw at all? */
+export function fogVisible(fog: Fog): boolean {
+  return fog.dark.length > 0;
+}
+
+/**
+ * Where this area stands, worked out from the set — never stored. An
+ * area with no cells reads as `lifted`: a room being drawn is not a
+ * room in darkness.
+ */
+export function areaStatus(fog: Fog, area: Area): AreaStatus {
+  if (!area.cells.length) return 'lifted';
+  const dark = new Set(fog.dark.map(cellKey));
+  let covered = 0;
+  for (const cell of area.cells) if (dark.has(cellKey(cell))) covered++;
+  if (covered === 0) return 'lifted';
+  return covered === area.cells.length ? 'fogged' : 'partial';
+}
+
+/**
+ * EVERYWHERE ELSE — the map minus every named area, computed at the
+ * moment somebody asks.
+ *
+ * It is what the prep workflow needs to see: partition the map into
+ * rooms, watch this shrink toward nothing, and the count is the
+ * progress bar. It is also a perfectly good thing to fog or lift in one
+ * tap ("the whole outdoors goes dark, the rooms stay as they are").
+ *
+ * THE DISCIPLINE, and it is why this returns cells rather than an
+ * area: **a derived selection may be ACTED ON, never POINTED AT.**
+ * There is no id, no row on the board, nothing in the areas array and
+ * nothing serialized — because a stored reference to shifting geometry
+ * changes meaning the moment somebody draws a new area, and a name
+ * that quietly means something else next week is the worst kind of
+ * bug. Phase 1's terrain will want stable geometry to point at; this
+ * remainder is deliberately un-referenceable, and anything that needs
+ * to be referenced gets promoted into a real area first.
+ */
+export function restCells(grid: Grid | null | undefined, areas: Area[]): Cell[] {
+  const claimed = new Set<string>();
+  for (const area of areas) for (const cell of area.cells) claimed.add(cellKey(cell));
+  return allCells(grid).filter((c) => !claimed.has(cellKey(c)));
+}
+
+// -- reading whatever shape it was written in ---------------------------
+//
+// Two older shapes exist and both have run on real data:
+//
+//   * PRE-PHASE-0 `{ on, revealed, regions }` — a world-is-dark switch
+//     with named reveal-units living inside the fight state.
+//   * PHASE-0 `{ base, revealed, fogged, areas }` — the shape this
+//     file shipped and superseded the same night.
+//
+// Both are read HERE, lazily (rule 8: both edges coerce), so nothing
+// has to have run before a board reads correctly. The one thing this
+// function cannot do is the one thing both old shapes need: a
+// world-is-dark map has no cells written down, and turning "everything"
+// into a set needs to know how big the map is — which only the picture
+// knows. So `migrateFog` below does the exact job where the grid is in
+// hand (`server/boards.ts`, at campaign open and after an import), and
+// what's here is the honest fallback for a blob read before that ran.
+
+type LegacyFog = {
+  /** Pre-phase-0: the world-is-dark switch. */
+  on?: unknown;
+  /** Pre-phase-0 and phase-0 alike: freehand light. */
+  revealed?: unknown;
+  /** Pre-phase-0: named reveal-units. */
+  regions?: unknown;
+  /** Phase-0: what an untouched map meant. */
+  base?: unknown;
+  /** Phase-0: freehand darkness. */
+  fogged?: unknown;
+  /** Phase-0: per-area fight state, consumed by the migration and gone. */
+  areas?: unknown;
+};
 
 type LegacyRegion = { id?: unknown; name?: unknown; cells?: unknown; revealed?: unknown };
 
-function legacyRegions(raw: unknown): LegacyRegion[] {
+function legacyList(raw: unknown): LegacyRegion[] {
   return Array.isArray(raw) ? (raw.filter((r) => r && typeof r === 'object') as LegacyRegion[]) : [];
 }
 
+/** Which cells the old per-area state said were dark, by area id. */
+function legacyAreaFog(raw: unknown): Map<string, boolean> {
+  const out = new Map<string, boolean>();
+  for (const item of legacyList(raw)) {
+    const { areaId, fogged } = item as { areaId?: unknown; fogged?: unknown };
+    if (typeof areaId === 'string' && areaId) out.set(areaId, fogged === true);
+  }
+  return out;
+}
+
+/** Was the whole world dark in this old blob? */
+function legacyWorldDark(o: LegacyFog): boolean {
+  return o.base === 'dark' || (o.base === undefined && o.on === true);
+}
+
 /**
- * Fog, whatever shape it was written in. The lazy half of the
- * migration (rule 8: both edges coerce), so nothing has to have run
- * before a board renders correctly.
+ * Fog, whatever shape it was written in.
  *
- * The old world stored `{ on, revealed, regions }` — a world-is-dark
- * switch with named reveal-units inside the fight state. It reads as:
- * `on: true` is `dark`, `on: false` is `clear` WITH NOTHING FOGGED
- * (which is exactly what "off" looked like), and each region's
- * `revealed` becomes the area's fight-side `fogged: !revealed`.
- *
- * A region's CELLS can't become an area from here — an area belongs to
- * the board row and this function has only the state in its hands. So
- * a lit region's cells fold into freehand `revealed`, which renders
- * identically, and `promoteRegions` does the structural half where
- * both are available (`server/boards.ts`, at campaign open). Running
- * them in either order is safe: once the fog carries a `base` the
- * legacy branch never fires again.
+ * The CURRENT shape passes through. An old blob whose world was CLEAR
+ * reads exactly — its painted darkness is already a list of cells, and
+ * that list is the set. An old blob whose world was DARK cannot be
+ * expressed without the grid, and answers with the cells it can prove
+ * are dark rather than inventing bounds; `migrateFog` finishes it.
  */
 export function toFog(raw: unknown): Fog {
-  const clear: Fog = { base: 'clear', revealed: [], fogged: [], areas: [] };
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return clear;
-  const o = raw as Fog & LegacyFog;
-  if (o.base === 'dark' || o.base === 'clear') {
-    return {
-      base: o.base,
-      revealed: toCells(o.revealed),
-      fogged: toCells(o.fogged),
-      areas: Array.isArray(o.areas)
-        ? o.areas.flatMap((a) => {
-            const one = toAreaFog(a);
-            return one ? [one] : [];
-          })
-        : [],
-    };
-  }
-  const dark = o.on === true;
-  const regions = legacyRegions(o.regions);
-  if (!dark) return clear;
-  const revealed = toCells(o.revealed);
-  for (const region of regions) {
-    if (region.revealed === true) revealed.push(...toCells(region.cells));
-  }
-  return { base: 'dark', revealed, fogged: [], areas: [] };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { dark: [] };
+  const o = raw as { dark?: unknown } & LegacyFog;
+  if (Array.isArray(o.dark)) return { dark: toCells(o.dark) };
+  if (legacyWorldDark(o)) return { dark: [] };
+  // A clear world: the darkness is what somebody painted. Phase-0's
+  // per-area fog is NOT folded in here — an area's cells live on the
+  // board row and a state serializer only ever has the state — so a
+  // covered area arrives once `migrateFog` has run.
+  return { dark: toCells(o.fogged) };
 }
 
 /**
- * The structural half of the migration: old fog regions become board
- * AREAS, and their reveal flags become fight-side state.
+ * The structural half of the migration, where the grid is in hand.
  *
- * Answers `undefined` when there is nothing to promote, so the caller
- * writes nothing and a board nobody fogged keeps its row and stays out
- * of the log. `areas` is what the board row becomes — the existing
- * ones first, since an area a human authored outranks one this
- * function invented (rule 1, and the import law: the stored value
- * wins).
+ * Answers `undefined` when there is nothing to write, so a board nobody
+ * fogged keeps its row and stays out of the log — which also makes
+ * this idempotent: run it twice and the second run writes nothing.
+ *
+ * What it does, per old shape:
+ *
+ *   * PRE-PHASE-0. `regions` become board AREAS (existing ones win on
+ *     an id collision — an area a human authored outranks one this
+ *     invented, rule 1 and the import law both). `on:false` means
+ *     nothing was dark. `on:true` means everything was, minus the
+ *     freehand `revealed` cells and minus every region that was lit.
+ *   * PHASE-0. `base:'clear'` means the darkness was the freehand
+ *     `fogged` list plus the cells of every area its `AreaFog` marked
+ *     covered. `base:'dark'` means everything, minus `revealed` and
+ *     minus the cells of every area marked NOT covered. Either way the
+ *     `AreaFog` entries are consumed here and cease to exist.
+ *
+ * A blob that means "no fog" and promotes no areas is left where it
+ * lies: reading it costs nothing, and rewriting it would put every
+ * board on the host into the event log to say nothing changed.
  */
-export function promoteRegions(
-  rawFog: unknown,
+export function migrateFog(
+  raw: unknown,
   existing: Area[],
+  grid: Grid | null | undefined,
 ): { fog: Fog; areas: Area[] } | undefined {
-  if (!rawFog || typeof rawFog !== 'object' || Array.isArray(rawFog)) return undefined;
-  const o = rawFog as Fog & LegacyFog;
-  if (o.base === 'dark' || o.base === 'clear') return undefined;
-  const regions = legacyRegions(o.regions);
-  if (!regions.length) return undefined;
-  const dark = o.on === true;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as { dark?: unknown } & LegacyFog;
+  if (Array.isArray(o.dark)) return undefined;
+
+  // Phase-0's per-area state, and pre-phase-0's regions, both resolve
+  // to the same question: for each area, was it dark? The defaults
+  // differ — under a dark world an area nobody ruled on stayed dark —
+  // so each branch answers it for itself.
   const areas = [...existing];
   const held = new Set(areas.map((a) => a.id));
-  const state: AreaFog[] = [];
-  for (const region of regions) {
-    const area = toArea(region);
-    if (!area) continue;
-    if (!held.has(area.id)) {
-      held.add(area.id);
-      areas.push(area);
+  const worldDark = legacyWorldDark(o);
+  /** Cells the old blob said were LIT, which come back out of the dark. */
+  const lit: Cell[] = [];
+  /** Cells the old blob said were DARK, which go in. */
+  const covered: Cell[] = [];
+
+  if (o.base === undefined) {
+    for (const region of legacyList(o.regions)) {
+      const area = toArea(region);
+      if (!area) continue;
+      // The stored area's cells win, for the same reason its name does.
+      const known = areas.find((a) => a.id === area.id);
+      if (!held.has(area.id)) {
+        held.add(area.id);
+        areas.push(area);
+      }
+      // Under `on:false` NOTHING was dark — off meant off — so a
+      // region's flag is only a fact when the world was dark, and
+      // otherwise the shape is all that survives.
+      if (worldDark && region.revealed === true) lit.push(...(known ? known.cells : area.cells));
     }
-    // Under `dark` a closed region WAS the fog; under `clear` nothing
-    // was fogged at all, and the area arrives as a shape somebody
-    // painted rather than as darkness nobody asked for.
-    state.push({ areaId: area.id, fogged: dark ? region.revealed !== true : false });
+  } else {
+    const state = legacyAreaFog(o.areas);
+    for (const area of areas) {
+      // Absent used to mean "matches the base": dark under dark, clear
+      // under clear. Preserved exactly.
+      const dark = state.get(area.id) ?? worldDark;
+      (dark ? covered : lit).push(...area.cells);
+    }
   }
-  return {
-    fog: {
-      base: dark ? 'dark' : 'clear',
-      revealed: dark ? toCells(o.revealed) : [],
-      fogged: [],
-      areas: state,
-    },
-    areas,
-  };
-}
 
-/** Is this area dark right now? With nothing said about it, it matches the base. */
-export function areaFogged(fog: Fog, areaId: string): boolean {
-  const found = fog.areas.find((a) => a.areaId === areaId);
-  return found ? found.fogged : fog.base === 'dark';
-}
+  // A dark world was ALL of it minus the exceptions, and freehand light
+  // was one of those exceptions — so it is cut alongside the lit areas
+  // rather than before them, and a cell somebody had revealed stays
+  // revealed. A clear world is the painted darkness plus the areas that
+  // were covered, and its `revealed` list was already meaningless.
+  const fog = worldDark
+    ? clear(coverAll(grid), [...toCells(o.revealed), ...lit])
+    : darken({ dark: toCells(o.fogged) }, covered);
 
-/** The same fog with one area lit or covered — the fight-side write. */
-export function withAreaFogged(fog: Fog, areaId: string, fogged: boolean): Fog {
-  const rest = fog.areas.filter((a) => a.areaId !== areaId);
-  return { ...fog, areas: [...rest, { areaId, fogged }] };
-}
-
-/** The same fog with an area's state forgotten — for when the area itself goes. */
-export function withoutArea(fog: Fog, areaId: string): Fog {
-  return { ...fog, areas: fog.areas.filter((a) => a.areaId !== areaId) };
-}
-
-/**
- * The EFFECTIVE mask: freehand cells and the areas folded together,
- * with every name and every shape-that-isn't-dark left behind.
- *
- * This is the one arithmetic the console preview, the table and the
- * public boundary all run, so the DM's copy and the players' copy
- * cannot disagree about where the dark is — the disagreement between
- * two spellings of a mask is the bug docs/BATTLEMAP.md already records
- * once, about the grid.
- */
-export function flatFog(fog: Fog, areas: Area[]): FlatFog {
-  const cells: Cell[] = fog.base === 'dark' ? [...fog.revealed] : [...fog.fogged];
-  for (const area of areas) {
-    const dark = areaFogged(fog, area.id);
-    // Dark base collects the LIT areas, clear base the covered ones —
-    // each base carries the exception to itself.
-    if (fog.base === 'dark' ? !dark : dark) cells.push(...area.cells);
-  }
-  return fog.base === 'dark'
-    ? { base: 'dark', revealed: cells, fogged: [] }
-    : { base: 'clear', revealed: [], fogged: cells };
-}
-
-/** Is there anything to draw at all? A clear map with nothing covered is just a map. */
-export function fogVisible(flat: FlatFog): boolean {
-  return flat.base === 'dark' || flat.fogged.length > 0;
+  if (!fog.dark.length && areas.length === existing.length) return undefined;
+  return { fog, areas };
 }

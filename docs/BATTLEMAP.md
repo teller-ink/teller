@@ -7,9 +7,9 @@ why. The thesis still governs: the table TV is the GROUND; physical
 minis and terrain are the actors; everything here is presentation +
 bookkeeping.
 
-**Where it's going**: the revamp — areas, terrain, z, objects, fog
-bases — is planned in `BATTLEMAP-NEXT.md` (2026-08-24). This file
-stays the record of what SHIPPED; phases land here as they ship.
+**Where it's going**: the revamp — areas, terrain, z, objects — is
+planned in `BATTLEMAP-NEXT.md` (2026-08-24). This file stays the record
+of what SHIPPED; phases land here as they ship.
 
 **The design did not change in the fold; the facts moved house**
 (2026-08-24, ported end to end). A **board** is a shelf ASSET — the
@@ -83,51 +83,77 @@ out from under real minis, so framing is a between-moments tool:
 Digital tokens live in map space and move with the map. Physical minis
 live on glass and don't.
 
-## Fog: a base, 1-inch cells, and named areas
+## Fog: one set of dark cells, and named areas over it
 
 The original design called for vector strokes. Tile painting landed
 first and proved itself, so fog reuses it: same cells, same brush, and
 it agrees with the grid players actually see. Soft edges come from
 blurring the mask, not from smaller geometry.
 
-**The base is what an untouched map MEANS** (TEL-128, shipped
-2026-08-24 — the old model had only the dark one and called it `on`):
+**The whole model is one set** (TEL-128, shipped 2026-08-24):
 
-- `dark` — the world is unlit and light is painted onto it. The
-  dungeon-crawl posture, and today's behaviour verbatim.
-- `clear` — the world is visible and DARKNESS is painted onto it. The
-  DEFAULT, and the one a table actually reaches for: the board shows
-  its own artwork and the barn goes black because someone painted it
-  black.
+```
+fog: { dark: [col,row][] }
+```
 
-`fog: { base, revealed: [col,row][], fogged: [col,row][], areas:
-{ areaId, fogged }[] }` — `core/fog.ts` holds the vocabulary and the
-arithmetic, because the console, the server and the table all have to
-agree about where the dark is.
+A cell is dark iff it is in the set. The ground is always clear. That
+is all of it — `core/fog.ts` holds the vocabulary and the arithmetic,
+because the console, the server and the table all have to agree about
+where the dark is.
 
-- **Freehand cells are FIGHT-SIDE** (`revealed` under dark, `fogged`
-  under clear), in `board_state` with the tokens. Painting to reveal
-  mid-fight is a gesture at speed and it must never write the shelf —
-  play residue is not geography.
-- **Areas are BOARD-SIDE**: `{ id, name, cells }` on the shelf row,
-  authored in prep, outliving the campaign. Paint a patch, NAME it,
-  and lift the whole room with one tap when the posse walks in.
-  Brian's design; the reason fog is usable at speed. Terrain claims
-  the same list next (docs/BATTLEMAP-NEXT.md phase 1).
-- Only an area's fog STATE is tonight's, and an area nobody has ruled
-  on matches the base — so authoring one changes nothing on the table.
-- Areas are DM-only: `publicBoardState` flattens fog to one mask of
-  cells and `publicBoardRow` strips the areas off the row, so the name
-  and shape of an unentered room never reach the table.
-- **Migration is lazy and rendering-identical.** `on: true` reads as
-  `dark`, `on: false` as `clear` with nothing covered; old regions
-  become board areas once, at campaign open (`promoteFogRegions`),
-  because that is the only moment the row and the state are both in
-  hand.
-- Fog never switches itself on. A new board is `clear` with nothing
-  covered, which is no fog at all; reaching for the tool or shaping an
-  area leaves the table showing its map, and every black cell is one
-  somebody painted.
+**The rethink, hours after the first cut** (Brian, 2026-08-24, worth
+recording because the discarded model was the plan and shipped). Fog
+first landed with a BASE — `dark` worlds you painted light into,
+`clear` worlds you painted darkness onto — plus a freehand `revealed`
+list, a freehand `fogged` list and a per-area `AreaFog` state. Four
+sources of truth and a brush whose meaning depended on which one you
+were standing in. All of it was accidental complexity: a "dark world"
+is not a different KIND of map, it is a map with a lot of dark paint
+on it, and the dungeon posture the base existed to serve is ONE TAP —
+cover all — not a mode.
+
+- **Two verbs, no modes.** `darken` puts cells in; `clear` takes them
+  out. The brush never changes meaning. "Cover all" is every cell of
+  the calibrated grid, "clear all" is the empty set, and both are
+  bounded by the grid: no declared width means no cells means no fog.
+- **The set is FIGHT-SIDE**, in `board_state` with the tokens.
+  Painting the dark back mid-fight is a gesture at speed and it must
+  never write the shelf — play residue is not geography.
+- **Areas are BOARD-SIDE and PURE GEOMETRY**: `{ id, name, cells }` on
+  the shelf row, authored in prep, outliving the campaign, carrying no
+  fog state anywhere. Paint a patch, NAME it, and fog or lift the whole
+  room with one tap. Terrain claims the same list next
+  (docs/BATTLEMAP-NEXT.md phase 1).
+- **An area's state is DERIVED, never stored** (`areaStatus`): every
+  cell in the set is `fogged`, no cell is `lifted`, some is `partial`.
+  So authoring an area changes nothing on the table, and deleting one
+  changes nothing either — forgetting a name is not a ruling about the
+  light.
+- **"Everywhere else" is a derived row**, not a place: the grid minus
+  every area's cells, computed when the panel asks (`restCells`). It
+  can be fogged and lifted like any area, and its cell count is the
+  prep progress bar — partition the map into rooms and watch it fall
+  to nothing. It has no id, no row, and is never serialized, on a rule
+  worth keeping: **a derived selection may be ACTED ON, never POINTED
+  AT** — a stored reference to shifting geometry changes meaning the
+  moment somebody draws a new area.
+- Areas are DM-only: `publicBoardState` ships the set (which IS the
+  mask, so there is nothing to flatten) and `publicBoardRow` strips the
+  areas off the row, so the name and shape of an unentered room never
+  reach the table.
+- **Migration reads both older shapes.** Pre-phase-0 `{ on, revealed,
+  regions }` and phase-0 `{ base, revealed, fogged, areas }` are read
+  lazily by `toFog` as far as they can be, and finished structurally by
+  `migrateBoardFog` (`server/boards.ts`) at campaign open and after a
+  story import — the only moments the board row, the fight state and
+  the picture are all in hand. The picture is the load-bearing part: a
+  world that was DARK has no cells written down, and "everything"
+  only becomes a set once the map's proportions say how big it is
+  (`imageSizeOf`, `gridOf`). Old regions become board areas in the same
+  pass; old per-area fog state is consumed and ceases to exist.
+- Fog never switches itself on. A new board's set is empty, which is no
+  fog at all; reaching for the tool or shaping an area leaves the table
+  showing its map, and every black cell is one somebody painted.
 - No vision simulation SHIPPED — the Warden's finger is the vision
   system. ("Ever" died with the simulation restriction, 2026-08-24:
   vision may arrive as a plugin through the `fog.set` door,
@@ -165,8 +191,9 @@ contrast).
 
 ## Hidden means absent, not dimmed
 
-Hidden tokens, hidden ground layers, un-lifted fog areas and the
-board's area NAMES are all STRIPPED server-side in `server/public.ts`.
+Hidden tokens, hidden ground layers and the board's area NAMES (with
+their shapes) are all STRIPPED server-side in `server/public.ts`; fog
+leaves as the bare set of dark cells and nothing else.
 The table client never receives them, so nothing is discoverable in
 devtools. New tokens start hidden.
 
@@ -178,8 +205,8 @@ campaign that showed it. Everything a fight does to it is
 `board_state`, one blob of `{ placements, view, fog, zones }` per
 campaign, which is why deploying foes and deleting an entity are pure
 functions over that blob (`server/boards.ts`) instead of console-only
-edits. The row grew `areas` with fog's base (TEL-128) and the line
-held: a named place is inherent to the map, a brushstroke is what
+edits. The row grew `areas` alongside fog's rethink (TEL-128) and the
+line held: a named place is inherent to the map, a brushstroke is what
 happened tonight, and the editor writes each through its own door. Console edits → write → event log → SSE poke → refetch. Only
 the ACTIVE board flows to `/public` (`activeBoard`, `server/public.ts`);
 the board LIBRARY stays DM-only, which is what makes off-table prep
@@ -197,14 +224,14 @@ real table without a round trip.
 
 Tools: select (drag tokens, pan view) · frame (aim the table) · lock ·
 pan · paint · fog · add token · snap · grid. Panels: board (width,
-calibration, grid style, clear) · ground (layers) · fog (base, brush,
-name-this-patch, areas) · tokens.
+calibration, grid style, clear) · ground (layers) · fog (brush,
+cover/clear all, name-this-patch, areas + everywhere else) · tokens.
 
 ## Build order
 
 1. **Scale + viewport** — SHIPPED
 2. **Tokens + reactive effects** — SHIPPED
-3. **Fog** — SHIPPED, and it earned a base (TEL-128, 2026-08-24)
+3. **Fog** — SHIPPED as one set of dark cells (TEL-128, 2026-08-24)
 4. Effect polish (tag-driven auras, transitions) — open
 5. Someday: the overhead camera proposes token positions (proposal
    only, as always). Its boot sequence — showing a known pattern and

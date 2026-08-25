@@ -310,8 +310,9 @@ The seams that earn enforcement, after the fold:
 
 **1 · The public-snapshot boundary** (`server/public.ts`). What a
 passive surface may see: notes stripped, NPC numbers never shown,
-hidden placements and zones REMOVED rather than dimmed, fog flattened to
-plain revealed cells. A security boundary, so it is one function nothing
+hidden placements and zones REMOVED rather than dimmed, fog reduced to
+its bare set of dark cells and the board's area names stripped off the
+row. A security boundary, so it is one function nothing
 routes around.
 
 **2 · The authorization boundary** (rule 7, `server/auth.ts`).

@@ -27,10 +27,11 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { promoteRegions } from '../core/fog.ts';
+import { migrateFog } from '../core/fog.ts';
 import { newId } from '../core/id.ts';
 import type { Campaign, Shelf } from '../core/store.ts';
 import { tokenColor } from '../core/tokens.ts';
+import { gridOf, imageSizeOf } from './geometry.ts';
 
 /** How big a picture the door will take. A battlemap is print artwork. */
 export const MAX_BYTES = 64 * 1024 * 1024;
@@ -105,31 +106,53 @@ export function toWidthInches(raw: unknown): number | null | undefined {
 }
 
 /**
- * Fog regions become board AREAS — once, when the campaign opens.
+ * Old fog becomes the DARK SET — once, when the campaign opens.
  *
  * The lazy half of this migration is `toFog`, which reads any old blob
- * correctly on its own (rule 8, both edges). What it CANNOT do is the
- * structural half: an area belongs to the shelf row and a state
- * serializer only ever has the state. This is the one place both are
- * in hand, so it runs here, at open, before a request has been served.
+ * on its own (rule 8, both edges). What it CANNOT do is either
+ * structural half: a fog region is named geography belonging to the
+ * shelf row, and a world-that-was-dark has no cells written down at all
+ * — "everything" only becomes a set once you know how big the map is,
+ * which the picture knows and a state serializer does not. This is the
+ * one place the row, the state and the image are all in hand.
  *
- * It is a no-op for every board written since — the promoted fog
- * carries a `base`, and `promoteRegions` refuses anything that already
- * has one — so it costs a boot-time read of the board states and
- * nothing else. Each promotion writes through the ordinary logged door
- * (rule 3): a migration that edited the table silently would be the
- * first thing in teller that did.
+ * So it runs at campaign open, before a request has been served, and
+ * again after an import — the only other way a blob written under an
+ * old shape can arrive on a live table (`server/story.ts`).
+ *
+ * It is a no-op for every board written since: the migrated fog carries
+ * a `dark` list and `migrateFog` refuses anything that has one, so a
+ * second run costs a read of the board states and nothing else. Each
+ * migration writes through the ordinary logged door (rule 3) — one that
+ * edited the table silently would be the first thing in teller that
+ * did.
+ *
+ * A board whose picture this host can't read (or hasn't got) has no
+ * proportions, so it has no rows, so it has no grid — and a board with
+ * no grid never had fog to migrate. `gridOf` answering `undefined` is
+ * therefore the same "no cells, no fog" floor the brush already works
+ * under, not a failure mode.
  */
-export function promoteFogRegions(shelf: Shelf, campaign: Campaign, actor = 'migration'): number {
+export function migrateBoardFog(
+  shelf: Shelf,
+  campaign: Campaign,
+  dataDir?: string,
+  actor = 'migration',
+): number {
   let moved = 0;
   for (const { boardId, data } of campaign.boardStates()) {
     if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
     const board = shelf.board(boardId);
     if (!board) continue;
-    const promoted = promoteRegions((data as { fog?: unknown }).fog, board.areas ?? []);
-    if (!promoted) continue;
-    shelf.putBoard({ ...board, areas: promoted.areas });
-    campaign.putBoardState(boardId, { ...data, fog: promoted.fog }, actor);
+    const size = dataDir ? imageSizeOf(join(dataDir, board.key)) : undefined;
+    const migrated = migrateFog(
+      (data as { fog?: unknown }).fog,
+      board.areas ?? [],
+      gridOf(board.widthInches, size),
+    );
+    if (!migrated) continue;
+    if (migrated.areas.length) shelf.putBoard({ ...board, areas: migrated.areas });
+    campaign.putBoardState(boardId, { ...data, fog: migrated.fog }, actor);
     moved++;
   }
   return moved;

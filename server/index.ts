@@ -2397,12 +2397,13 @@ export async function handleApi(
     if (method === 'GET') {
       const state = session.campaign.boardState(a) ?? null;
       // The DM sees the board as it is; anyone else at the table sees
-      // it as the table may — hidden placements gone, fog flattened.
+      // it as the table may — hidden placements gone, fog reduced to
+      // its bare set of dark cells.
       // Same function the snapshot uses, because two strippings would
       // eventually disagree and one of them would be the leak.
       return reply(
         200,
-        canDm(auth) ? state : publicBoardState(state, session.shelf.board(a)?.areas ?? []),
+        canDm(auth) ? state : publicBoardState(state),
       );
     }
     if (method === 'PUT') {

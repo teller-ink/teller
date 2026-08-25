@@ -148,84 +148,50 @@ describe('board state, stripped', () => {
     expect(state.view).toEqual({ scale: 2 });
   });
 
-  // The mask, both bases. What the table may know is WHERE the dark
-  // is; what it may never know is that the dark patch has a name, a
-  // shape, or a neighbour it hasn't walked into yet.
-  const VAULT = { id: 'a1', name: 'the vault', cells: [[9, 9]] as [number, number][] };
-  const PORCH = { id: 'a2', name: 'the porch', cells: [[1, 1], [1, 2]] as [number, number][] };
+  // The mask. What the table may know is WHERE the dark is; what it may
+  // never know is that the dark patch has a name, a shape, or a
+  // neighbour it hasn't walked into yet. Since the rethink the set IS
+  // the mask, so this is a normalisation rather than a flattening — and
+  // the regression it guards is unchanged: names never travel.
+  it('ships the dark set and nothing else', () => {
+    const state = publicBoardState({ fog: { dark: [[0, 0], [9, 9]] } }) as any;
+    expect(state.fog).toEqual({ dark: [[0, 0], [9, 9]] });
+  });
 
-  it('under dark, ships the lit cells — freehand and lifted areas, no names', () => {
-    const state = publicBoardState(
-      {
-        fog: {
-          base: 'dark',
-          revealed: [[0, 0]],
-          fogged: [],
-          areas: [
-            { areaId: 'a1', fogged: true },
-            { areaId: 'a2', fogged: false },
-          ],
-        },
+  it('an area name has no route through the state, whatever shape it arrives in', () => {
+    const state = publicBoardState({
+      fog: {
+        base: 'clear',
+        fogged: [[0, 0]],
+        areas: [{ areaId: 'a1', fogged: true }],
       },
-      [VAULT, PORCH],
-    ) as any;
-    expect(state.fog).toEqual({
-      base: 'dark',
-      revealed: [[0, 0], [1, 1], [1, 2]],
-      fogged: [],
-    });
-    expect(JSON.stringify(state)).not.toContain('vault');
-    expect(JSON.stringify(state)).not.toContain('porch');
-    expect(JSON.stringify(state)).not.toContain('9,9');
+    }) as any;
+    expect(state.fog).toEqual({ dark: [[0, 0]] });
     expect(JSON.stringify(state)).not.toContain('areaId');
   });
 
-  it('under clear, ships the covered cells — and only those', () => {
-    const state = publicBoardState(
-      {
-        fog: {
-          base: 'clear',
-          revealed: [],
-          fogged: [[0, 0]],
-          areas: [{ areaId: 'a1', fogged: true }],
-        },
-      },
-      [VAULT, PORCH],
-    ) as any;
-    expect(state.fog).toEqual({
-      base: 'clear',
-      revealed: [],
-      fogged: [[0, 0], [9, 9]],
-    });
-    // The porch is not covered, so its shape never leaves the host —
-    // the same rule as an unentered room under the old model.
-    expect(JSON.stringify(state)).not.toContain('1,1');
-    expect(JSON.stringify(state)).not.toContain('porch');
-  });
-
-  it('an old blob flattens the way it always rendered', () => {
+  it('an old blob is normalised on the way out, never passed through raw', () => {
+    // The structural migration has already run at campaign open; what
+    // this pins is that a blob reaching the boundary unmigrated still
+    // leaves as a set, so `regions` and their names cannot ride out.
     const state = publicBoardState({
       fog: {
         on: true,
         revealed: [[0, 0]],
         regions: [
           { name: 'the vault', revealed: false, cells: [[9, 9]] },
-          { name: 'the porch', revealed: true, cells: [[1, 1], [1, 2]] },
+          { name: 'the porch', revealed: true, cells: [[1, 1]] },
         ],
       },
     }) as any;
-    expect(state.fog).toEqual({
-      base: 'dark',
-      revealed: [[0, 0], [1, 1], [1, 2]],
-      fogged: [],
-    });
+    expect(state.fog.dark).toEqual([]);
     expect(JSON.stringify(state)).not.toContain('vault');
+    expect(JSON.stringify(state)).not.toContain('porch');
     expect(JSON.stringify(state)).not.toContain('9,9');
   });
 
-  it('a clear map with nothing covered carries no darkness at all', () => {
-    const state = publicBoardState({ fog: { base: 'clear' } }, [VAULT]) as any;
-    expect(state.fog).toEqual({ base: 'clear', revealed: [], fogged: [] });
+  it('a map with nothing covered carries no darkness at all', () => {
+    expect((publicBoardState({ fog: {} }) as any).fog).toEqual({ dark: [] });
   });
 
   it('passes nothing through when there is nothing', () => {
@@ -444,7 +410,10 @@ describe('GET /api/public', () => {
     const { body } = await call('GET', '/api/public', { key: true });
     expect(body.board.board.name).toBe('The Crossing');
     expect(body.board.state.placements).toEqual([{ entityId: barrett, u: 1, v: 1 }]);
-    expect(body.board.state.fog).toEqual({ base: 'dark', revealed: [], fogged: [] });
+    // Normalised on the way out whatever it was written as, so the
+    // vault's name and rectangle stay on the host.
+    expect(body.board.state.fog).toEqual({ dark: [] });
+    expect(JSON.stringify(body)).not.toContain('vault');
     expect(JSON.stringify(body)).not.toContain('ambush');
 
     // And clearing it puts the table back to idle.
@@ -460,11 +429,10 @@ describe('GET /api/public', () => {
 
   // The board row grew a field that is not player-safe, and the row
   // ships whole inside the snapshot. Areas are the name AND the shape
-  // of a place — exactly what the flattened mask exists to withhold —
-  // so this pins that the two halves can't drift apart: the mask says
-  // where the dark is, and nothing anywhere in the payload says what
-  // it's called.
-  it('a board’s areas never travel — only the mask they add up to', async () => {
+  // of a place — exactly what the dark set exists to withhold — so this
+  // pins that the two halves can't drift apart: the set says where the
+  // dark is, and nothing anywhere in the payload says what it's called.
+  it('a board’s areas never travel — only the dark they add up to', async () => {
     session.shelf.putBoard({
       id: boardId,
       key: 'maps/crossing.png',
@@ -477,23 +445,14 @@ describe('GET /api/public', () => {
     await call('PUT', '/api/campaign/refs', { key: true, body: { board: boardId } });
     session.putBoardState(
       boardId,
-      {
-        fog: {
-          base: 'clear',
-          revealed: [],
-          fogged: [[0, 0]],
-          areas: [{ areaId: 'a1', fogged: true }],
-        },
-      },
+      // The vault is dark because its cells are in the set — there is
+      // no per-area state left to say so, which is the whole rethink.
+      { fog: { dark: [[0, 0], [9, 9]] } },
       'console',
     );
 
     const { body } = await call('GET', '/api/public', { key: true });
-    expect(body.board.state.fog).toEqual({
-      base: 'clear',
-      revealed: [],
-      fogged: [[0, 0], [9, 9]],
-    });
+    expect(body.board.state.fog).toEqual({ dark: [[0, 0], [9, 9]] });
     expect(body.board.board.areas).toBeUndefined();
     expect(JSON.stringify(body)).not.toContain('vault');
     expect(JSON.stringify(body)).not.toContain('porch');

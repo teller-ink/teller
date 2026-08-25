@@ -106,12 +106,11 @@ function GridOverlay({
 // The darkness, near-opaque; there is no DM mode here, because this
 // screen is never the DM's.
 //
-// Two bases, one mask (`core/fog.ts`). Under `dark` a sheet covers the
-// map and the revealed cells are punched out of it — the shipped
-// behaviour, unchanged. Under `clear` the sheet is masked down to the
-// fogged cells alone, so the barn goes black and the rest of the map
-// keeps showing its own artwork. Either way the edges are soft because
-// the mask is blurred, not because the geometry is finer than an inch.
+// ONE SET, ONE MASK (`core/fog.ts`). A sheet is masked down to the dark
+// cells, so the barn goes black and the rest of the map keeps showing
+// its own artwork — and a dungeon that starts black is the same code
+// with every cell in the set. The edges are soft because the mask is
+// blurred, not because the geometry is finer than an inch.
 
 function FogLayer({
   fog,
@@ -122,7 +121,7 @@ function FogLayer({
   cellPx,
   cellPxY,
 }: {
-  fog?: { base?: 'dark' | 'clear'; revealed?: [number, number][]; fogged?: [number, number][] };
+  fog?: { dark?: [number, number][] };
   left: number;
   top: number;
   width: number;
@@ -131,12 +130,11 @@ function FogLayer({
   cellPxY?: number;
 }) {
   const uid = useId();
-  // The snapshot arrives already flattened — areas folded in, names and
-  // shapes left on the host. A clear map with nothing covered is just a
+  // The snapshot arrives as the bare set — no area names, no shapes,
+  // nothing but where the dark is. A map with nothing covered is just a
   // map, and draws nothing at all.
-  const lit = fog?.base === 'dark';
-  const painted = (lit ? fog?.revealed : fog?.fogged) ?? [];
-  if (!fog?.base || (!lit && !painted.length)) return null;
+  const painted = fog?.dark ?? [];
+  if (!painted.length) return null;
   if (!cellPx || !width || !height) return null;
   const cellY = cellPxY || cellPx;
   const blur = Math.min(cellPx, cellY) * 0.28;
@@ -153,7 +151,7 @@ function FogLayer({
           <feGaussianBlur stdDeviation={blur} />
         </filter>
         <mask id={`fogmask-${uid}`}>
-          <rect x="0" y="0" width={width} height={height} fill={lit ? 'white' : 'black'} />
+          <rect x="0" y="0" width={width} height={height} fill="black" />
           <g filter={`url(#fogblur-${uid})`}>
             {/* a cell can arrive twice — index keys, since the
                 coordinates are not unique here */}
@@ -165,7 +163,7 @@ function FogLayer({
                 width={cellPx + bleed * 2}
                 height={cellY + bleed * 2}
                 rx={cellPx * 0.3}
-                fill={lit ? 'black' : 'white'}
+                fill="white"
               />
             ))}
           </g>

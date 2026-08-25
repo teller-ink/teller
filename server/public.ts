@@ -25,7 +25,7 @@
 //   * `refs` never travel: provenance is the DM's business.
 //   * Hidden map secrets never transmit. A hidden placement is REMOVED
 //     from the payload, not styled away — an ambush the table cannot
-//     find in devtools — and fog is flattened to one mask of cells,
+//     find in devtools — and fog travels as the bare set of dark cells,
 //     since nobody needs the shape of a room they haven't walked into.
 //     The board's own AREAS go the same way: a named patch of map is
 //     the name AND the shape of a secret, so the row is stripped of
@@ -53,7 +53,7 @@
 
 import type { Entity, Entry } from '../core/entity.ts';
 import { isDraft, numberOf } from '../core/entity.ts';
-import { flatFog, toFog, type Area } from '../core/fog.ts';
+import { toFog } from '../core/fog.ts';
 import { kindFor, toKindDef, type KindDef } from '../core/kind.ts';
 import type { Board } from '../core/store.ts';
 import { activeHandout, type Handout } from './handouts.ts';
@@ -286,24 +286,26 @@ export function publicEntity(
 /**
  * Live board state as the table may see it.
  *
- * Hidden placements are removed rather than flagged, and fog collapses
- * to its EFFECTIVE MASK — one flat list of cells and the base that says
- * what they mean (`core/fog.ts`). Everything else about the state
- * passes through: a passive surface has to render this whole, and the
- * view / scale metadata beside the tokens is what makes a drawn square
- * a real inch (§4's calibration, which is teller-the-program, not a
- * secret).
+ * Hidden placements are removed rather than flagged, and fog is
+ * NORMALISED — read through `toFog` so that whatever shape it was
+ * written in, what leaves is `{ dark }` and nothing else. That used to
+ * be a flattening job, folding per-area state into a mask; since the
+ * rethink the set IS the mask and there is nothing to fold, which is
+ * the clearest evidence the old model had more moving parts than the
+ * feature did.
  *
- * The AREAS are the reason this takes a second argument. They live on
- * the board row now, and they are exactly the kind of thing that must
- * not travel: "the vault", drawn as a rectangle the posse hasn't
- * walked into, is the shape and the name of a secret. So the mask is
- * computed here, from the board's areas and the fight's freehand
- * cells, and what leaves is cells — under `dark` the lit ones, under
- * `clear` the covered ones, and in neither case anything with a name
- * on it.
+ * Everything else about the state passes through: a passive surface has
+ * to render this whole, and the view / scale metadata beside the tokens
+ * is what makes a drawn square a real inch (§4's calibration, which is
+ * teller-the-program, not a secret).
+ *
+ * The AREAS are not in here at all, and that is the point: "the vault",
+ * drawn as a rectangle the posse hasn't walked into, is the shape and
+ * the name of a secret. They live on the board row and are stripped
+ * from it before it travels (`publicBoardRow`) — so a name has no route
+ * to a passive screen through either half of the payload.
  */
-export function publicBoardState(data: unknown, areas: Area[] = []): unknown {
+export function publicBoardState(data: unknown): unknown {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return data ?? null;
   const state = { ...(data as Record<string, unknown>) };
   for (const key of ['placements', 'zones']) {
@@ -314,7 +316,7 @@ export function publicBoardState(data: unknown, areas: Area[] = []): unknown {
       );
     }
   }
-  if (state.fog !== undefined) state.fog = flatFog(toFog(state.fog), areas);
+  if (state.fog !== undefined) state.fog = toFog(state.fog);
   return state;
 }
 
@@ -338,7 +340,7 @@ export function activeBoard(session: Session): PublicBoard | null {
   if (!board) return null;
   return {
     board: publicBoardRow(board),
-    state: publicBoardState(session.campaign.boardState(id) ?? null, board.areas ?? []),
+    state: publicBoardState(session.campaign.boardState(id) ?? null),
   };
 }
 

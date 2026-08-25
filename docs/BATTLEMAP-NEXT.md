@@ -57,7 +57,8 @@ An **area** is `{ id, name, cells }` on the BOARD. One list, many
 consumers:
 
 - **Fog** fogs and lifts areas ("lift the vault"), not anonymous
-  cell-sets.
+  cell-sets — as verbs over the dark set, since an area carries no fog
+  state of its own (shipped; see BATTLEMAP.md).
 - **Terrain** may claim an area (or paint anonymous cells; a name is
   optional).
 - **The assistant** speaks area names — "it slides along the far bank
@@ -68,29 +69,45 @@ consumers:
 
 Phase 0 (fog) introduces the concept; phase 1 (terrain) adopts it.
 
-## Phase 0 — fog earns a base (TEL-128)
+## Phase 0 — fog is one set of dark cells (TEL-128) — SHIPPED
 
-Smallest, standalone, and it's the live complaint.
+Smallest, standalone, and it was the live complaint. **Shipped
+2026-08-24; its section now lives in BATTLEMAP.md and this one is
+kept only for the record of what it was planned as and why that
+changed.**
 
-- `Fog.base: 'dark' | 'clear'`. Dark = today verbatim (world dark,
-  revealed areas punch light). Clear = new default: world visible,
-  **unrevealed areas ARE the fog** — paint the barn, lift it when the
-  posse walks in.
-- One brush story both ways: paint-fog darkens, reveal lightens; the
-  base decides what the untouched map means. **Freehand cells stay
-  fight-side** (`revealed[]` in dark, `fogged[]` in clear) so
-  paint-to-reveal at speed never writes the shelf — play residue is
-  not geography. NAMING a patch promotes it to a board AREA; areas
-  are the named, prep-authored layer, and per-area fog state
-  (fogged/lifted) is fight-side. (Sharpened at build time from
-  "freehand creates an anonymous area", which would have polluted
-  the board's areas with every mid-fight brushstroke.)
-- Migration: `on:true → base:'dark'`, `on:false → base:'clear'` with
-  no fogged areas — renders identically. Existing FogRegions become
-  areas.
-- Public boundary: flatten to the effective mask server-side in both
-  modes — players see WHERE darkness is, never names or contents.
-  The hardening regression net grows fog cases.
+The plan said `Fog.base: 'dark' | 'clear'` — dark = today verbatim,
+clear = a new default where unrevealed areas ARE the fog — with
+freehand cells fight-side in `revealed[]`/`fogged[]` and per-area
+fog state alongside them.
+
+**The rethink, the same night (Brian, 2026-08-24), after the base had
+shipped and run on real data.** The base model had four sources of
+truth and a brush whose meaning depended on which one you were
+standing in. It was replaced by:
+
+```
+Fog = { dark: Cell[] }
+```
+
+- A cell is dark iff it is in the set; the ground is always clear.
+- **Two verbs, no modes**: darken and clear. The brush never changes
+  meaning.
+- **The dungeon posture is one tap, not a mode**: "cover all" is every
+  cell of the calibrated grid. A "dark world" was never a different
+  kind of map — just a map with a lot of dark paint on it.
+- **Areas became pure geometry**: `{ id, name, cells }` on the board
+  row, carrying no fog state anywhere. "Fog the vault" and "lift the
+  vault" add and remove its cells; whether it is dark is DERIVED when
+  someone asks. Plus a derived, un-storable "everywhere else" row, on
+  the rule that **a derived selection may be acted on, never pointed
+  at** — phase 1's terrain needs stable geometry, so the remainder is
+  deliberately un-referenceable.
+- Migration reads BOTH older shapes; the structural half needs the
+  picture's proportions and runs at campaign open and after import.
+- Public boundary: the set IS the mask, so flattening became a
+  normalisation — players see WHERE the darkness is, never names or
+  shapes. The hardening regression net grew fog cases.
 - Vision-based auto-reveal is NOT built here — it arrives later as a
   plugin through the `fog.set` door (see the plugin contract below).
 
@@ -240,12 +257,13 @@ pattern for all of them:
 ## Cross-cutting work (every phase touches these)
 
 - **Migrations & sweep**: board rows gain areas + terrain
-  (shelf-side, version-gated); fog gains base; placements gain z;
+  (shelf-side, version-gated); fog became one dark set; placements
+  gain z;
   packs may gain structures (packs/README.md and the file-split
   serialization grow; the split stays serialization, the model stays
   one RulesPack).
 - **Public boundary tests**: every phase adds cases to the regression
-  net (fog mask honest in both bases, terrain absent from passive
+  net (the fog set honest, terrain absent from passive
   payloads unless that display renders it — and then stripped of
   DM-only notes, object numbers redacted, no hidden structure leaking
   via area names).

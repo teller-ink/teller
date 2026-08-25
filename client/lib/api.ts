@@ -383,11 +383,10 @@ export type PublicBoard = {
     /** Hidden ones never arrive — the redaction strips them server-side. */
     zones?: { id?: string; effect?: string; cells: [number, number][] }[];
     /**
-     * Already flattened to one mask — no area names, no shapes. `base`
-     * says what the cells mean: under `dark` they are the lit ones,
-     * under `clear` they are the covered ones.
+     * Where the dark is, and nothing else — no area names, no shapes.
+     * The set IS the mask, so there is nothing left to flatten.
      */
-    fog?: { base?: 'dark' | 'clear'; revealed?: [number, number][]; fogged?: [number, number][] };
+    fog?: { dark?: [number, number][] };
     view?: { mode?: 'fit' | 'true'; zoom?: number; cu?: number; cv?: number };
   } | null;
 };
