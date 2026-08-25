@@ -195,6 +195,48 @@ describe('the shelf', () => {
     shelf.close();
   });
 
+  // Both edges coerce (rule 8), so the geography a board carries has to
+  // survive the column it is stored in — and an EMPTY list has to come
+  // back absent rather than as `[]`, because "no terrain" and "a terrain
+  // list with nothing in it" would then be two answers to one question.
+  it('a board carries its areas and its terrain through the column', () => {
+    const shelf = openShelf(dir);
+    const board = shelf.putBoard({
+      key: 'map/crossing.png',
+      name: 'The Crossing',
+      areas: [{ id: 'are_ford', name: 'the ford', cells: [[5, 15]] }],
+      terrain: [
+        {
+          id: 'ter_water',
+          kind: 'deep water',
+          description: 'waist-deep, footing treacherous',
+          elevation: -1,
+          blocksSight: false,
+          areaId: 'are_ford',
+        },
+        { id: 'ter_ridge', kind: 'ridge', blocksSight: true, cells: [[12, 15]] },
+      ],
+    });
+    const read = shelf.board(board.id)!;
+    expect(read.areas).toEqual([{ id: 'are_ford', name: 'the ford', cells: [[5, 15]] }]);
+    expect(read.terrain).toEqual([
+      {
+        id: 'ter_water',
+        kind: 'deep water',
+        description: 'waist-deep, footing treacherous',
+        elevation: -1,
+        // `false` is not a fact worth storing — absent reads as "does
+        // not block", the way an absent Defense reads as zero (§M-8).
+        areaId: 'are_ford',
+      },
+      { id: 'ter_ridge', kind: 'ridge', blocksSight: true, cells: [[12, 15]] },
+    ]);
+
+    shelf.putBoard({ ...read, terrain: [] });
+    expect(shelf.board(board.id)?.terrain).toBeUndefined();
+    shelf.close();
+  });
+
   it('systems and packs hold their template blob for boot-time resolution', () => {
     const shelf = openShelf(dir);
     shelf.putSystem({

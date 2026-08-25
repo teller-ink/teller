@@ -461,6 +461,79 @@ describe('areas — the named layer, and which door it comes in through', () => 
   });
 });
 
+// TERRAIN comes in through the BOARD door for the same reason areas do
+// — a ford is where it is whoever is playing — so it is pinned the same
+// way: authored, reread, id-minted, and untouched by a patch aimed at
+// something else. The one case that is terrain's own is the BIND: a
+// patch may claim a stored area, and the row keeps its brushwork so
+// unbinding gives it back.
+describe('terrain — the ground, through the board door', () => {
+  async function board(): Promise<string> {
+    const { body } = await upload(PNG);
+    const made = await api('POST', '/api/boards', { key: body.key, name: 'The Crossing' });
+    return made.body.id;
+  }
+
+  it('a patch is authored on the BOARD, with the author’s own words intact', async () => {
+    const id = await board();
+    const patch = {
+      id: 'ter_a',
+      kind: 'deep water',
+      description: 'waist-deep, footing treacherous',
+      elevation: -2,
+      blocksSight: true,
+      cells: [[4, 4]],
+    };
+    const patched = await api('PATCH', `/api/boards/${id}`, { terrain: [patch] });
+    expect(patched.status).toBe(200);
+    expect(patched.body.terrain).toEqual([patch]);
+    expect(shelf.board(id)?.terrain).toEqual([patch]);
+  });
+
+  it('mints a ter_ id for a patch that arrived without one, and drops the junk', async () => {
+    const id = await board();
+    const { body } = await api('PATCH', `/api/boards/${id}`, {
+      terrain: [{ kind: 'scree' }, 'nonsense'],
+    });
+    expect(body.terrain).toHaveLength(1);
+    expect(body.terrain[0].id).toMatch(/^ter_[0-9a-f]{12}$/);
+  });
+
+  it('deleting them all clears the column rather than storing an empty list', async () => {
+    const id = await board();
+    await api('PATCH', `/api/boards/${id}`, { terrain: [{ id: 'ter_a', kind: 'mud' }] });
+    const { body } = await api('PATCH', `/api/boards/${id}`, { terrain: [] });
+    expect(body.terrain).toBeUndefined();
+    expect(shelf.board(id)?.terrain).toBeUndefined();
+  });
+
+  it('a board patched for something else keeps its terrain, and vice versa', async () => {
+    const id = await board();
+    await api('PATCH', `/api/boards/${id}`, {
+      areas: [{ id: 'a1', name: 'the ford', cells: [[2, 2]] }],
+      terrain: [{ id: 'ter_a', kind: 'mud', cells: [[0, 0]] }],
+    });
+    const { body } = await api('PATCH', `/api/boards/${id}`, { widthInches: 24 });
+    expect(body.terrain).toHaveLength(1);
+    expect(body.areas).toHaveLength(1);
+  });
+
+  it('a patch bound to an area keeps its brushwork, so unbinding gives it back', async () => {
+    const id = await board();
+    const { body } = await api('PATCH', `/api/boards/${id}`, {
+      areas: [{ id: 'a1', name: 'the ford', cells: [[2, 2]] }],
+      terrain: [{ id: 'ter_a', kind: 'water', areaId: 'a1', cells: [[9, 9]] }],
+    });
+    expect(body.terrain[0].areaId).toBe('a1');
+    expect(body.terrain[0].cells).toEqual([[9, 9]]);
+    const unbound = await api('PATCH', `/api/boards/${id}`, {
+      terrain: [{ id: 'ter_a', kind: 'water', cells: [[9, 9]] }],
+    });
+    expect(unbound.body.terrain[0].areaId).toBeUndefined();
+    expect(unbound.body.terrain[0].cells).toEqual([[9, 9]]);
+  });
+});
+
 // PHASE 0.5 — a board with no declared width is paintable now. What
 // this pins is the whole round trip through the real doors: the fog
 // goes in, the area goes on the row, both come back, and the lattice

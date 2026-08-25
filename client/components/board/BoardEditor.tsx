@@ -36,12 +36,13 @@
 //     takes — with the brush, with "fog" on an area, or with cover-all.
 //     A new board's dark set is empty, which renders as no fog at all.
 //   * GEOGRAPHY AND RESIDUE WRITE THROUGH DIFFERENT DOORS. A named
-//     AREA is inherent to the map, so it lands on the board row via
-//     `onBoard` — prep, reusable, campaign-independent. Freehand fog
-//     cells are what happened tonight, so they stay in `board_state`
-//     with the tokens. Which door a control uses says which kind of
-//     thing it is editing, and that is the seam this whole file is
-//     organised around.
+//     AREA is inherent to the map, and so is TERRAIN — both land on the
+//     board row via `onBoard`: prep, reusable, campaign-independent.
+//     Freehand fog cells and painted effects are what happened tonight,
+//     so they stay in `board_state` with the tokens. Which door a
+//     control uses says which kind of thing it is editing, and that is
+//     the seam this whole file is organised around. The terrain tool
+//     says so on its face — it edits the MAP, not the fight.
 //
 // Pointer events throughout, never HTML5 drag-and-drop: this console is
 // an iPad as often as it is a laptop, and DnD does not exist there
@@ -72,11 +73,14 @@ import {
   hasCell,
   localId,
   newAreaId,
+  newTerrainId,
   paintDrifts,
   rasterOf,
+  resolveTerrain,
   restCells,
   SIZES,
   snapUv,
+  TERRAIN_KINDS,
   toFog,
   TOKEN_COLORS,
   withIds,
@@ -91,6 +95,7 @@ import {
   type Fog,
   type Grid,
   type Placement,
+  type TerrainPatch,
   type Zone,
 } from './model.ts';
 
@@ -98,7 +103,7 @@ const SNAP_PREF = 'teller.board.snap';
 
 // 'select' is the safe default: it drags tokens, and a drag on empty
 // map pans the workshop view rather than re-aiming the table.
-type Tool = 'select' | 'pan' | 'frame' | 'paint' | 'fog';
+type Tool = 'select' | 'pan' | 'frame' | 'paint' | 'fog' | 'terrain';
 
 const panel = 'rounded-2xl border border-stone-800 bg-stone-950/85 shadow-xl backdrop-blur';
 const toolBtn = (on: boolean) =>
@@ -160,6 +165,7 @@ export function BoardEditor({
     widthInches?: number | null;
     grid?: unknown;
     areas?: Area[];
+    terrain?: TerrainPatch[];
   }) => void;
   onClose: () => void;
 }) {
@@ -180,6 +186,8 @@ export function BoardEditor({
   const [zoneEditId, setZoneEditId] = useState<string | null>(null);
   const [areaEditId, setAreaEditId] = useState<string | null>(null);
   const [areaName, setAreaName] = useState('');
+  /** Which patch of ground the terrain brush is shaping. */
+  const [terrainEditId, setTerrainEditId] = useState<string | null>(null);
   const [carrying, setCarrying] = useState<RosterRow | null>(null);
 
   // --- the draft ------------------------------------------------------
@@ -231,6 +239,41 @@ export function BoardEditor({
     }, 350);
   };
 
+  // --- the TERRAIN draft ----------------------------------------------
+  //
+  // A third draft rather than a branch of the areas one, because it is a
+  // third destination that happens to share a door: `onBoard` takes both
+  // and a patch of ground is not a room. Same live-and-debounced
+  // posture, same reason (a brushed patch is one gesture, not eighty
+  // writes).
+
+  const [terrain, setTerrain] = useState<TerrainPatch[]>(board.terrain ?? []);
+  const terrainRef = useRef<TerrainPatch[]>(board.terrain ?? []);
+  const terrainDirty = useRef(false);
+  const terrainTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (terrainDirty.current) return;
+    terrainRef.current = board.terrain ?? [];
+    setTerrain(board.terrain ?? []);
+  }, [board.terrain]);
+
+  const commitTerrain = (next: TerrainPatch[]) => {
+    terrainRef.current = next;
+    terrainDirty.current = true;
+    setTerrain(next);
+    if (terrainTimer.current) clearTimeout(terrainTimer.current);
+    terrainTimer.current = setTimeout(() => {
+      terrainTimer.current = null;
+      terrainDirty.current = false;
+      onBoard({ terrain: terrainRef.current });
+    }, 350);
+  };
+
+  /** One patch, edited in place. Every field here is a stored value a human typed (rule 1). */
+  const patchPatch = (id: string, edit: (p: TerrainPatch) => TerrainPatch) =>
+    commitTerrain(terrainRef.current.map((p) => (p.id === id ? edit(p) : p)));
+
   // A different board is a different draft, always — no carry-over.
   useEffect(() => {
     const seeded = withIds(state);
@@ -244,6 +287,10 @@ export function BoardEditor({
     areasRef.current = board.areas ?? [];
     areasDirty.current = false;
     setAreas(board.areas ?? []);
+    setTerrainEditId(null);
+    terrainRef.current = board.terrain ?? [];
+    terrainDirty.current = false;
+    setTerrain(board.terrain ?? []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board.id]);
 
@@ -409,6 +456,10 @@ export function BoardEditor({
   // only sense in which freehand paint is still a separate thing.
   const claimed = new Set(areas.flatMap((a) => a.cells.map(cellKey)));
   const unclaimed = fog.dark.filter((c) => !claimed.has(cellKey(c)));
+  // Where every patch actually IS, through the one door — so the tint
+  // the DM sees and the ground the server measures cannot disagree.
+  const resolvedTerrain = resolveTerrain(terrain, areas);
+  const editingPatch = terrain.find((p) => p.id === terrainEditId) ?? null;
   const view: BoardView = { ...DEFAULT_VIEW, ...(draft.view ?? {}) };
   const selected = placements.find((p) => p.id === selectedId) ?? null;
 
@@ -500,6 +551,40 @@ export function BoardEditor({
     }
     const f = toFog(draftRef.current.fog);
     commit({ ...draftRef.current, fog: op === 'add' ? darken(f, [cell]) : clear(f, [cell]) });
+  };
+
+  /**
+   * One stroke of the terrain brush, onto the patch being shaped.
+   *
+   * A patch BOUND to an area is not brushable and the panel says so
+   * rather than silently ignoring the stroke: its cells are the area's,
+   * and letting the brush appear to work would be an edit that vanishes
+   * on the next render. Unbind it and the patch's own cells come back —
+   * which is why binding never discards them.
+   */
+  const applyTerrain = (cell: Cell, op: 'add' | 'remove') => {
+    const target = terrainRef.current.find((p) => p.id === terrainEditId);
+    if (!target || target.areaId) return;
+    const next = withoutCell(target.cells ?? [], cell);
+    if (op === 'add') next.push(cell);
+    patchPatch(target.id, (p) => ({ ...p, cells: next }));
+  };
+
+  /**
+   * A fresh patch of ground — empty, unnamed, and immediately the one
+   * the brush is shaping, because the next thing anybody does is draw
+   * it. Nothing is derived from it until a human types a word.
+   */
+  const addPatch = () => {
+    const patch: TerrainPatch = { id: newTerrainId() };
+    commitTerrain([...terrainRef.current, patch]);
+    setTerrainEditId(patch.id);
+  };
+
+  /** A patch off the map. Areas it claimed are untouched — a patch is not a room. */
+  const dropPatch = (id: string) => {
+    commitTerrain(terrainRef.current.filter((p) => p.id !== id));
+    if (terrainEditId === id) setTerrainEditId(null);
   };
 
   /**
@@ -609,6 +694,7 @@ export function BoardEditor({
       if (e.key === 'h') setTool('pan');
       if (e.key === 'b' && raster) setTool('paint');
       if (e.key === 'g' && raster) setTool('fog');
+      if (e.key === 't' && raster) setTool('terrain');
       if (e.key === 'l') setView({ locked: !view.locked });
       if (e.key === 's' && grid) {
         const next = !snap;
@@ -647,10 +733,19 @@ export function BoardEditor({
       dragRef.current = { kind: 'pan', x: e.clientX, y: e.clientY };
       return;
     }
-    if (tool === 'paint' || tool === 'fog') {
+    if (tool === 'paint' || tool === 'fog' || tool === 'terrain') {
       const cell = cellAt(e.clientX, e.clientY);
       if (!cell) return;
       mark();
+      if (tool === 'terrain') {
+        // The same two verbs the fog brush has, aimed at the patch
+        // being shaped. No patch selected means no target, and the
+        // panel is where you pick one.
+        const op: 'add' | 'remove' = fogBrush === 'darken' ? 'add' : 'remove';
+        dragRef.current = { kind: 'paint', op, last: cell.join(',') };
+        applyTerrain(cell, op);
+        return;
+      }
       if (tool === 'fog') {
         // The brush means one thing: darken adds, clear removes. When an
         // area is being shaped the same two verbs extend and trim its
@@ -690,6 +785,7 @@ export function BoardEditor({
       if (cell && cell.join(',') !== d.last) {
         d.last = cell.join(',');
         if (tool === 'fog') applyFog(cell, d.op);
+        else if (tool === 'terrain') applyTerrain(cell, d.op);
         else if (strokeRef.current) applyCell(strokeRef.current, cell, d.op);
       }
     } else if (d.kind === 'token') {
@@ -759,7 +855,7 @@ export function BoardEditor({
             ? 'cursor-copy'
             : tool === 'pan'
               ? 'cursor-grab'
-              : tool === 'paint' || tool === 'fog'
+              : tool === 'paint' || tool === 'fog' || tool === 'terrain'
                 ? 'cursor-crosshair'
                 : ''
         }`}
@@ -830,6 +926,53 @@ export function BoardEditor({
                 />
               )),
             )}
+
+          {/* THE GROUND, and only where it is being authored. Terrain
+              does not render on the table or on any passive surface in
+              this phase — the artwork and the styrofoam are the display
+              (docs/BATTLEMAP-NEXT.md). This is the DM seeing what they
+              wrote down: a subtle tint, and the patch's word once, at
+              its first cell, so a board of six patches reads as six
+              patches and not as a wall of labels. */}
+          {cellPx &&
+            tool === 'terrain' &&
+            resolvedTerrain.map(({ patch, cells }) => {
+              const on = patch.id === terrainEditId;
+              const head = cells[0];
+              const word = patch.kind || (patch.areaId ? '(area)' : '(unnamed)');
+              return (
+                <div key={patch.id}>
+                  {cells.map(([c, r]) => (
+                    <div
+                      key={`${c},${r}`}
+                      className="pointer-events-none absolute"
+                      style={{
+                        left: c * cellPx,
+                        top: r * cellPx,
+                        width: cellPx,
+                        height: cellPx,
+                        background: on ? 'rgba(52,211,153,0.28)' : 'rgba(52,211,153,0.14)',
+                        outline: on ? `${Math.max(1, cellPx * 0.05)}px solid rgba(52,211,153,0.8)` : undefined,
+                        outlineOffset: -1,
+                      }}
+                    />
+                  ))}
+                  {head && (
+                    <span
+                      className="pointer-events-none absolute font-mono uppercase tracking-widest text-emerald-200"
+                      style={{
+                        left: head[0] * cellPx + cellPx * 0.12,
+                        top: head[1] * cellPx + cellPx * 0.12,
+                        fontSize: Math.max(7, cellPx * 0.3),
+                        textShadow: '0 1px 2px rgba(0,0,0,0.9)',
+                      }}
+                    >
+                      {word}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
 
           {frame && (
             <div
@@ -1026,6 +1169,19 @@ export function BoardEditor({
             <span className={raster ? '' : 'opacity-30'}>🌫</span>
           </button>
           <button
+            className={toolBtn(tool === 'terrain')}
+            onClick={() => raster && setTool('terrain')}
+            disabled={!raster}
+            title={
+              raster
+                ? 'terrain (T) — the ground itself: what it is, how it plays, how high, whether it blocks sight. This edits the MAP, not tonight’s fight.'
+                : "this map's picture could not be measured, so it has no cells"
+            }
+            aria-label="terrain tool"
+          >
+            <span className={raster ? '' : 'opacity-30'}>⛰</span>
+          </button>
+          <button
             className={toolBtn(snap && !!grid)}
             onClick={() => {
               const next = !snap;
@@ -1079,6 +1235,37 @@ export function BoardEditor({
                 }
               >
                 {areaEditId ? (m === 'darken' ? 'shape' : 'trim') : m === 'darken' ? 'fog' : 'lift'}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* The same two verbs, third tool. The labels say what they do
+            HERE — extending a patch of ground is not making anything
+            dark, and a brush that reads "fog" would say it was. */}
+        {tool === 'terrain' && (
+          <div className={`flex flex-col gap-1 p-1 ${panel}`}>
+            {(['darken', 'clear'] as const).map((m) => (
+              <button
+                key={m}
+                className={`rounded-lg px-1 py-2 text-[10px] leading-tight ${
+                  fogBrush === m
+                    ? 'bg-emerald-700 text-stone-950'
+                    : 'text-stone-300 hover:bg-stone-800'
+                } ${editingPatch && !editingPatch.areaId ? '' : 'opacity-40'}`}
+                onClick={() => setFogBrush(m)}
+                aria-label={`terrain brush ${m === 'darken' ? 'extend' : 'trim'}`}
+                title={
+                  editingPatch
+                    ? editingPatch.areaId
+                      ? 'this patch is bound to an area — unbind it to brush cells'
+                      : m === 'darken'
+                        ? 'extend this patch'
+                        : 'trim this patch'
+                    : 'pick a patch on the right, or add one'
+                }
+              >
+                {m === 'darken' ? 'extend' : 'trim'}
               </button>
             ))}
           </div>
@@ -1164,6 +1351,18 @@ export function BoardEditor({
               commitAreas(areasRef.current.map((a) => (a.id === id ? { ...a, name } : a)))
             }
             onDrop={dropArea}
+          />
+        )}
+        {tool === 'terrain' && (
+          <TerrainPanel
+            terrain={terrain}
+            resolved={resolvedTerrain}
+            areas={areas}
+            editing={terrainEditId}
+            onEdit={setTerrainEditId}
+            onPatch={patchPatch}
+            onAdd={addPatch}
+            onDrop={dropPatch}
           />
         )}
       </div>
@@ -1610,6 +1809,204 @@ function FogPanel({
           onPaint={(dark) => onPaint(rest, dark)}
         />
       )}
+    </section>
+  );
+}
+
+/**
+ * TERRAIN — the ground itself, authored on the map.
+ *
+ * The heading says "the map, not the fight" out loud, because every
+ * other brush in this editor paints tonight and this one doesn't: a
+ * ford is still a ford next campaign, so these rows go out through
+ * `onBoard` beside the areas and the calibration.
+ *
+ * KIND IS FREE TEXT with suggestions, and the datalist is the whole
+ * argument in one control: teller's six words are there for the DM who
+ * doesn't care, and the field takes anything for the DM who does.
+ * Nothing validates against the list, and a system that wants to hang
+ * mechanics on "deep water" does it by matching the word — never by
+ * owning it.
+ *
+ * DESCRIPTION is the field that matters most and the one teller
+ * understands least: "waist-deep, footing treacherous" is what a Warden
+ * reads to rule and what an assistant reads to propose, and it is
+ * passed on untouched.
+ *
+ * A patch claims EITHER brushed cells OR an area. Binding one keeps the
+ * brushed cells on the row rather than discarding them, so unbinding
+ * gives them back — an editor that quietly deleted a shape on a dropdown
+ * change would be one nobody trusts twice.
+ */
+function TerrainPanel({
+  terrain,
+  resolved,
+  areas,
+  editing,
+  onEdit,
+  onPatch,
+  onAdd,
+  onDrop,
+}: {
+  terrain: TerrainPatch[];
+  /** Where each patch actually is, through `resolveTerrain` — the count comes from here. */
+  resolved: { patch: TerrainPatch; cells: Cell[]; missingArea?: string }[];
+  areas: Area[];
+  editing: string | null;
+  onEdit: (id: string | null) => void;
+  onPatch: (id: string, edit: (p: TerrainPatch) => TerrainPatch) => void;
+  onAdd: () => void;
+  onDrop: (id: string) => void;
+}) {
+  const cellsOf = new Map(resolved.map((r) => [r.patch.id, r]));
+  return (
+    <section className={`space-y-1.5 p-3 ${panel}`}>
+      <div className="flex items-center gap-1.5">
+        <span className="font-mono text-[10px] uppercase tracking-widest text-stone-500">
+          terrain
+        </span>
+        <span className="font-mono text-[10px] text-stone-600">{terrain.length}</span>
+        <button
+          className="ml-auto rounded-md bg-stone-800 px-2 py-0.5 text-xs text-emerald-300 hover:bg-stone-700"
+          onClick={onAdd}
+          title="a new patch of ground — brush it, then say what it is"
+        >
+          + patch
+        </button>
+      </div>
+      <p className="text-[11px] leading-snug text-stone-600">
+        The map, not the fight — ground stays on the board and outlives tonight.
+      </p>
+      <datalist id="teller-terrain-kinds">
+        {TERRAIN_KINDS.map((k) => (
+          <option key={k} value={k} />
+        ))}
+      </datalist>
+      {terrain.length === 0 && (
+        <p className="text-xs text-stone-600">no ground authored on this map yet</p>
+      )}
+      {terrain.map((patch) => {
+        const found = cellsOf.get(patch.id);
+        const open = editing === patch.id;
+        return (
+          <div
+            key={patch.id}
+            className={`space-y-1.5 rounded-lg p-1.5 ${open ? 'bg-stone-900/70' : ''}`}
+          >
+            <div className="flex items-center gap-1.5">
+              <button
+                className={`h-4 w-4 shrink-0 rounded border ${
+                  open ? 'border-emerald-400 bg-emerald-400/30' : 'border-emerald-400/40'
+                }`}
+                onClick={() => onEdit(open ? null : patch.id)}
+                title="shape this patch with the brush"
+                aria-label={`shape ${patch.kind || 'patch'}`}
+              />
+              <span className="min-w-0 flex-1 truncate text-xs text-stone-300">
+                {patch.kind || <span className="italic text-stone-500">unnamed ground</span>}
+              </span>
+              <span className="font-mono text-[10px] text-stone-600">
+                {found?.cells.length ?? 0}
+              </span>
+              <button
+                className="rounded px-1 text-xs text-stone-500 hover:text-red-300"
+                onClick={() => onDrop(patch.id)}
+                aria-label={`delete ${patch.kind || 'patch'}`}
+              >
+                ✕
+              </button>
+            </div>
+            {/* A patch pointing at a room that no longer exists covers
+                nothing, and says so rather than looking empty. */}
+            {found?.missingArea && (
+              <p className="text-[11px] leading-snug text-amber-500/90">
+                bound to an area this board hasn't got — it covers nothing until you rebind it
+              </p>
+            )}
+            {open && (
+              <div className="space-y-1.5">
+                <input
+                  className={`${input} w-full text-xs`}
+                  list="teller-terrain-kinds"
+                  value={patch.kind ?? ''}
+                  placeholder="what it is — water, scree, anything"
+                  onChange={(e) =>
+                    onPatch(patch.id, (p) => ({ ...p, kind: e.target.value || undefined }))
+                  }
+                  aria-label="terrain kind"
+                />
+                <textarea
+                  className={`${input} h-14 w-full resize-none text-xs`}
+                  value={patch.description ?? ''}
+                  placeholder="how it plays, in your words — “waist-deep, footing treacherous”"
+                  onChange={(e) =>
+                    onPatch(patch.id, (p) => ({ ...p, description: e.target.value || undefined }))
+                  }
+                  aria-label="terrain description"
+                />
+                <div className="flex items-center gap-1.5">
+                  <label className="flex flex-1 items-center gap-1.5 text-[11px] text-stone-400">
+                    <span>height</span>
+                    <input
+                      className={`${input} w-14 text-right font-mono text-xs`}
+                      type="number"
+                      step="any"
+                      value={patch.elevation ?? ''}
+                      placeholder="—"
+                      onChange={(e) => {
+                        const raw = e.target.value.trim();
+                        const next = raw === '' ? undefined : Number(raw);
+                        onPatch(patch.id, (p) => ({
+                          ...p,
+                          elevation: next !== undefined && Number.isFinite(next) ? next : undefined,
+                        }));
+                      }}
+                      aria-label="terrain elevation"
+                    />
+                  </label>
+                  <button
+                    className={`rounded-md px-2 py-1 text-[11px] ${
+                      patch.blocksSight
+                        ? 'bg-stone-800 text-amber-300'
+                        : 'bg-stone-800 text-stone-500'
+                    }`}
+                    onClick={() =>
+                      onPatch(patch.id, (p) => ({
+                        ...p,
+                        blocksSight: p.blocksSight ? undefined : true,
+                      }))
+                    }
+                    title="teller reports what a sightline crosses; the table rules on what that means"
+                    aria-label={patch.blocksSight ? 'blocks sight' : 'does not block sight'}
+                  >
+                    {patch.blocksSight ? 'blocks sight' : 'see through'}
+                  </button>
+                </div>
+                <select
+                  className={`${input} w-full text-xs`}
+                  value={patch.areaId ?? ''}
+                  onChange={(e) =>
+                    onPatch(patch.id, (p) => ({ ...p, areaId: e.target.value || undefined }))
+                  }
+                  aria-label="bind this patch to an area"
+                >
+                  <option value="">its own brushed cells</option>
+                  {areas.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] leading-snug text-stone-600">
+                  {patch.areaId
+                    ? 'follows that area — brushed cells are kept and come back if you unbind it'
+                    : 'brush its cells with the extend and trim buttons on the left'}
+                </p>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </section>
   );
 }

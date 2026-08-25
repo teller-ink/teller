@@ -340,6 +340,14 @@ export type TokenFacts = {
   inZones?: string[];
   /** Painted zones one cell away — adjacency, not entry. */
   nearZones?: string[];
+  /**
+   * AUTHORED GROUND this token is standing on, by the patch's own word
+   * — the ford, the scree, "waist-high grass". Names only, exactly as
+   * `inZones` is: what each one MEANS is in `terrain` below, once, in
+   * the author's own sentence. Facts compound; prose repeated per token
+   * would just be the same paragraph three times.
+   */
+  inTerrain?: string[];
   /** True for the token the distances were measured from. */
   acting?: boolean;
   /** Straight-line distance from the acting token, in the board's true inches. */
@@ -368,8 +376,66 @@ export type TokenFacts = {
    * second patch in the way. Absent when nothing is painted between
    * them, which is the ordinary case and says nothing rather than
    * saying 'none'.
+   *
+   * AUTHORED GROUND rides the same list, marked `terrain: true` and
+   * carrying `blocksSight` where the author set it — because "what is
+   * in the way" is one question and answering it in two lists would
+   * have a reader compare them. Whether the line is BLOCKED is
+   * deliberately not stated: teller reports the opaque ground it
+   * crossed, and the table rules on what that means (rule 1).
    */
-  between?: { name: string; cells: number; hidden?: boolean }[];
+  between?: {
+    name: string;
+    cells: number;
+    hidden?: boolean;
+    /** Inherent ground rather than something painted this fight. */
+    terrain?: boolean;
+    /** The author's structural flag, passed on rather than acted on. */
+    blocksSight?: boolean;
+  }[];
+};
+
+/**
+ * ONE PATCH OF AUTHORED GROUND, told as facts (`core/terrain.ts`).
+ *
+ * The `description` is the whole point of the record: it is the
+ * AUTHOR'S OWN WORDS about how this ground plays, and it is passed
+ * through untouched because teller has no opinion about what
+ * "waist-deep, footing treacherous" costs. The model interprets, the
+ * Warden rules.
+ */
+export type TerrainFacts = {
+  /** The patch's word — its kind, or the area it claims, made unique across the board. */
+  name: string;
+  /** As authored. Absent when the patch was drawn and not yet named. */
+  kind?: string;
+  /** The author's sentence about how it plays. Never parsed by teller. */
+  description?: string;
+  /** In the plane's calibrated unit, when the author set one. */
+  elevation?: number;
+  blocksSight?: boolean;
+  /** The stored area this patch claims, by name. */
+  area?: string;
+  cells: number;
+  /** Tokens standing on it, by name. */
+  standingIn: string[];
+  /** This patch names an area the board hasn't got, so it covers nothing. Stated, not swallowed. */
+  missingArea?: string;
+};
+
+/**
+ * WHERE A NAMED PLACE STANDS IN THE DARK — the fog question asked of
+ * the board's own geography (`core/fog.ts`).
+ *
+ * Derived, never stored, and it is ambush geometry: what the posse has
+ * NOT seen is a fact about the fight that exists nowhere in the
+ * placements. DM-side, like everything else in here.
+ */
+export type AreaFacts = {
+  name: string;
+  cells: number;
+  /** `partial` is a real answer — a room half-explored is a thing that happens. */
+  status: 'lifted' | 'fogged' | 'partial';
 };
 
 /**
@@ -443,6 +509,14 @@ export type BoardFacts =
       unmeasured?: string;
       tokens: TokenFacts[];
       zones: ZoneFacts[];
+      /**
+       * The authored ground, when the board carries any. Absent rather
+       * than empty — a board with no terrain says nothing, the way a
+       * board with nothing painted on it does.
+       */
+      terrain?: TerrainFacts[];
+      /** The board's named places and where each stands in the dark. */
+      areas?: AreaFacts[];
     };
 
 export type TableSnapshot = {

@@ -32,13 +32,25 @@
 // here invents a second spelling of `hidden`: a hidden token is
 // REPORTED as hidden and kept, because the audience for this is the
 // DM's own screen (see `read:board`, which is a DM-gated need).
+//
+// It measures three things now, and the newest two came out of the same
+// sentence as the first. AUTHORED GROUND (`core/terrain.ts`) rides
+// along whole — kind, elevation, blocksSight, and above all the
+// author's own description, because "waist-deep, footing treacherous"
+// is the most useful sentence anybody will say about that fight and
+// until now it stopped at the board row. AREA STATUS (`core/fog.ts`)
+// rides along derived, because which rooms are still black is ambush
+// geometry the placements cannot express. Both are facts and neither is
+// a verdict: teller says what a straight line CROSSED and never that it
+// was blocked (rule 1).
 
 import { existsSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { bandOf, bandsIn, type Band } from '../core/bands.ts';
-import { inchGrid, type ImageSize } from '../core/fog.ts';
+import { areaStatus, inchGrid, rasterOf, toFog, type ImageSize } from '../core/fog.ts';
+import { labelTerrain, resolveTerrain } from '../core/terrain.ts';
 import { refIn } from '../core/entity.ts';
-import type { BoardFacts, MoveFacts, TokenFacts } from '../core/registry.ts';
+import type { AreaFacts, BoardFacts, MoveFacts, TerrainFacts, TokenFacts } from '../core/registry.ts';
 import type { Session } from './session.ts';
 
 /**
@@ -209,6 +221,7 @@ export function fightGeometry(session: Session, actingId?: string): BoardFacts {
   const state = (raw && typeof raw === 'object' ? raw : {}) as {
     placements?: unknown;
     zones?: unknown;
+    fog?: unknown;
   };
   const placements = Array.isArray(state.placements)
     ? (state.placements as StoredPlacement[])
@@ -219,6 +232,12 @@ export function fightGeometry(session: Session, actingId?: string): BoardFacts {
 
   const size = session.dataDir ? imageSizeOf(join(session.dataDir, board.key)) : undefined;
   const grid = gridOf(board.widthInches, size);
+  // TWO LATTICES, the editor's own distinction (`core/fog.ts`): `grid`
+  // is inches and gates everything physical, `raster` is what paint is
+  // indexed against and every board has one. Terrain and areas are
+  // paint, so an UNCALIBRATED world map still reports which region
+  // somebody is standing in — there is just no distance to go with it.
+  const raster = rasterOf(board.widthInches, size) ?? undefined;
   const heightInches =
     board.widthInches && size?.w && size.h
       ? round1((board.widthInches * size.h) / size.w)
@@ -241,6 +260,24 @@ export function fightGeometry(session: Session, actingId?: string): BoardFacts {
       hidden: z.hidden === true,
     }))
     .filter((z) => z.cells.length > 0);
+
+  // THE GROUND ITSELF — authored on the board row, resolved through the
+  // one door (`core/terrain.ts`). A patch bound to an area the board
+  // hasn't got resolves to nothing and SAYS SO rather than vanishing:
+  // an explicit absence beats a silent one, and a Warden whose ford
+  // stopped existing should hear about it here.
+  const areas = board.areas ?? [];
+  const labels = labelTerrain(board.terrain ?? [], areas);
+  const ground = resolveTerrain(board.terrain ?? [], areas).map(
+    ({ patch, cells, missingArea }) => ({
+      name: labels.get(patch.id) ?? 'unnamed ground',
+      cells: cells as [number, number][],
+      patch,
+      ...(missingArea ? { missingArea } : {}),
+      ...(patch.blocksSight ? { blocksSight: true } : {}),
+      terrain: true as const,
+    }),
+  );
 
   const tokens: TokenFacts[] = [];
   for (const p of placements) {
@@ -273,6 +310,16 @@ export function fightGeometry(session: Session, actingId?: string): BoardFacts {
       if (inside.length) token.inZones = inside.map((z) => z.name);
       if (near.length) token.nearZones = near.map((z) => z.name);
     }
+    // On the PAINT lattice, which is the inch grid on a calibrated
+    // board and the picture's own raster otherwise — so standing-in is
+    // answerable on a world map that will never have inches.
+    if (raster && ground.length) {
+      const cell = cellOf(u, v, raster);
+      const on = ground.filter((g) =>
+        g.cells.some((c) => c[0] === cell[0] && c[1] === cell[1]),
+      );
+      if (on.length) token.inTerrain = on.map((g) => g.name);
+    }
     tokens.push(token);
   }
 
@@ -297,9 +344,16 @@ export function fightGeometry(session: Session, actingId?: string): BoardFacts {
         }
       }
       // And the ground in the way, which is a fact about the PATH and
-      // not about either end of it (see `zonesCrossed`).
-      if (grid) {
-        const crossed = zonesCrossed(from, t, zones, grid);
+      // not about either end of it (see `zonesCrossed`). Painted zones
+      // and authored terrain go in ONE list: "what is between us" is a
+      // single question, and two lists would have a reader compare
+      // them. Each lattice measures its own — they are the same one on
+      // a calibrated board, which is every board with distances.
+      if (grid || raster) {
+        const crossed = [
+          ...(grid ? zonesCrossed(from, t, zones, grid) : []),
+          ...(raster ? zonesCrossed(from, t, ground, raster) : []),
+        ];
         if (crossed.length) t.between = crossed;
       }
     }
@@ -322,6 +376,39 @@ export function fightGeometry(session: Session, actingId?: string): BoardFacts {
         .map((t) => t.name),
     })),
   };
+  if (ground.length) {
+    facts.terrain = ground.map((g): TerrainFacts => {
+      const area = g.patch.areaId ? areas.find((a) => a.id === g.patch.areaId) : undefined;
+      return {
+        name: g.name,
+        ...(g.patch.kind ? { kind: g.patch.kind } : {}),
+        // The author's own sentence, whole and unparsed — the reason
+        // this record exists at all.
+        ...(g.patch.description ? { description: g.patch.description } : {}),
+        ...(g.patch.elevation !== undefined ? { elevation: g.patch.elevation } : {}),
+        ...(g.patch.blocksSight ? { blocksSight: true } : {}),
+        ...(area ? { area: area.name } : {}),
+        cells: g.cells.length,
+        standingIn: tokens.filter((t) => t.inTerrain?.includes(g.name)).map((t) => t.name),
+        ...(g.missingArea ? { missingArea: g.missingArea } : {}),
+      };
+    });
+  }
+  // WHAT THE POSSE HASN'T SEEN. Derived from the dark set at the moment
+  // of asking (`core/fog.ts` — an area stores no fog state), and it is
+  // ambush geometry: which rooms are still black is a fact about this
+  // fight that the placements cannot express. DM-side, like the rest of
+  // this file.
+  if (areas.length) {
+    const fog = toFog(state.fog);
+    facts.areas = areas.map(
+      (area): AreaFacts => ({
+        name: area.name,
+        cells: area.cells.length,
+        status: areaStatus(fog, area),
+      }),
+    );
+  }
   if (board.widthInches) facts.board.widthInches = board.widthInches;
   if (heightInches) facts.board.heightInches = heightInches;
   if (grid) facts.grid = grid;
@@ -510,9 +597,17 @@ export function measureMove(
 export function zonesCrossed(
   from: { u: number; v: number },
   to: { u: number; v: number },
-  zones: { name: string; cells: [number, number][]; hidden?: boolean }[],
+  zones: {
+    name: string;
+    cells: [number, number][];
+    hidden?: boolean;
+    /** Inherent ground, not tonight's paint — carried through to the fact. */
+    terrain?: boolean;
+    /** The author's structural flag. Reported on the crossing, never acted on. */
+    blocksSight?: boolean;
+  }[],
   grid: { cols: number; rows: number },
-): { name: string; cells: number; hidden?: boolean }[] {
+): { name: string; cells: number; hidden?: boolean; terrain?: boolean; blocksSight?: boolean }[] {
   const a = cellOf(from.u, from.v, grid);
   const b = cellOf(to.u, to.v, grid);
   const ends = new Set([`${a[0]},${a[1]}`, `${b[0]},${b[1]}`]);
@@ -527,7 +622,7 @@ export function zonesCrossed(
   const by = to.v * grid.rows;
   const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) * 4));
   const seen = new Set<string>();
-  const hit = new Map<string, { cells: number; hidden?: boolean }>();
+  const hit = new Map<string, { cells: number; hidden?: boolean; terrain?: boolean; blocksSight?: boolean }>();
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
     const key = `${Math.floor(ax + (bx - ax) * t)},${Math.floor(ay + (by - ay) * t)}`;
@@ -536,7 +631,14 @@ export function zonesCrossed(
     for (const zone of zones) {
       if (held.has(zone.name)) continue;
       if (!zone.cells.some((c) => `${c[0]},${c[1]}` === key)) continue;
-      const at = hit.get(zone.name) ?? { cells: 0, ...(zone.hidden ? { hidden: true } : {}) };
+      const at =
+        hit.get(zone.name) ??
+        {
+          cells: 0,
+          ...(zone.hidden ? { hidden: true } : {}),
+          ...(zone.terrain ? { terrain: true } : {}),
+          ...(zone.blocksSight ? { blocksSight: true } : {}),
+        };
       at.cells += 1;
       hit.set(zone.name, at);
     }

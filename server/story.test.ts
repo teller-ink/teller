@@ -250,6 +250,48 @@ describe('door (a) — start this fresh', () => {
     session.campaign.close();
   });
 
+  // A board's GEOGRAPHY travels with the row, not with the fight — the
+  // areas already did, and terrain is the same category of fact for the
+  // same reason: the canyon is a canyon on whoever's host it lands. The
+  // bind between them has to survive too, or a `.story` arrives with a
+  // ford that covers nothing.
+  it('a board’s areas and terrain travel with the row, bind intact', () => {
+    const session = table(dir);
+    session.shelf.putBoard({
+      ...session.shelf.board('brd_canyon')!,
+      areas: [{ id: 'are_ford', name: 'the ford', cells: [[5, 15], [6, 15]] }],
+      terrain: [
+        {
+          id: 'ter_water',
+          kind: 'deep water',
+          description: 'waist-deep, footing treacherous',
+          elevation: -1,
+          areaId: 'are_ford',
+        },
+        { id: 'ter_ridge', kind: 'ridge', blocksSight: true, cells: [[12, 15]] },
+      ],
+    });
+
+    const report = importFresh(stock(away), away, exportStory(session).bytes);
+    const copy = openCampaign(away, report.slug);
+    const landed = openShelf(away).board('brd_canyon')!;
+    expect(landed.areas).toEqual([
+      { id: 'are_ford', name: 'the ford', cells: [[5, 15], [6, 15]] },
+    ]);
+    expect(landed.terrain).toEqual([
+      {
+        id: 'ter_water',
+        kind: 'deep water',
+        description: 'waist-deep, footing treacherous',
+        elevation: -1,
+        areaId: 'are_ford',
+      },
+      { id: 'ter_ridge', kind: 'ridge', blocksSight: true, cells: [[12, 15]] },
+    ]);
+    copy.close();
+    session.campaign.close();
+  });
+
   it('history comes through this door, and only this one', () => {
     const session = table(dir);
     const report = importFresh(stock(away), away, exportStory(session).bytes);

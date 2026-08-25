@@ -36,6 +36,7 @@
  * same thing to the cell.
  */
 import { inchGrid, type Area, type Cell, type Fog } from '../../../core/fog.ts';
+import type { TerrainPatch } from '../../../core/terrain.ts';
 
 export {
   allCells,
@@ -61,6 +62,23 @@ export {
   type Grid,
   type ImageSize,
 } from '../../../core/fog.ts';
+
+/**
+ * Terrain's vocabulary, re-exported for the same reason fog's is: the
+ * editor authors it, the server measures with it, and one spelling of
+ * "which cells is this patch on" is the whole point of `resolveTerrain`.
+ */
+export {
+  labelTerrain,
+  newTerrainId,
+  resolveTerrain,
+  terrainCellKeys,
+  terrainLabel,
+  TERRAIN_KINDS,
+  toTerrain,
+  type ResolvedPatch,
+  type TerrainPatch,
+} from '../../../core/terrain.ts';
 
 /**
  * Where a thing stands and what it looks like (§5).
@@ -129,6 +147,8 @@ export type Board = {
   grid?: { on?: boolean; color?: string; opacity?: number };
   /** Named places — prep-authored, board-side, and never sent to a passive screen. */
   areas?: Area[];
+  /** The ground — same category, same door, same silence toward passive glass. */
+  terrain?: TerrainPatch[];
 };
 
 export const DEFAULT_VIEW: BoardView = { mode: 'fit', zoom: 1, cu: 0.5, cv: 0.5 };

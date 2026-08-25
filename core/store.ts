@@ -33,6 +33,7 @@ import { join } from 'node:path';
 import { newId } from './id.ts';
 import { refIn, toEntity, type Entity, type Ref } from './entity.ts';
 import { toAreas, type Area } from './fog.ts';
+import { toTerrain, type TerrainPatch } from './terrain.ts';
 
 const now = () => new Date().toISOString();
 
@@ -774,6 +775,10 @@ CREATE TABLE IF NOT EXISTS boards (
   -- sits on the asset beside the calibration and not in the fight: the
   -- vault is where it is next campaign too.
   areas         TEXT,
+  -- Authored ground (core/terrain.ts). Same reasoning as areas, and the
+  -- same door: a cliff is where it is whoever is playing, so it sits on
+  -- the asset and not in tonight's state.
+  terrain       TEXT,
   created_at    TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS plugins (
@@ -819,11 +824,17 @@ export type Board = {
   grid?: unknown;
   /**
    * Named patches of the map — the layer fog lifts by name and terrain
-   * will claim later (docs/BATTLEMAP-NEXT.md). Prep-authored and
+   * claims by id (`core/terrain.ts`). Prep-authored and
    * campaign-independent, which is why it rides the shelf row; what a
    * fight did to one is `board_state`.
    */
   areas?: Area[];
+  /**
+   * The ground itself — kinds, the author's words for how they play,
+   * elevations, what blocks a sightline. Same door and same reasoning
+   * as `areas`: geography, not residue.
+   */
+  terrain?: TerrainPatch[];
 };
 
 
@@ -923,6 +934,8 @@ function rowToBoard(row: Row): Board {
   if (grid !== undefined) out.grid = grid;
   const areas = toAreas(parseJson(row.areas));
   if (areas.length) out.areas = areas;
+  const terrain = toTerrain(parseJson(row.terrain));
+  if (terrain.length) out.terrain = terrain;
   return out;
 }
 
@@ -1188,12 +1201,12 @@ export class Shelf {
     const id = board.id ?? newId('brd');
     this.#db
       .prepare(
-        `INSERT INTO boards (id, key, name, width_inches, grid, areas, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO boards (id, key, name, width_inches, grid, areas, terrain, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            key = excluded.key, name = excluded.name,
            width_inches = excluded.width_inches, grid = excluded.grid,
-           areas = excluded.areas`,
+           areas = excluded.areas, terrain = excluded.terrain`,
       )
       .run(
         id,
@@ -1202,6 +1215,7 @@ export class Shelf {
         board.widthInches ?? null,
         board.grid === undefined ? null : JSON.stringify(board.grid),
         board.areas === undefined ? null : JSON.stringify(toAreas(board.areas)),
+        board.terrain === undefined ? null : JSON.stringify(toTerrain(board.terrain)),
         now(),
       );
     return { ...board, id };
@@ -1478,6 +1492,11 @@ export function openShelf(dataDir: string): Shelf {
   }
   try {
     db.exec('ALTER TABLE boards ADD COLUMN areas TEXT');
+  } catch {
+    // already there
+  }
+  try {
+    db.exec('ALTER TABLE boards ADD COLUMN terrain TEXT');
   } catch {
     // already there
   }

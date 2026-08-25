@@ -147,6 +147,7 @@ function boardsOf(session: Session): StoryBoard[] {
     if (board.widthInches !== undefined) entry.widthInches = board.widthInches;
     if (board.grid !== undefined) entry.grid = board.grid;
     if (board.areas?.length) entry.areas = board.areas;
+    if (board.terrain?.length) entry.terrain = board.terrain;
     if (state !== undefined) entry.state = state;
     out.push(entry);
   }
@@ -657,6 +658,7 @@ function applyBoards(
         ...(board.widthInches !== undefined ? { widthInches: board.widthInches } : {}),
         ...(board.grid !== undefined ? { grid: board.grid } : {}),
         ...(board.areas?.length ? { areas: board.areas } : {}),
+        ...(board.terrain?.length ? { terrain: board.terrain } : {}),
       });
       added++;
     }

@@ -321,6 +321,43 @@ describe('read:board, as a door sees it', () => {
     expect(asked.measuredFrom).toBe('Peril');
     expect(asked.tokens.find((t) => t.name === 'Hosa')?.awayInches).toBe(10);
   });
+
+  // Terrain and area-status ride the board slice rather than getting a
+  // need of their own. The gate a human read said "the ground" and this
+  // IS the ground — a second verb would be a second consent dialog for
+  // the same sentence, and the door that never asked still sees none of
+  // it.
+  it('carries the ground and the dark under read:board, and nothing without it', () => {
+    const id = board();
+    shelf.putBoard({
+      ...shelf.board(id)!,
+      areas: [{ id: 'a1', name: 'the vault', cells: [[1, 1]] }],
+      terrain: [{ id: 'ter_a', kind: 'scree', description: 'loose underfoot' }],
+    });
+    session.reload();
+    const acting = session.create({ name: 'Peril', lists: {} }, 'test');
+    session.putBoardState(
+      id,
+      { placements: [{ entityId: acting.id, u: 0.5, v: 0.5 }], fog: { dark: [[1, 1]] } },
+      'test',
+    );
+
+    const asked = snapshotFor(session, needs('read:board — the ground')).board;
+    expect(asked?.present).toBe(true);
+    if (!asked?.present) return;
+    expect(asked.terrain).toEqual([
+      { name: 'scree', kind: 'scree', description: 'loose underfoot', cells: 0, standingIn: [] },
+    ]);
+    expect(asked.areas).toEqual([{ name: 'the vault', cells: 1, status: 'fogged' }]);
+
+    // A door that asked for something else learns none of it — and the
+    // area's NAME is the thing that must not leak, so it is checked as
+    // a string and not just as a missing key.
+    const other = snapshotFor(session, needs('read:entities'));
+    expect(other.board).toBeUndefined();
+    expect(JSON.stringify(other)).not.toContain('the vault');
+    expect(JSON.stringify(other)).not.toContain('scree');
+  });
 });
 
 // The measurement, said in the system's own word for it.
@@ -694,6 +731,188 @@ describe('the ground a straight line crosses', () => {
     // nothing against itself.
     expect(byName.get('Barrett')?.between).toBeUndefined();
     expect(byName.get('Peril')?.between).toBeUndefined();
+  });
+});
+
+// THE GROUND ITSELF — authored on the board, measured here.
+//
+// The reason this exists is the same fact-you-hold-and-don't-pass-on
+// that the whole file is about, one layer down: a Warden who wrote
+// "waist-deep, footing treacherous" onto the ford has said the most
+// useful sentence anybody will say about that fight, and until now it
+// stopped at the board row. What is pinned is that it arrives WHOLE
+// (teller has no opinion about what it costs), that standing-in and
+// crossing are answered separately, and that `blocksSight` travels as
+// a flag on the crossing rather than as a verdict about the sightline.
+describe('authored ground, as facts', () => {
+  const cell = (col: number, row: number) => ({ u: (col + 0.5) / 40, v: (row + 0.5) / 30 });
+
+  /** A board with a ford across the middle and a ridge beyond it. */
+  function crossing(): { id: string; acting: { id: string }; far: { id: string } } {
+    const id = board();
+    shelf.putBoard({
+      ...shelf.board(id)!,
+      areas: [{ id: 'are_ford', name: 'the ford', cells: [[5, 15], [6, 15]] }],
+      terrain: [
+        {
+          id: 'ter_water',
+          kind: 'deep water',
+          description: 'waist-deep, footing treacherous',
+          elevation: -1,
+          areaId: 'are_ford',
+        },
+        {
+          id: 'ter_ridge',
+          kind: 'ridge',
+          elevation: 6,
+          blocksSight: true,
+          cells: [[12, 15]],
+        },
+      ],
+    });
+    session.reload();
+    const acting = session.create({ name: 'Peril', lists: {} }, 'test');
+    const wading = session.create({ name: 'Hosa', lists: {} }, 'test');
+    const far = session.create({ name: 'Barrett', lists: {} }, 'test');
+    session.putBoardState(
+      id,
+      {
+        placements: [
+          { id: 'plc_a', entityId: acting.id, ...cell(2, 15) },
+          { id: 'plc_b', entityId: wading.id, ...cell(5, 15) },
+          { id: 'plc_c', entityId: far.id, ...cell(20, 15) },
+        ],
+      },
+      'test',
+    );
+    return { id, acting, far };
+  }
+
+  it('reports each patch with the author’s own words, and who is standing on it', () => {
+    const { acting } = crossing();
+    const facts = fightGeometry(session, acting.id);
+    if (!facts.present) throw new Error(facts.why);
+    const byName = new Map((facts.terrain ?? []).map((t) => [t.name, t]));
+    expect(byName.get('deep water')).toEqual({
+      name: 'deep water',
+      kind: 'deep water',
+      // Passed on whole — teller never parses this and never summarises it.
+      description: 'waist-deep, footing treacherous',
+      elevation: -1,
+      area: 'the ford',
+      cells: 2,
+      standingIn: ['Hosa'],
+    });
+    expect(byName.get('ridge')).toMatchObject({
+      elevation: 6,
+      blocksSight: true,
+      cells: 1,
+      standingIn: [],
+    });
+    // And the token says which ground it is on, by name — the sentence
+    // itself lives once, above.
+    expect(facts.tokens.find((t) => t.name === 'Hosa')?.inTerrain).toEqual(['deep water']);
+    expect(facts.tokens.find((t) => t.name === 'Peril')?.inTerrain).toBeUndefined();
+  });
+
+  it('reports the ground a sightline crosses, carrying blocksSight — never a verdict', () => {
+    const { acting } = crossing();
+    const facts = fightGeometry(session, acting.id);
+    if (!facts.present) throw new Error(facts.why);
+    const barrett = facts.tokens.find((t) => t.name === 'Barrett');
+    expect(barrett?.between).toEqual([
+      { name: 'deep water', cells: 2, terrain: true },
+      { name: 'ridge', cells: 1, terrain: true, blocksSight: true },
+    ]);
+    // Nowhere does anything say the line IS blocked. teller reports the
+    // opaque ground it crossed; the table rules (rule 1).
+    expect(JSON.stringify(facts)).not.toContain('blocked');
+  });
+
+  it('a patch bound to an area the board lost covers nothing, and says which area', () => {
+    const id = board();
+    shelf.putBoard({
+      ...shelf.board(id)!,
+      terrain: [{ id: 'ter_a', kind: 'mud', areaId: 'are_gone' }],
+    });
+    session.reload();
+    const acting = session.create({ name: 'Peril', lists: {} }, 'test');
+    session.putBoardState(id, { placements: [{ entityId: acting.id, ...cell(2, 2) }] }, 'test');
+    const facts = fightGeometry(session, acting.id);
+    if (!facts.present) throw new Error(facts.why);
+    expect(facts.terrain).toEqual([
+      { name: 'mud', kind: 'mud', cells: 0, standingIn: [], missingArea: 'are_gone' },
+    ]);
+  });
+
+  it('answers standing-in on an UNCALIBRATED board, where there is no distance to give', () => {
+    const id = board(null);
+    shelf.putBoard({
+      ...shelf.board(id)!,
+      terrain: [{ id: 'ter_a', kind: 'marsh', cells: [[20, 15]] }],
+    });
+    session.reload();
+    const acting = session.create({ name: 'Peril', lists: {} }, 'test');
+    // The picture's own raster is 40 columns wide (RASTER_COLS), 30 rows
+    // over a 1200×900 picture — so this lands in [20, 15].
+    session.putBoardState(
+      id,
+      { placements: [{ entityId: acting.id, u: 20.5 / 40, v: 15.5 / 30 }] },
+      'test',
+    );
+    const facts = fightGeometry(session, acting.id);
+    if (!facts.present) throw new Error(facts.why);
+    expect(facts.tokens[0].inTerrain).toEqual(['marsh']);
+    expect(facts.tokens[0].awayInches).toBeUndefined();
+    expect(facts.grid).toBeUndefined();
+  });
+
+  it('a board with no terrain says nothing rather than an empty list', () => {
+    const id = board();
+    const acting = session.create({ name: 'Peril', lists: {} }, 'test');
+    session.putBoardState(id, { placements: [{ entityId: acting.id, ...cell(2, 2) }] }, 'test');
+    const facts = fightGeometry(session, acting.id);
+    if (!facts.present) throw new Error(facts.why);
+    expect(facts.terrain).toBeUndefined();
+    expect(facts.areas).toBeUndefined();
+  });
+});
+
+// WHAT THE POSSE HASN'T SEEN — ambush geometry, derived from the dark.
+//
+// An area stores no fog state at all (`core/fog.ts`), so this is worked
+// out at the moment of asking. It matters to a proposer for a reason
+// the placements cannot express: a creature two squares away in a room
+// nobody has walked into is not the same tactical fact as one standing
+// in the open.
+describe('where the board’s named places stand in the dark', () => {
+  it('reports lifted, fogged and partial per area', () => {
+    const id = board();
+    shelf.putBoard({
+      ...shelf.board(id)!,
+      areas: [
+        { id: 'a1', name: 'the vault', cells: [[1, 1], [1, 2]] },
+        { id: 'a2', name: 'the porch', cells: [[2, 2]] },
+        { id: 'a3', name: 'the yard', cells: [[3, 3], [3, 4]] },
+      ],
+    });
+    session.reload();
+    const acting = session.create({ name: 'Peril', lists: {} }, 'test');
+    session.putBoardState(
+      id,
+      {
+        placements: [{ entityId: acting.id, u: 0.5, v: 0.5 }],
+        fog: { dark: [[1, 1], [1, 2], [3, 3]] },
+      },
+      'test',
+    );
+    const facts = fightGeometry(session, acting.id);
+    if (!facts.present) throw new Error(facts.why);
+    expect(facts.areas).toEqual([
+      { name: 'the vault', cells: 2, status: 'fogged' },
+      { name: 'the porch', cells: 1, status: 'lifted' },
+      { name: 'the yard', cells: 2, status: 'partial' },
+    ]);
   });
 });
 

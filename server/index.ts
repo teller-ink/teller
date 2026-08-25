@@ -126,6 +126,7 @@ import {
   publicTurnState,
 } from './public.ts';
 import { toAreas } from '../core/fog.ts';
+import { toTerrain } from '../core/terrain.ts';
 import { ACTIVE_CAMPAIGN, Host, Session, type EntryEdit } from './session.ts';
 import { peekUndo, undo } from './undo.ts';
 import type { TurnOp } from './turn.ts';
@@ -2344,6 +2345,15 @@ export async function handleApi(
         const areas = toAreas(body.areas);
         if (areas.length) next.areas = areas;
         else delete next.areas;
+      }
+      // The ground, through the same door and for the same reason
+      // (`core/terrain.ts`): a cliff is not something tonight did. Ids
+      // are minted here too, so the brush can author a patch without
+      // knowing how to name one.
+      if ('terrain' in body) {
+        const terrain = toTerrain(body.terrain);
+        if (terrain.length) next.terrain = terrain;
+        else delete next.terrain;
       }
       const saved = session.shelf.putBoard(next);
       session.campaign.append(null, actorOf(auth), 'board.edited', {

@@ -166,7 +166,14 @@ export function createBoard(board: {
 /** What a board IS, corrected after the fact (rule 1 — every stat is typed over). */
 export function patchBoard(
   id: string,
-  patch: { name?: string; widthInches?: number | null; grid?: unknown },
+  patch: {
+    name?: string;
+    widthInches?: number | null;
+    grid?: unknown;
+    /** The board's own geography — named places and the ground itself. */
+    areas?: unknown;
+    terrain?: unknown;
+  },
 ): Promise<Board> {
   return api<Board>(`/api/boards/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch });
 }

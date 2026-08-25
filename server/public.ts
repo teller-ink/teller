@@ -80,7 +80,7 @@ export type PublicEntity = {
 };
 
 export type PublicBoard = {
-  /** The shelf row MINUS its areas — see `publicBoardRow`. */
+  /** The shelf row MINUS its areas and its terrain — see `publicBoardRow`. */
   board: Board;
   /** Placements minus the hidden ones, fog flattened. Never the raw row. */
   state: unknown;
@@ -97,9 +97,17 @@ export type PublicBoard = {
  * have ridden out beside the flattened mask that exists precisely to
  * withhold it. A board row is not player-safe by default and no future
  * field on it should be assumed to be.
+ *
+ * TERRAIN is the same answer, arrived at the same way: "the ford is
+ * here, it is waist-deep, and the ridge behind it blocks sight" is the
+ * Warden's prep and half of it is written about ground nobody has
+ * reached yet. Whether a display RENDERS inherent data is a later,
+ * per-display choice (docs/BATTLEMAP-NEXT.md); until that ships the
+ * boundary answer is the strict one, and the redaction is the ABSENCE
+ * — nothing is flattened, nothing is dimmed, the field is not there.
  */
 export function publicBoardRow(board: Board): Board {
-  const { areas: _areas, ...rest } = board;
+  const { areas: _areas, terrain: _terrain, ...rest } = board;
   return rest;
 }
 

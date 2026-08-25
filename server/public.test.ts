@@ -470,6 +470,52 @@ describe('GET /api/public', () => {
     await call('PUT', '/api/campaign/refs', { key: true, body: { board: null } });
   });
 
+  // Phase 1's board row grew a SECOND field that is not player-safe,
+  // and the comment above already said no future field should be
+  // assumed to be. Terrain is the Warden's prep — where the ford is,
+  // how deep it is, what the ridge hides — and half of it describes
+  // ground nobody has reached. Whether a display renders inherent data
+  // is a later per-display choice; until then the redaction is the
+  // ABSENCE, at both doors, exactly as it is for areas.
+  it('a board’s terrain never travels — not the kinds, not the author’s words', async () => {
+    session.shelf.putBoard({
+      id: boardId,
+      key: 'maps/crossing.png',
+      name: 'The Crossing',
+      areas: [{ id: 'a1', name: 'the ford', cells: [[9, 9]] }],
+      terrain: [
+        {
+          id: 'ter_a',
+          kind: 'deep water',
+          description: 'waist-deep, footing treacherous',
+          elevation: -1,
+          areaId: 'a1',
+        },
+        { id: 'ter_b', kind: 'ridge', blocksSight: true, cells: [[4, 4]] },
+      ],
+    });
+    await call('PUT', '/api/campaign/refs', { key: true, body: { board: boardId } });
+    session.putBoardState(boardId, { fog: { dark: [[9, 9]] } }, 'console');
+
+    const { body } = await call('GET', '/api/public', { key: true });
+    expect(body.board.board.terrain).toBeUndefined();
+    expect(body.board.board.areas).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain('deep water');
+    expect(JSON.stringify(body)).not.toContain('treacherous');
+    expect(JSON.stringify(body)).not.toContain('blocksSight');
+
+    // And the shelf listing, the other door onto the same row.
+    const display = await passiveScreen();
+    const listed = await call('GET', '/api/boards', { display });
+    expect(listed.body[0].terrain).toBeUndefined();
+    expect(JSON.stringify(listed.body)).not.toContain('ridge');
+    // The DM's own listing still has all of it — the redaction is about
+    // who is asking, never about the row losing a field.
+    expect((await call('GET', '/api/boards', { key: true })).body[0].terrain).toHaveLength(2);
+
+    await call('PUT', '/api/campaign/refs', { key: true, body: { board: null } });
+  });
+
   // Phase 0.5: a board with no declared width now has a paint lattice
   // (the picture's own raster), so a world map can be fogged. The public
   // boundary must not notice — the set IS the mask either way, and a

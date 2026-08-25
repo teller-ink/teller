@@ -34,6 +34,7 @@
 import { writeArchive, openArchive, archiveJson, type ArchiveEntry } from './archive.ts';
 import { toEntity, type Entity, type Ref } from './entity.ts';
 import { toAreas, type Area } from './fog.ts';
+import { toTerrain, type TerrainPatch } from './terrain.ts';
 import { newId } from './id.ts';
 
 /**
@@ -310,6 +311,8 @@ export type StoryBoard = {
   grid?: unknown;
   /** The named places on it — geography, so it travels with the row and not with the fight. */
   areas?: Area[];
+  /** The ground itself — same category as the areas, so it travels the same way. */
+  terrain?: TerrainPatch[];
   state?: unknown;
 };
 
@@ -429,6 +432,10 @@ function toStoryBoard(raw: unknown): StoryBoard | undefined {
   if (o.areas !== undefined) {
     const areas = toAreas(o.areas);
     if (areas.length) out.areas = areas;
+  }
+  if (o.terrain !== undefined) {
+    const terrain = toTerrain(o.terrain);
+    if (terrain.length) out.terrain = terrain;
   }
   if (o.state !== undefined) out.state = o.state;
   return out;
