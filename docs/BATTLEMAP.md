@@ -7,6 +7,10 @@ why. The thesis still governs: the table TV is the GROUND; physical
 minis and terrain are the actors; everything here is presentation +
 bookkeeping.
 
+**Where it's going**: the revamp — areas, terrain, z, objects, fog
+bases — is planned in `BATTLEMAP-NEXT.md` (2026-08-24). This file
+stays the record of what SHIPPED; phases land here as they ship.
+
 **The design did not change in the fold; the facts moved house**
 (2026-08-24, ported end to end). A **board** is a shelf ASSET — the
 picture, its physical width, its grid style — reusable across
@@ -98,8 +102,11 @@ blurring the reveal mask, not from smaller geometry.
   reach the table.
 - Fog never switches itself on. Reaching for the tool or shaping an
   area leaves the table clear; blacking it out is a decision.
-- No vision simulation, ever — the Warden's finger is the vision
-  system.
+- No vision simulation SHIPPED — the Warden's finger is the vision
+  system. ("Ever" died with the simulation restriction, 2026-08-24:
+  vision may arrive as a plugin through the `fog.set` door,
+  `docs/BATTLEMAP-NEXT.md` — proposing reveals the Warden sees happen
+  and can step back, never replacing the finger.)
 
 ## Tokens and painted ground
 

@@ -15,9 +15,15 @@ place anyone plays.
 > engine.**
 
 teller exists because Foundry/Arkenforge are built for *remote* play
-(simulation engines), and D&D Beyond is slow and not-quite-right. An
-in-person tool is presentation + bookkeeping software, not a rules
-simulator.
+(simulation engines), and D&D Beyond is slow and not-quite-right. The
+FLOOR of an in-person tool is presentation + bookkeeping software —
+and the floor never requires more. **The simulation restriction died
+2026-08-24** (Brian: "this tool is growing beyond that archaic idea"):
+simulator territory — line-of-sight, pathfinding, movement costs,
+vision — is open, mostly as plugins, always as opt-in rungs above a
+floor that stays the best bookkeeper at an in-person table with
+everything off. What distinguishes teller from a simulation engine is
+no longer what it may compute; it's the three clauses in rule 1.
 
 **Prep is in scope** (Brian, 2026-08-09). The thesis governs PLAY — what
 happens at the table stays physical — but building encounters, bestiaries
@@ -29,10 +35,12 @@ may distribute it is the author's affair). Reference and prep live
 per-instance, on the DM's own host.
 
 "The humans are the rules engine" is about AUTHORITY, not arithmetic
-(amended 2026-08-10). teller may roll dice and derive defaults; every
-result lands somewhere a human can overrule it, and the table's ruling
-beats the book's. What it must never do is decide something nobody can
-change.
+(amended 2026-08-10; finished 2026-08-24). teller may compute anything
+— dice, defaults, sightlines, paths; every result lands somewhere a
+human can overrule it, nothing computed is ever enforced, and the
+table's ruling beats the book's. The humans don't do the arithmetic;
+they OUTRANK it. What teller must never do is decide something nobody
+can change.
 
 ## The rebuild is the app now — `docs/CORE-NEXT.md` is the model
 
@@ -137,6 +145,10 @@ play-path code may depend on it.
   actually SHIPPED: coordinate spaces, scale, the calibrated 1-inch grid,
   tokens, fog, hidden-means-stripped. Scenes, fog and tokens are built;
   don't design them again from this file.
+- **`docs/BATTLEMAP-NEXT.md`** — the battlemap revamp PLAN (areas,
+  terrain, z, objects, fog bases, the plugin write contract), designed
+  2026-08-24. Read it before building anything map-shaped; shipped
+  phases migrate into BATTLEMAP.md and die there.
 - **`docs/SYSTEMS.md`** — the WiW survey: every subsystem in the
   Guidebook, its data shape, its surface, and what's built. **Read the
   relevant entry before modelling any mechanic** — it exists because
@@ -180,13 +192,22 @@ three days stating a version of rule 4 that no longer existed).
 Every stat is a stored value, and a human can always type over it.
 Computation is ALLOWED — it *proposes* into the same slots and the
 stored value stays authoritative. Roll dice, derive defaults, sort a
-list: fine. What's forbidden is automation with no override, or a
-number a human can't find and change.
+list, cast a sightline, cost a path: fine. What's forbidden is
+ENFORCEMENT — automation with no override, a number a human can't
+find and change, a refused move, a greyed button, a fog nobody can
+paint over.
 
 This was originally written as "track, don't compute — there is NO
 rules engine", which read as a ban on computing at all and was cited
 that way. It never was: the rule is about **who wins**, not about
-whether teller may do arithmetic.
+whether teller may do arithmetic. Finished 2026-08-24 (the battlemap
+revamp, `docs/BATTLEMAP-NEXT.md`): the simulation restriction is
+dead, and this rule is what remains — three clauses. Every computed
+output lands in a slot a human can overrule; nothing computed is ever
+enforced; **the floor never requires it** (teller with everything off
+is still the best bookkeeper at an in-person table). Plugins doing
+simulator work write through declared, scoped verbs consented at
+enable — never credentials (rule 7's shape, stated for plugins).
 
 ### 2. Generic primitives, not game concepts
 
