@@ -50,7 +50,7 @@
 // is appended pointing at what it undid (rule 1: an undo is a
 // mutation like any other, and a human can undo the undo).
 
-import type { Entity, Entry } from '../core/entity.ts';
+import type { Entity, Entry, Ref } from '../core/entity.ts';
 import type { EventRow } from '../core/store.ts';
 import type { Session } from './session.ts';
 import { toTurnState } from './turn.ts';
@@ -113,6 +113,13 @@ type Cascade = {
   events?: number[];
   turn?: unknown;
   boards?: { boardId: string; data: unknown }[];
+  /**
+   * Which map the table was aimed at before, when the action aimed it
+   * somewhere else (a deploy whose recipe named its own board). Present
+   * and null means "it was showing nothing"; absent means the action
+   * never touched the aim, and undo must leave it alone.
+   */
+  showing?: Ref | null;
 };
 
 function cascadeOf(p: Payload): Cascade | undefined {
@@ -343,6 +350,9 @@ function restoreCleared(session: Session, p: Payload, actor: string): void {
   for (const board of cascade?.boards ?? []) {
     session.putBoardState(board.boardId, board.data, actor);
   }
+  // And the aim, LAST — every board it names exists again by now, so
+  // the table is never pointed at a map whose state is still mid-restore.
+  if (cascade?.showing !== undefined) session.setShowingBoard(cascade.showing, actor);
 }
 
 /**

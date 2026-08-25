@@ -262,10 +262,12 @@ pattern for all of them:
   needs-consent gate — "may reveal and hide fog" — not by API
   convenience. No plugin ever holds the DM key's authority or touches
   the database.
-- First doors: **`fog.set`** (toggle existing areas revealed/hidden —
-  what a vision plugin needs) and, separately, **`fog.paint`**
-  (create/modify areas — a bigger power almost nothing should ask
-  for). Approving the small one never grants the big one.
+- First doors, refined by TEL-130 (the vision plugin's actual need):
+  the small consented verb is **cell-level darken/clear** ("may
+  reveal and hide fog") — auto-reveal clears cells along sightlines,
+  not whole areas — and, separately, **`fog.paint`** (create/modify
+  areas — a bigger power almost nothing should ask for). Approving
+  the small one never grants the big one.
 - Every use logs as an ordinary event (rule 3) and lands where the
   Warden sees it happen and can step it back (rule 1).
 - **Prerequisite: board-write undo.** Board and fog writes are

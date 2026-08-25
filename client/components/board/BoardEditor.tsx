@@ -128,10 +128,36 @@ type Drag =
   | { kind: 'pan'; x: number; y: number }
   | { kind: 'paint'; op: 'add' | 'remove'; last: string }
   | { kind: 'token'; id: string }
+  | { kind: 'staged'; key: string }
   | { kind: 'frame' }
   | null;
 
 export type RosterRow = { id: string; name: string; type?: string | null };
+
+/**
+ * One foe of a PREPARED FIGHT, being arranged on this map.
+ *
+ * It is not a token and it is not an entity: nothing exists on the
+ * table yet. A staged foe is where a creature will START, drawn here so
+ * an ambush can be laid the week before it is run — deploying turns
+ * each one into a real entity and a real token at this spot
+ * (`Session.deployEncounter`). Confusing "will start here" with "is
+ * here" mid-session would be the worst kind of wrong, so they are drawn
+ * as outlines and only while the staging mode is on.
+ *
+ * `key` is this editor's handle on the chip, not a stored fact — the
+ * recipe is a list, and the caller decides what a chip means when it
+ * writes back (`client/tools/encounters.tsx`).
+ */
+export type StagedFoe = {
+  key: string;
+  /** What deploy will call it — "Bark Watcher 3", already expanded. */
+  name: string;
+  u?: number;
+  v?: number;
+  /** Waiting out of sight — the token deploy places starts hidden. */
+  hidden?: boolean;
+};
 
 export function BoardEditor({
   board,
@@ -143,6 +169,9 @@ export function BoardEditor({
   ppiY,
   tableViewport,
   combatRunning,
+  staged,
+  stagedFight,
+  onStaged,
   onState,
   onBoard,
   onClose,
@@ -159,6 +188,15 @@ export function BoardEditor({
   ppiY?: number;
   tableViewport?: { w: number; h: number };
   combatRunning?: boolean;
+  /**
+   * A prepared fight's foes, to arrange on this map — present only when
+   * the editor was opened FROM an encounter. Absent is the ordinary
+   * board workshop, unchanged, with no staging affordance anywhere.
+   */
+  staged?: StagedFoe[];
+  /** The fight's name, so the rail can say which one is being arranged. */
+  stagedFight?: string;
+  onStaged?: (next: StagedFoe[]) => void;
   onState: (next: BoardState) => void;
   onBoard: (patch: {
     name?: string;
@@ -189,6 +227,11 @@ export function BoardEditor({
   /** Which patch of ground the terrain brush is shaping. */
   const [terrainEditId, setTerrainEditId] = useState<string | null>(null);
   const [carrying, setCarrying] = useState<RosterRow | null>(null);
+  // Arranging a fight is a MODE, and it starts ON because the editor was
+  // opened from the fight — but it turns off, so the same trip can end
+  // with fog work on the map the ghosts would otherwise be sitting over.
+  const [arranging, setArranging] = useState(true);
+  const [stagedId, setStagedId] = useState<string | null>(null);
 
   // --- the draft ------------------------------------------------------
   //
@@ -473,6 +516,41 @@ export function BoardEditor({
       (draftRef.current.placements ?? []).map((p) => (p.id === id ? { ...p, ...patch } : p)),
       living,
     );
+
+  // --- the STAGING draft ----------------------------------------------
+  //
+  // A fourth draft, and the only one whose destination is not this
+  // board at all: staged foes belong to the ENCOUNTER, and go back out
+  // through the templates door the caller holds. Dragged live and
+  // written once on release, same as a token — a write per pointer
+  // sample would be a write per pixel.
+  //
+  // Adopting the parent's copy never happens mid-drag, or the foe under
+  // your finger snaps back to where the server last saw it.
+
+  const [stagedDraft, setStagedDraft] = useState<StagedFoe[]>(staged ?? []);
+  const stagedRef = useRef<StagedFoe[]>(staged ?? []);
+  const incomingStaged = JSON.stringify(staged ?? []);
+  useEffect(() => {
+    if (dragRef.current?.kind === 'staged') return;
+    const next = JSON.parse(incomingStaged) as StagedFoe[];
+    stagedRef.current = next;
+    setStagedDraft(next);
+  }, [incomingStaged]);
+
+  const writeStaged = (next: StagedFoe[], living = true) => {
+    stagedRef.current = next;
+    setStagedDraft(next);
+    if (living) onStaged?.(next);
+  };
+
+  const setStaged = (key: string, patch: Partial<StagedFoe>, living = true) =>
+    writeStaged(
+      stagedRef.current.map((f) => (f.key === key ? { ...f, ...patch } : f)),
+      living,
+    );
+
+  const stagedFoe = stagedDraft.find((f) => f.key === stagedId && f.u !== undefined) ?? null;
 
   const setFog = (next: Fog) => commit({ ...draftRef.current, fog: next });
 
@@ -794,6 +872,10 @@ export function BoardEditor({
       const token = (draftRef.current.placements ?? []).find((p) => p.id === d.id);
       // Option bypasses the snap, for fine placement.
       setPlacement(d.id, place(uv.u, uv.v, token?.sizeInches ?? 1, e.altKey), false);
+    } else if (d.kind === 'staged') {
+      const uv = toUv(e.clientX, e.clientY);
+      if (!uv) return;
+      setStaged(d.key, place(uv.u, uv.v, 1, e.altKey), false);
     } else if (d.kind === 'frame') {
       const uv = toUv(e.clientX, e.clientY);
       if (uv) setView({ cu: uv.u, cv: uv.v }, false);
@@ -805,6 +887,9 @@ export function BoardEditor({
     dragRef.current = null;
     // One write for the whole drag, not one per pointer sample.
     if (d?.kind === 'token' || d?.kind === 'frame') commit(draftRef.current);
+    // The staged foes go somewhere else entirely — the recipe, through
+    // the caller's templates door — so they get their own release.
+    if (d?.kind === 'staged') onStaged?.(stagedRef.current);
   };
 
   // --- the table's frame ----------------------------------------------
@@ -1030,6 +1115,48 @@ export function BoardEditor({
                 </button>
               );
             })}
+
+          {/* Prepared foes — drawn dashed, hollow and translucent
+              because they are NOT on the table. Nothing here exists
+              until the fight is deployed, and a ghost that read as a
+              token would have the Warden counting minis that aren't
+              out. Only while the mode is on, for the same reason. */}
+          {arranging &&
+            stagedDraft
+              .filter((f) => f.u !== undefined && f.v !== undefined)
+              .map((foe) => {
+                const s = px(1);
+                return (
+                  <button
+                    key={foe.key}
+                    className={`absolute flex items-center justify-center rounded-full border-2 border-dashed font-mono font-bold text-stone-100 ${
+                      tool !== 'select' || carrying ? 'pointer-events-none' : ''
+                    } ${stagedId === foe.key ? 'border-amber-300 ring-2 ring-amber-300' : 'border-stone-200/70'}`}
+                    style={{
+                      left: (foe.u ?? 0) * baseW,
+                      top: (foe.v ?? 0) * baseH,
+                      width: s,
+                      height: s,
+                      fontSize: Math.max(8, s * 0.3),
+                      backgroundColor: 'rgba(28,25,23,0.55)',
+                      transform: 'translate(-50%, -50%)',
+                      opacity: foe.hidden ? 0.5 : 0.85,
+                    }}
+                    onPointerDown={(e) => {
+                      if (tool !== 'select' || carrying) return;
+                      e.stopPropagation();
+                      capture(e);
+                      setSelectedId(null);
+                      setStagedId(foe.key);
+                      dragRef.current = { kind: 'staged', key: foe.key };
+                    }}
+                    aria-label={`staged ${foe.name}`}
+                    title={`${foe.name} — starts here when this fight is deployed`}
+                  >
+                    {foe.name.slice(0, 2)}
+                  </button>
+                );
+              })}
         </div>
       </div>
 
@@ -1099,6 +1226,32 @@ export function BoardEditor({
 
       {/* ---------------- left tool rail ---------------- */}
       <div className="absolute left-3 top-1/2 flex -translate-y-1/2 flex-col gap-2">
+        {/* Arranging a fight is a MODE, so it belongs with the modes —
+            the old editor learned that from a dropdown in the far
+            corner labelled "arrange no fight", which read like an
+            instruction rather than a state. It only appears when the
+            editor was opened from a fight; a board opened from the
+            shelf has no ghosts to show and no button to press. */}
+        {staged && (
+          <div className={`flex flex-col gap-1 p-1 ${panel}`}>
+            <button
+              className={toolBtn(arranging)}
+              onClick={() => {
+                setArranging((on) => !on);
+                setStagedId(null);
+              }}
+              title={
+                arranging
+                  ? 'stop arranging — back to working on the map'
+                  : `arrange ${stagedFight ?? 'this fight'} on this map`
+              }
+              aria-label={arranging ? 'stop arranging' : 'arrange the fight'}
+              aria-pressed={arranging}
+            >
+              ♟
+            </button>
+          </div>
+        )}
         <div className={`flex flex-col gap-1 p-1 ${panel}`}>
           <button
             className={toolBtn(tool === 'select')}
@@ -1367,6 +1520,43 @@ export function BoardEditor({
         )}
       </div>
 
+      {/* ---------------- staged-foe inspector ---------------- */}
+      {arranging && stagedFoe && (
+        <div
+          className={`absolute bottom-24 left-1/2 flex max-w-[92vw] -translate-x-1/2 flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 ${panel}`}
+        >
+          <span className="font-mono text-xs text-stone-300">{stagedFoe.name}</span>
+          <span className="font-mono text-[10px] uppercase tracking-widest text-stone-600">
+            starts here
+          </span>
+          <button
+            className={`rounded-lg px-2.5 py-1.5 font-mono text-xs ${
+              stagedFoe.hidden ? 'bg-stone-800 text-amber-300' : 'bg-emerald-800/70 text-emerald-100'
+            }`}
+            onClick={() => setStaged(stagedFoe.key, { hidden: stagedFoe.hidden ? undefined : true })}
+            title={
+              stagedFoe.hidden
+                ? 'waiting out of sight — deploys hidden, and the table never sees it until you reveal it'
+                : 'in the open — the table sees it the moment the fight deploys'
+            }
+            aria-label={stagedFoe.hidden ? 'waiting out of sight' : 'in the open'}
+          >
+            {stagedFoe.hidden ? 'waiting out of sight' : 'in the open'}
+          </button>
+          {/* Off the map, not out of the fight — it still deploys and
+              still joins the order, just without a starting square. */}
+          <button
+            className="rounded-lg bg-stone-800 px-2.5 py-1.5 font-mono text-xs text-stone-400 hover:text-red-300"
+            onClick={() => {
+              setStaged(stagedFoe.key, { u: undefined, v: undefined });
+              setStagedId(null);
+            }}
+          >
+            off the map
+          </button>
+        </div>
+      )}
+
       {/* ---------------- token inspector ---------------- */}
       {selected && (
         <div
@@ -1482,6 +1672,37 @@ export function BoardEditor({
 
       {/* ---------------- the roster strip ---------------- */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-3 p-3">
+        <div className="flex flex-col gap-2">
+        {/* Foes of this fight not on the map yet. Opening the editor
+            places NOTHING by itself — a map you only looked at should
+            never come away changed, and the recipe is the thing that
+            would have changed. Tap one and it lands at the middle of
+            the frame, then you drag it where it belongs. */}
+        {arranging && stagedDraft.some((f) => f.u === undefined) && (
+          <div
+            className={`pointer-events-auto flex max-w-md flex-wrap items-center gap-1.5 p-2 ${panel}`}
+          >
+            <span className="font-mono text-[10px] uppercase tracking-widest text-stone-500">
+              not placed
+            </span>
+            {stagedDraft
+              .filter((f) => f.u === undefined)
+              .map((foe) => (
+                <button
+                  key={foe.key}
+                  className="rounded-md bg-stone-800 px-2 py-1 text-xs text-stone-200 transition-colors hover:bg-stone-700"
+                  onClick={() => {
+                    setStaged(foe.key, place(view.cu, view.cv, 1));
+                    setSelectedId(null);
+                    setStagedId(foe.key);
+                  }}
+                  title={`${foe.name} — tap to drop it at the middle of the frame`}
+                >
+                  {foe.name}
+                </button>
+              ))}
+          </div>
+        )}
         <div className={`pointer-events-auto flex max-w-full flex-wrap items-center gap-1.5 p-2 ${panel}`}>
           <span className="font-mono text-[10px] uppercase tracking-widest text-stone-500">
             {carrying ? 'tap the map' : 'place'}
@@ -1507,6 +1728,7 @@ export function BoardEditor({
           >
             + marker
           </button>
+        </div>
         </div>
       </div>
     </div>

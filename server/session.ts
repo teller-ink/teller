@@ -448,9 +448,34 @@ export class Session {
    * ordinary state and not a fault.
    */
   activeBoardId(): string | null {
+    const ref = this.showingBoard();
+    return ref?.id ?? null;
+  }
+
+  /**
+   * The same fact as a REF rather than an id — what undo needs, because
+   * putting the table back the way it was means restoring the ref
+   * whole, name and all, not re-deriving it from an id.
+   */
+  showingBoard(): Ref | null {
     const ref = this.campaign.root().refs?.board;
-    const id = Array.isArray(ref) ? ref[0]?.id : ref?.id;
-    return id ?? null;
+    const one = Array.isArray(ref) ? ref[0] : ref;
+    return one?.id ? one : null;
+  }
+
+  /**
+   * Aim the table at a board — the one writer, shared by the door the
+   * console presses (`server/index.ts`), by a deploy that brings its
+   * own map, and by the undo that takes that map away again. Null sits
+   * the table idle, which is an ordinary state and not a fault.
+   */
+  setShowingBoard(ref: Ref | null, actor: string): void {
+    const root = this.campaign.root();
+    const refs = { ...(root.refs ?? {}) };
+    if (ref) refs.board = ref;
+    else delete refs.board;
+    this.save({ ...root, refs }, actor);
+    this.changed('board');
   }
 
   move(id: string, parentId: string, actor: string): void {
@@ -589,13 +614,14 @@ export class Session {
   ): DeployResult | undefined {
     const raw = this.campaign.templateRaw(encounterId);
     if (!raw || typeof raw !== 'object') return undefined;
-    const enc = raw as { name?: string; foes?: EncounterFoe[] };
+    const enc = raw as { name?: string; boardId?: string | null; foes?: EncounterFoe[] };
 
     // Everything below this rowid is this deploy's own work — the
     // high-water mark `/undo` uses, for the same reason.
     const mark = this.campaign.events({ limit: 1 })[0]?.id ?? 0;
     const turnAtStart = this.turnState();
     const boardsAtStart = this.campaign.boardStates();
+    const showingAtStart = this.showingBoard();
 
     // -- the reset. The cascade machinery does the work: `remove` takes
     // each foe's turn row and its tokens with it, one logged write at a
@@ -655,8 +681,28 @@ export class Session {
     // degraded one — but a fight that DID say where, on a table with no
     // board up, says so out loud rather than dropping the positions on
     // the floor.
-    const boardId = this.activeBoardId();
-    const board = boardId && this.shelf.board(boardId) ? boardId : null;
+    //
+    // A FIGHT BRINGS ITS OWN MAP. The recipe names the board it was
+    // staged on, and those `u`/`v` are that picture's coordinates and
+    // nobody else's — so deploying The Lake while the Forest is up used
+    // to drop lake ambushers onto forest ground, silently and at the
+    // right-looking pixels. Naming a board means the deploy AIMS THE
+    // TABLE at it, one more thing this action does and one more thing
+    // its single undo puts back. A recipe with no board still deploys
+    // onto whatever is up, which is the mapless-and-not-degraded case
+    // the encounter panel was built around.
+    const named = typeof enc.boardId === 'string' && enc.boardId ? enc.boardId : null;
+    const staged = named ? (this.shelf.board(named) ?? null) : null;
+    // `undefined` means this deploy never aimed the table; `null` means
+    // it did and the table was showing NOTHING before — a distinction
+    // the cascade has to keep or undo would leave the fight's map up.
+    let switchedFrom: Ref | null | undefined;
+    if (staged && staged.id !== showingAtStart?.id) {
+      switchedFrom = showingAtStart;
+      this.setShowingBoard({ id: staged.id, name: staged.name }, actor);
+    }
+    const boardId = named ?? this.activeBoardId();
+    const board = named ? (staged?.id ?? null) : boardId && this.shelf.board(boardId) ? boardId : null;
     const out: DeployResult = {
       deployed,
       turn,
@@ -666,9 +712,15 @@ export class Session {
       missing,
     };
     if (standing.length && !board) {
-      out.unplaced = boardId
-        ? `no board ${boardId} on this host — ${standing.length} foe(s) joined the order with nowhere to stand`
-        : `no active board — ${standing.length} foe(s) joined the order with nowhere to stand`;
+      // Three different silences, three different sentences — a board
+      // the recipe named and this host hasn't got is not the same
+      // trouble as a table with nothing up, and the Warden fixes them
+      // in different places.
+      out.unplaced = named
+        ? `this fight was staged on a board this host doesn't have — ${standing.length} foe(s) joined the order with nowhere to stand`
+        : boardId
+          ? `no board ${boardId} on this host — ${standing.length} foe(s) joined the order with nowhere to stand`
+          : `no active board — ${standing.length} foe(s) joined the order with nowhere to stand`;
     } else if (standing.length && board) {
       const { data, placed } = withDeployed(this.campaign.boardState(board), standing);
       if (placed) this.putBoardState(board, data, actor);
@@ -677,7 +729,8 @@ export class Session {
 
     // One row for the whole action. It carries the table as it was —
     // the generation that went, where everyone was standing, whose turn
-    // it was — and claims every log row this deploy wrote, so the press
+    // it was, WHICH MAP was up — and claims every log row this deploy
+    // wrote, so the press
     // AFTER the undo steps past them instead of re-undoing what it
     // already put back (`server/undo.ts`, the delete cascade's law).
     const events = this.campaign
@@ -696,6 +749,7 @@ export class Session {
         events,
         turn: turnAtStart,
         ...(boardsBefore.length ? { boards: boardsBefore } : {}),
+        ...(switchedFrom !== undefined ? { showing: switchedFrom } : {}),
       },
     });
     this.changed('events');
