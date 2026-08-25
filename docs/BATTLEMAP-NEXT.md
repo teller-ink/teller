@@ -145,7 +145,15 @@ makes it exist. What shipped:
   and a regression case pins that an uncalibrated board's fog ships as
   the same bare set with no names.
 
-## Phase 1 — ground that means something (TEL-94)
+## Phase 1 — ground that means something (TEL-94) — SHIPPED
+
+**Shipped 2026-08-24 (repo `24d37e4`, assistant v5 on the shelf); the
+section lives in BATTLEMAP.md now.** As planned, with two build-time
+notes: terrain got its own kernel (`core/terrain.ts` — fog stayed the
+one-set file), and the assistant additionally received per-area FOG
+STATUS ("the posse has not seen: …"), which the plan had not named
+but the ambush geometry wanted. Elevation is stored and spoken
+plainly; its semantics are phase 2's.
 
 - **Terrain lives on the BOARD row** (shelf-side, outlives the
   campaign, system-agnostic by construction): patches of

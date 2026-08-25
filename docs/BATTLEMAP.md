@@ -182,6 +182,30 @@ cover all — not a mode.
   `docs/BATTLEMAP-NEXT.md` — proposing reveals the Warden sees happen
   and can step back, never replacing the finger.)
 
+## Terrain: the ground's own words (shipped 2026-08-24, TEL-94 phase 1)
+
+Terrain lives on the BOARD row beside areas (`core/terrain.ts`):
+patches of `{ id, kind?, description?, elevation?, blocksSight?,
+cells? | areaId? }`. Kind is FREE TEXT with picker suggestions only —
+open data a board keeps under any system — and `description` is the
+author's own words for how the ground plays, passed to the assistant
+verbatim (`how it plays:`), never parsed. A patch claims its own
+brushed cells or a stored area (never the derived "everywhere else");
+a dangling `areaId` resolves empty and is REPORTED, not guessed at.
+`elevation` is stored now, interpreted in phase 2.
+
+Terrain renders in the EDITOR only (`T`, emerald tint + word). The
+table, board, art and seat show nothing — the art and the styrofoam
+are the display; per-display rendering is a later, deliberate choice
+(BATTLEMAP-NEXT). The public boundary ships none of it:
+`publicBoardRow` strips terrain with areas, pinned at both doors.
+
+The assistant's snapshot (under the existing `read:board` grant)
+carries the patches with descriptions, each token's `inTerrain`,
+`between` entries flagged `blocksSight` — stated as facts, never
+verdicts — and per-area fog status: which named places the posse has
+not seen, framed as the posse's knowledge rather than the creature's.
+
 ## Tokens and painted ground
 
 Placements: `{ id, entityId?, label, color, u, v, sizeInches, shape?,
