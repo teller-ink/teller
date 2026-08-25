@@ -111,6 +111,28 @@ Fog = { dark: Cell[] }
 - Vision-based auto-reveal is NOT built here — it arrives later as a
   plugin through the `fog.set` door (see the plugin contract below).
 
+## Phase 0.5 — every board gets a paint raster (uncalibrated fog)
+
+Cells only exist today when a board declares `widthInches` — no
+calibration, no cells, no fog, no areas. Sane for tactical maps;
+wrong for a WORLD map, where "reveal the Northern Reach as the posse
+travels" is exactly area-fog and no 1-inch grid will ever exist
+(Green Country's travel map is the live case).
+
+The coupling is shallow: `{dark}` and `areas[].cells` just need A
+LATTICE, and calibration is what makes the lattice physical, not what
+makes it exist. So:
+
+- Calibrated boards: the raster IS the inch grid. Zero change.
+- Uncalibrated boards: an image-relative raster (fixed column count,
+  square-ish by aspect), used ONLY for painting — fog, areas, later
+  terrain. Grid overlay stays off; nothing tactical implied.
+- Stated cost: calibrating a painted board later re-shapes its raster
+  and the paint drifts. That wrinkle already exists (changing
+  `widthInches` moves inch-cells today); best-effort remap through
+  u/v, or a repaint — fog is tonight-state and areas are few. One
+  editor warning at the crossing.
+
 ## Phase 1 — ground that means something (TEL-94)
 
 - **Terrain lives on the BOARD row** (shelf-side, outlives the
