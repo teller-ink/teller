@@ -36,12 +36,17 @@
 import { existsSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { bandOf, bandsIn, type Band } from '../core/bands.ts';
+import { inchGrid, type ImageSize } from '../core/fog.ts';
 import { refIn } from '../core/entity.ts';
 import type { BoardFacts, MoveFacts, TokenFacts } from '../core/registry.ts';
 import type { Session } from './session.ts';
 
-/** Natural pixel dimensions — the one thing only the image itself knows. */
-export type ImageSize = { w: number; h: number };
+/**
+ * Natural pixel dimensions — the one thing only the image itself knows.
+ * Declared in `core/fog.ts` (the lattice is derived from it at both ends)
+ * and re-exported here, so every existing import still reads geometry.
+ */
+export type { ImageSize };
 
 /**
  * A picture's pixel dimensions, read out of its header.
@@ -126,22 +131,24 @@ export function sizeInHeader(b: Buffer): ImageSize | undefined {
 
 /**
  * How many 1-inch cells across and down, from the map's declared width
- * and the picture's own proportions.
+ * and the picture's own proportions — the PHYSICAL lattice, and the one
+ * every calibration-gated feature here still asks for.
  *
- * The same arithmetic the editor draws with (`gridOf`), stated here
- * because the server has no DOM to ask an `<img>`. Rows are not rounded:
- * a map is rarely a whole number of inches tall, and rounding it would
- * stretch every vertical distance on the board.
+ * The arithmetic itself moved to `core/fog.ts` (`inchGrid`), because the
+ * editor draws with it, the paint raster falls back to it, and three
+ * copies of one formula is three chances to disagree about where a cell
+ * is. This stays as the server's spelling — `undefined` rather than
+ * `null`, which is what every caller in here already reads.
+ *
+ * Painting is NOT gated on this any more: fog and areas read `rasterOf`,
+ * which answers a lattice for an uncalibrated board too. Distance,
+ * snapping and the grid overlay are still inches or nothing.
  */
 export function gridOf(
   widthInches: number | undefined,
   size: ImageSize | undefined,
 ): { cols: number; rows: number } | undefined {
-  if (!widthInches || !size?.w || !size.h) return undefined;
-  return {
-    cols: Math.max(1, Math.round(widthInches)),
-    rows: Math.max(1, (widthInches * size.h) / size.w),
-  };
+  return inchGrid(widthInches, size) ?? undefined;
 }
 
 /** Which cell a map-space point falls in — the client's `cellOf`, server-side. */

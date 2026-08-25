@@ -27,11 +27,11 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { migrateFog } from '../core/fog.ts';
+import { migrateFog, rasterOf } from '../core/fog.ts';
 import { newId } from '../core/id.ts';
 import type { Campaign, Shelf } from '../core/store.ts';
 import { tokenColor } from '../core/tokens.ts';
-import { gridOf, imageSizeOf } from './geometry.ts';
+import { imageSizeOf } from './geometry.ts';
 
 /** How big a picture the door will take. A battlemap is print artwork. */
 export const MAX_BYTES = 64 * 1024 * 1024;
@@ -128,10 +128,17 @@ export function toWidthInches(raw: unknown): number | null | undefined {
  * did.
  *
  * A board whose picture this host can't read (or hasn't got) has no
- * proportions, so it has no rows, so it has no grid — and a board with
- * no grid never had fog to migrate. `gridOf` answering `undefined` is
- * therefore the same "no cells, no fog" floor the brush already works
- * under, not a failure mode.
+ * proportions, so it has no lattice at all — and a board with no lattice
+ * never had fog to migrate. `rasterOf` answering `null` is therefore the
+ * same "no cells, no fog" floor the brush already works under, not a
+ * failure mode.
+ *
+ * The BOUNDS are the paint raster, not the inch grid (`rasterOf`, phase
+ * 0.5): "everything was dark" is a claim about the whole picture, and it
+ * has to become the same set of cells the brush would paint. On a
+ * calibrated board that is the inch grid and nothing moved; on an
+ * uncalibrated one it is the image raster, which is the first time such
+ * a board has had cells to be dark at all.
  */
 export function migrateBoardFog(
   shelf: Shelf,
@@ -148,7 +155,7 @@ export function migrateBoardFog(
     const migrated = migrateFog(
       (data as { fog?: unknown }).fog,
       board.areas ?? [],
-      gridOf(board.widthInches, size),
+      rasterOf(board.widthInches, size),
     );
     if (!migrated) continue;
     if (migrated.areas.length) shelf.putBoard({ ...board, areas: migrated.areas });

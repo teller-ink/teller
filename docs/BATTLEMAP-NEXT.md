@@ -111,27 +111,39 @@ Fog = { dark: Cell[] }
 - Vision-based auto-reveal is NOT built here — it arrives later as a
   plugin through the `fog.set` door (see the plugin contract below).
 
-## Phase 0.5 — every board gets a paint raster (uncalibrated fog)
+## Phase 0.5 — every board gets a paint raster (uncalibrated fog) — SHIPPED
 
-Cells only exist today when a board declares `widthInches` — no
+TEL-129. **Shipped 2026-08-24; its section now lives in BATTLEMAP.md
+and this one is kept only for the record of what it was planned as.**
+
+Cells only existed when a board declared `widthInches` — no
 calibration, no cells, no fog, no areas. Sane for tactical maps;
 wrong for a WORLD map, where "reveal the Northern Reach as the posse
 travels" is exactly area-fog and no 1-inch grid will ever exist
-(Green Country's travel map is the live case).
+(Green Country's travel map was the live case).
 
-The coupling is shallow: `{dark}` and `areas[].cells` just need A
+The coupling was shallow: `{dark}` and `areas[].cells` just need A
 LATTICE, and calibration is what makes the lattice physical, not what
-makes it exist. So:
+makes it exist. What shipped:
 
+- **One derivation, two callers**: `rasterOf` in `core/fog.ts`, beside
+  the `inchGrid` it falls back to — so the console, the server's
+  migration and the table cannot disagree about where a cell is. The
+  server's `gridOf` and the editor's are now thin spellings of
+  `inchGrid` rather than a third and fourth copy of the formula.
 - Calibrated boards: the raster IS the inch grid. Zero change.
-- Uncalibrated boards: an image-relative raster (fixed column count,
-  square-ish by aspect), used ONLY for painting — fog, areas, later
-  terrain. Grid overlay stays off; nothing tactical implied.
-- Stated cost: calibrating a painted board later re-shapes its raster
-  and the paint drifts. That wrinkle already exists (changing
-  `widthInches` moves inch-cells today); best-effort remap through
-  u/v, or a repaint — fog is tonight-state and areas are few. One
-  editor warning at the crossing.
+- Uncalibrated boards: 40 columns across the picture, rows from the
+  aspect so a cell is exactly square, used ONLY for painting — fog,
+  areas, painted ground, later terrain. The grid overlay, snapping and
+  every measured distance stayed gated on inches.
+- The stated cost was paid honestly rather than papered over:
+  `paintDrifts` answers whether changing the width would move existing
+  paint, and the editor asks at that moment. No silent remap, and a
+  repaint is an acceptable answer. It stays quiet when nothing is
+  painted or when the lattice comes out the same shape anyway.
+- The public boundary needed nothing: the set IS the mask either way,
+  and a regression case pins that an uncalibrated board's fog ships as
+  the same bare set with no names.
 
 ## Phase 1 — ground that means something (TEL-94)
 

@@ -26,7 +26,7 @@ import {
   type PublicSnapshot,
 } from '../lib/api.ts';
 import { Zones } from '../components/board/Zones.tsx';
-import type { Placement, Zone } from '../components/board/model.ts';
+import { rasterOf, type Placement, type Zone } from '../components/board/model.ts';
 import { DECLARED, PUBLIC, useLive } from '../lib/use-session.ts';
 import { useWakeLock } from '../lib/use-wake-lock.ts';
 import { ConnectionHint } from '../components/ConnectionHint.tsx';
@@ -293,6 +293,16 @@ export function TableView({
   const pxPerMapInchY =
     rect && nat && widthInches ? (rect.sy * nat.w) / widthInches : null;
 
+  // PAINTED cells are a different measurement, and on most boards the
+  // same number. Fog and ground live on the board's paint lattice
+  // (`rasterOf`), which an uncalibrated board has too — so a world map
+  // the Warden fogs actually goes dark out here. The GRID stays on
+  // inches: a line drawn at a scale this board hasn't got would be a
+  // claim, and the table makes no claims.
+  const raster = rasterOf(widthInches, nat);
+  const cellPx = rect && nat && raster ? (nat.w * rect.sx) / raster.cols : null;
+  const cellPxY = rect && nat && raster ? (nat.h * rect.sy) / raster.rows : null;
+
   const roster = snapshot.data?.roster ?? [];
   const turn = snapshot.data?.turn;
   const acting =
@@ -325,7 +335,7 @@ export function TableView({
             : { visibility: 'hidden' }
         }
       />
-      {rect && nat && pxPerMapInch && (
+      {rect && nat && cellPx && (
         <div
           className="pointer-events-none absolute"
           style={{
@@ -335,11 +345,13 @@ export function TableView({
             height: nat.h * rect.sy,
           }}
         >
-          <GridOverlay
-            cellPx={pxPerMapInch}
-            cellPxY={pxPerMapInchY ?? undefined}
-            grid={active.board.grid}
-          />
+          {pxPerMapInch && (
+            <GridOverlay
+              cellPx={pxPerMapInch}
+              cellPxY={pxPerMapInchY ?? undefined}
+              grid={active.board.grid}
+            />
+          )}
           {/* painted ground, above the grid and under the minis — the
               console's own renderer, one layer melted into one blob.
               Hidden layers never arrive here (server/public.ts strips
@@ -348,8 +360,8 @@ export function TableView({
             zones={ground.zones ?? []}
             width={nat.w * rect.sx}
             height={nat.h * rect.sy}
-            cellPx={pxPerMapInch}
-            cellPxY={pxPerMapInchY ?? undefined}
+            cellPx={cellPx}
+            cellPxY={cellPxY ?? undefined}
           />
         </div>
       )}
@@ -387,15 +399,15 @@ export function TableView({
             />
           ))}
       {/* fog sits above tokens and ground: unexplored means unseen */}
-      {rect && nat && pxPerMapInch && (
+      {rect && nat && cellPx && (
         <FogLayer
           fog={state.fog}
           left={rect.left}
           top={rect.top}
           width={nat.w * rect.sx}
           height={nat.h * rect.sy}
-          cellPx={pxPerMapInch}
-          cellPxY={pxPerMapInchY ?? undefined}
+          cellPx={cellPx}
+          cellPxY={cellPxY ?? undefined}
         />
       )}
     </main>

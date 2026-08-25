@@ -29,7 +29,8 @@ import {
   withDeployed,
   withoutEntities,
 } from './boards.ts';
-import { areaStatus, toFog } from '../core/fog.ts';
+import { areaStatus, coverAll, RASTER_COLS, rasterOf, toFog } from '../core/fog.ts';
+import { gridOf, imageSizeOf } from './geometry.ts';
 
 let dir: string;
 let shelf: Shelf;
@@ -460,6 +461,60 @@ describe('areas — the named layer, and which door it comes in through', () => 
   });
 });
 
+// PHASE 0.5 — a board with no declared width is paintable now. What
+// this pins is the whole round trip through the real doors: the fog
+// goes in, the area goes on the row, both come back, and the lattice
+// the server derives for that board is the picture's raster and not
+// nothing. It is written end-to-end because the old coupling
+// (calibration OR no cells) lived in four places and only one of them
+// was a function.
+describe('an uncalibrated board, painted', () => {
+  async function worldMap(): Promise<string> {
+    const { body } = await upload(PNG);
+    // No widthInches: a world map has no inches and never will.
+    const made = await api('POST', '/api/boards', { key: body.key, name: 'The Green Country' });
+    expect(made.body.widthInches).toBeUndefined();
+    return made.body.id;
+  }
+
+  it('has a lattice from its picture alone, so cover-all has bounds', async () => {
+    const id = await worldMap();
+    const row = shelf.board(id)!;
+    const raster = rasterOf(row.widthInches, imageSizeOf(join(dir, row.key)));
+    expect(raster).toEqual({ cols: RASTER_COLS, rows: RASTER_COLS });
+    expect(coverAll(raster).dark).toHaveLength(RASTER_COLS * RASTER_COLS);
+    // …and the INCH grid is still absent, because nothing here is inches.
+    expect(gridOf(row.widthInches, imageSizeOf(join(dir, row.key)))).toBeUndefined();
+  });
+
+  it('takes fog through the state door and an area through the board door', async () => {
+    const id = await worldMap();
+    const painted = await api('PUT', `/api/board-state/${id}`, {
+      data: { fog: { dark: [[30, 12], [31, 12]] } },
+    });
+    expect(painted.status).toBe(200);
+    const named = await api('PATCH', `/api/boards/${id}`, {
+      areas: [{ id: 'a1', name: 'the Northern Reach', cells: [[30, 12], [31, 12]] }],
+    });
+    expect(named.status).toBe(200);
+
+    const back = await api('GET', `/api/board-state/${id}`);
+    expect(toFog(back.body.fog).dark).toEqual([
+      [30, 12],
+      [31, 12],
+    ]);
+    // The area reads as fogged off the set — derived, as it is everywhere.
+    const area = shelf.board(id)!.areas![0];
+    expect(areaStatus(toFog(back.body.fog), area)).toBe('fogged');
+
+    // Lifting it is the same two verbs, and leaves the row alone.
+    await api('PUT', `/api/board-state/${id}`, { data: { fog: { dark: [] } } });
+    const lifted = await api('GET', `/api/board-state/${id}`);
+    expect(areaStatus(toFog(lifted.body.fog), area)).toBe('lifted');
+    expect(shelf.board(id)!.areas).toHaveLength(1);
+  });
+});
+
 // The structural migrations. A fog region is a named place and a named
 // place belongs to the map; a world that was DARK has no cells written
 // down at all. Both run at campaign open, because that is the only
@@ -549,10 +604,21 @@ describe('old fog, migrated at campaign open', () => {
     expect(shelf.board(id)?.areas).toBeUndefined();
   });
 
-  it('is a no-op on a board with no declared width — no cells was never any fog', async () => {
+  // Phase 0.5: an uncalibrated board HAS a lattice now — the picture's
+  // own raster — so "the world was dark" finally has cells to become.
+  // It used to be a no-op here for want of bounds, which meant a world
+  // map's darkness quietly evaporated on the way across.
+  it('a dark world on an uncalibrated board covers the image raster', async () => {
     const id = await board('Unmeasured', 0);
     const session = host.session!;
     session.campaign.putBoardState(id, { fog: { on: true, revealed: [] } }, 'console');
+    expect(migrateBoardFog(shelf, session.campaign, dir)).toBe(1);
+    const after = session.campaign.boardState(id) as any;
+    // A 1×1 picture: RASTER_COLS across and the same down, since the
+    // raster squares itself against the aspect.
+    expect(after.fog.dark).toHaveLength(RASTER_COLS * RASTER_COLS);
+    expect(after.fog.dark[0]).toEqual([0, 0]);
+    // And it stays idempotent — the second pass sees a `dark` list.
     expect(migrateBoardFog(shelf, session.campaign, dir)).toBe(0);
   });
 });

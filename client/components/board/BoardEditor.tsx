@@ -16,10 +16,13 @@
 // The laws it exists to keep, none of which are negotiable:
 //
 //   * MAP SPACE, always (`model.ts`). Positions are u,v ∈ 0..1 of the
-//     source image and painted ground is 1-inch cell indices, so
-//     re-uploading a higher-res scan moves nothing and correcting
-//     `widthInches` afterwards leaves every token glued to the feature
-//     it was standing on.
+//     source image, so re-uploading a higher-res scan moves nothing and
+//     correcting `widthInches` afterwards leaves every token glued to
+//     the feature it was standing on. PAINT is different and always
+//     was: cells are indices into the board's lattice (`rasterOf` —
+//     inches where the board is calibrated, the picture's own raster
+//     where it isn't), so re-declaring the width DOES move them. That
+//     is the one crossing this editor warns about before it happens.
 //   * PHYSICAL MINIS PIN THE MAP. Panning mid-combat slides the ground
 //     out from under real minis, so aiming the table is its OWN tool,
 //     can be locked outright, and asks before overruling a running
@@ -69,6 +72,8 @@ import {
   hasCell,
   localId,
   newAreaId,
+  paintDrifts,
+  rasterOf,
   restCells,
   SIZES,
   snapUv,
@@ -369,14 +374,29 @@ export function BoardEditor({
     };
   };
 
+  // TWO LATTICES, and only one of them is physical.
+  //
+  //   `grid`   — inches. What the overlay draws, what tokens snap to,
+  //              what true scale measures. Null on an uncalibrated board,
+  //              and every physical affordance stays gated on it.
+  //   `raster` — cells to PAINT on, which every board has (`rasterOf`):
+  //              the inch grid where there is one, an image-relative
+  //              raster where there isn't. Fog, areas and ground read it.
+  //
+  // On a calibrated board they are the same lattice, so nothing about a
+  // battlemap changed.
   const grid = gridOf(board.widthInches, nat);
-  const cellPx = grid && baseW ? baseW / grid.cols : null;
+  const raster = rasterOf(board.widthInches, nat);
+  /** One painted cell, on screen. Square by construction on either lattice. */
+  const cellPx = raster && baseW ? baseW / raster.cols : null;
+  /** One true inch, on screen — for anything sized in inches. */
+  const inchPx = grid && baseW ? baseW / grid.cols : null;
   const place = (u: number, v: number, sizeInches: number, free = false) =>
     snap && !free ? snapUv(u, v, sizeInches, grid) : { u, v };
 
   const cellAt = (clientX: number, clientY: number): Cell | null => {
     const uv = toUv(clientX, clientY);
-    return uv ? cellOf(uv.u, uv.v, grid) : null;
+    return uv ? cellOf(uv.u, uv.v, raster) : null;
   };
 
   // --- the pieces of state, and the writers ---------------------------
@@ -527,7 +547,31 @@ export function BoardEditor({
    * the shorter spelling of the same set, since the areas and the rest
    * partition the map by construction.
    */
-  const setAll = (dark: boolean) => paint(allCells(grid), dark);
+  const setAll = (dark: boolean) => paint(allCells(raster), dark);
+
+  /**
+   * Calibrating a PAINTED board, said out loud before it happens.
+   *
+   * A cell is an index into a lattice, and declaring a width (or
+   * correcting one) re-shapes the lattice — so the same indices land
+   * somewhere else and the fog and the areas drift. There is no honest
+   * remap of a brushstroke, so this doesn't attempt one: it says what
+   * will happen and lets the human decide (rule 1 — a speed bump, never
+   * a refusal). Fog is tonight's, areas are few, and a repaint is a real
+   * answer. Silent is the one thing it must not be.
+   */
+  const setWidthInches = (next: number | null) => {
+    if (
+      paintDrifts(board.widthInches, next, nat, toFog(draftRef.current.fog), areasRef.current) &&
+      !window.confirm(
+        'Changing the width re-shapes this map\u2019s paint grid \u2014 the fog and areas already painted on it will land in different cells and may need repainting. Change it anyway?',
+      )
+    ) {
+      return false;
+    }
+    onBoard({ widthInches: next });
+    return true;
+  };
 
   /** Drop one on the map. New markers start behind the screen, always. */
   const addPlacement = (u: number, v: number, entity?: RosterRow) => {
@@ -563,8 +607,8 @@ export function BoardEditor({
       if (e.key === 'v') setTool('select');
       if (e.key === 'f') setTool('frame');
       if (e.key === 'h') setTool('pan');
-      if (e.key === 'b' && grid) setTool('paint');
-      if (e.key === 'g' && grid) setTool('fog');
+      if (e.key === 'b' && raster) setTool('paint');
+      if (e.key === 'g' && raster) setTool('fog');
       if (e.key === 'l') setView({ locked: !view.locked });
       if (e.key === 's' && grid) {
         const next = !snap;
@@ -700,7 +744,7 @@ export function BoardEditor({
             ? 'this map has no declared width — set "inches wide" below'
             : 'waiting on the map image';
 
-  const px = (inches: number) => (cellPx ? inches * cellPx : 24);
+  const px = (inches: number) => (inchPx ? inches * inchPx : 24);
   const names = new Map(roster.map((r) => [r.id, r.name]));
   const nameOf = (p: Placement) =>
     p.label ?? (p.entityId ? (names.get(p.entityId) ?? 'missing') : '?');
@@ -745,7 +789,10 @@ export function BoardEditor({
           {cellPx && (
             <Zones zones={zones} width={baseW} height={baseH} cellPx={cellPx} dm />
           )}
-          {cellPx && <GridOverlay cellPx={cellPx} grid={board.grid} />}
+          {/* The TACTICAL grid, and only ever that: an uncalibrated
+              board can be painted but draws no lines, because lines
+              would claim a scale the board hasn't got. */}
+          {inchPx && <GridOverlay cellPx={inchPx} grid={board.grid} />}
           {cellPx && (
             <FogLayer
               fog={fog}
@@ -952,29 +999,31 @@ export function BoardEditor({
           </button>
           <button
             className={toolBtn(tool === 'paint')}
-            onClick={() => grid && setTool('paint')}
-            disabled={!grid}
+            onClick={() => raster && setTool('paint')}
+            disabled={!raster}
             title={
               grid
                 ? 'paint ground effects onto 1" tiles (B)'
-                : 'set the map width first — tiles need inches'
+                : raster
+                  ? "paint ground effects (B) — this map has no declared width, so its cells are the picture's own, not inches"
+                  : "this map's picture could not be measured, so it has no cells"
             }
             aria-label="paint tool"
           >
-            <span className={grid ? '' : 'opacity-30'}>🖌</span>
+            <span className={raster ? '' : 'opacity-30'}>🖌</span>
           </button>
           <button
             className={toolBtn(tool === 'fog')}
-            onClick={() => grid && setTool('fog')}
-            disabled={!grid}
+            onClick={() => raster && setTool('fog')}
+            disabled={!raster}
             title={
-              grid
+              raster
                 ? 'fog (G) — paint darkness onto the map, or lift it. Reaching for the tool never darkens anything; every black cell is one somebody painted.'
-                : 'set the map width first — fog uses inch tiles'
+                : "this map's picture could not be measured, so it has no cells"
             }
             aria-label="fog tool"
           >
-            <span className={grid ? '' : 'opacity-30'}>🌫</span>
+            <span className={raster ? '' : 'opacity-30'}>🌫</span>
           </button>
           <button
             className={toolBtn(snap && !!grid)}
@@ -1069,7 +1118,14 @@ export function BoardEditor({
 
       {/* ---------------- right panels ---------------- */}
       <div className="absolute right-3 top-1/2 flex max-h-[80vh] w-64 -translate-y-1/2 flex-col gap-2 overflow-y-auto">
-        <BoardPanel board={board} onBoard={onBoard} view={view} setView={setView} frameGap={frameGap} />
+        <BoardPanel
+          board={board}
+          onBoard={onBoard}
+          onWidth={setWidthInches}
+          view={view}
+          setView={setView}
+          frameGap={frameGap}
+        />
         {tool === 'paint' && (
           <GroundPanel
             zones={zones}
@@ -1095,7 +1151,7 @@ export function BoardEditor({
           <FogPanel
             fog={fog}
             areas={areas}
-            grid={grid}
+            raster={raster}
             patch={unclaimed.length}
             editing={areaEditId}
             onEdit={setAreaEditId}
@@ -1264,12 +1320,15 @@ export function BoardEditor({
 function BoardPanel({
   board,
   onBoard,
+  onWidth,
   view,
   setView,
   frameGap,
 }: {
   board: Board;
   onBoard: (patch: { name?: string; widthInches?: number | null; grid?: unknown }) => void;
+  /** The width goes through its own door, because calibrating painted cells asks first. */
+  onWidth: (next: number | null) => boolean;
   view: BoardView;
   setView: (patch: Partial<BoardView>) => void;
   /** Why true scale can't draw the table's frame right now — null when it can. */
@@ -1289,14 +1348,18 @@ function BoardPanel({
           onBlur={(e) => {
             const raw = e.target.value.trim();
             const next = raw ? Number(raw) : null;
-            if (next !== (board.widthInches ?? null)) onBoard({ widthInches: next });
+            if (next === (board.widthInches ?? null)) return;
+            // Declined at the warning: put the field back to the truth,
+            // so the box never shows a width the board hasn't got.
+            if (!onWidth(next)) e.target.value = String(board.widthInches ?? '');
           }}
           aria-label="map width in inches"
         />
       </label>
       <p className="text-[11px] leading-snug text-stone-600">
         The map's real width. Print-destined art carries its DPI — pixels ÷ dpi. Without
-        it there are no cells, so no grid, no painting and no fog.
+        it you can still paint fog and areas — on the picture's own cells — but there's
+        no grid, no snapping and nothing measured in inches.
       </p>
       <div className="flex items-center gap-2">
         <span className="w-20 text-xs text-stone-400">grid</span>
@@ -1440,7 +1503,7 @@ function GroundPanel({
 function FogPanel({
   fog,
   areas,
-  grid,
+  raster,
   patch,
   editing,
   onEdit,
@@ -1454,7 +1517,8 @@ function FogPanel({
 }: {
   fog: Fog;
   areas: Area[];
-  grid: Grid | null;
+  /** The board's PAINT lattice — inches where it's calibrated, the picture's own raster where it isn't. */
+  raster: Grid | null;
   /** How many dark cells are sitting there unnamed. */
   patch: number;
   editing: string | null;
@@ -1467,7 +1531,7 @@ function FogPanel({
   onRename: (id: string, name: string) => void;
   onDrop: (id: string) => void;
 }) {
-  const rest = restCells(grid, areas);
+  const rest = restCells(raster, areas);
   return (
     <section className={`space-y-1.5 p-3 ${panel}`}>
       <span className="font-mono text-[10px] uppercase tracking-widest text-stone-500">fog</span>
@@ -1483,7 +1547,7 @@ function FogPanel({
         <button
           className="flex-1 rounded-md bg-stone-800 px-2 py-1 text-xs text-stone-300 hover:bg-stone-700"
           onClick={() => setAll(true)}
-          disabled={!grid}
+          disabled={!raster}
           title="cover the whole map — the dungeon posture, which is one tap"
         >
           cover all
@@ -1538,7 +1602,7 @@ function FogPanel({
       {/* Pinned, last, and visibly not a place: no shape button, no
           rename, no delete, because there is no row anywhere to shape,
           rename or delete. */}
-      {grid && (
+      {raster && (
         <AreaRow
           name="everywhere else"
           count={rest.length}

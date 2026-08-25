@@ -26,9 +26,11 @@
 //
 // TWO VERBS, NO MODES. `darken` puts cells in; `clear` takes them out.
 // The brush never changes meaning, and neither does "cover all" (every
-// cell of the calibrated grid) or "clear all" (the empty set). Bounded
-// by the grid throughout: no declared width means no cells means no
-// fog, exactly as before.
+// cell of the map) or "clear all" (the empty set). Bounded by the
+// board's LATTICE throughout — which every board has now, calibrated or
+// not (`rasterOf`): an inch grid where there's a declared width, an
+// image-relative raster where there isn't. Only a board whose picture
+// can't be measured has no cells.
 //
 // AREAS ARE PURE GEOMETRY — `{ id, name, cells }` on the BOARD row,
 // authored in prep, outliving the campaign that lit them. They carry
@@ -78,6 +80,119 @@ export type Fog = { dark: Cell[] };
 
 /** A board nobody has fogged. */
 export const NO_FOG: Fog = { dark: [] };
+
+// -- THE LATTICE: what a cell IS on this particular board ----------------
+//
+// Cells used to exist only where a board declared `widthInches`. No
+// calibration, no cells, no fog, no areas — which is exactly right for a
+// tactical map and exactly wrong for a WORLD map, where "reveal the
+// Northern Reach as the posse travels" is area-fog and no 1-inch grid
+// will ever exist.
+//
+// The coupling was shallow: `{dark}` and `areas[].cells` need A LATTICE.
+// Calibration is what makes a lattice PHYSICAL, not what makes it exist.
+// So there are two, and one function answers which one a board has:
+//
+//   * CALIBRATED — the raster IS the inch grid. Nothing changes.
+//   * UNCALIBRATED — an image-relative raster, `RASTER_COLS` columns
+//     across the picture with exactly square cells, used ONLY for
+//     painting. No grid overlay, no snapping, no distance: nothing
+//     tactical is implied by being able to paint.
+//
+// Both ends resolve it HERE, from the same two inputs, because a lattice
+// the console and the server disagree about is fog in the wrong place.
+//
+// THE CROSSING, and it is stated rather than papered over: calibrating a
+// painted board re-shapes its lattice and the paint drifts. That wrinkle
+// already existed (changing `widthInches` moves inch-cells today);
+// `paintDrifts` is how the editor knows to say so before it happens.
+
+/** Natural pixel dimensions — the picture's own proportions, and all the lattice needs of it. */
+export type ImageSize = { w: number; h: number };
+
+/**
+ * How many columns an uncalibrated board's paint raster has.
+ *
+ * Forty, and the number is a taste call with two ends to it: a world map
+ * wants regions painted in a handful of strokes, not four hundred taps,
+ * and it wants a coastline that reads as a coastline. Forty across is
+ * roughly a fingertip per cell on a console at fit-to-screen, and lands
+ * near a typical battlemap's own inch count, so the brush feels the same
+ * on both kinds of board.
+ */
+export const RASTER_COLS = 40;
+
+/**
+ * The 1-INCH grid — the physical lattice, from the map's declared width
+ * and the picture's proportions.
+ *
+ * Rows are not rounded: a map is rarely a whole number of inches tall,
+ * and rounding would stretch every vertical distance on the board. This
+ * is the one spelling of that arithmetic; `server/geometry.ts`'s `gridOf`
+ * and the editor's both call it.
+ */
+export function inchGrid(
+  widthInches: number | null | undefined,
+  size: ImageSize | null | undefined,
+): Grid | null {
+  if (!widthInches || !size?.w || !size.h) return null;
+  return {
+    cols: Math.max(1, Math.round(widthInches)),
+    rows: Math.max(1, (widthInches * size.h) / size.w),
+  };
+}
+
+/**
+ * The PAINT lattice — the one every board has, calibrated or not.
+ *
+ * A calibrated board answers its inch grid unchanged. An uncalibrated one
+ * answers a raster squared against the picture: `RASTER_COLS` wide, and
+ * as many rows as keeps a cell exactly as tall as it is wide (a cell is
+ * `w / RASTER_COLS` pixels each way, by construction). Rows stay
+ * fractional for the same reason the inch grid's do — `allCells` rounds
+ * up, so the bottom strip is painted rather than lost.
+ *
+ * Fog, areas and later terrain read this. Everything PHYSICAL — the grid
+ * overlay, token snapping, distances, true scale — keeps reading
+ * `inchGrid` and stays calibration-gated exactly as it was.
+ */
+export function rasterOf(
+  widthInches: number | null | undefined,
+  size: ImageSize | null | undefined,
+): Grid | null {
+  const inches = inchGrid(widthInches, size);
+  if (inches) return inches;
+  if (!size?.w || !size.h) return null;
+  return { cols: RASTER_COLS, rows: Math.max(1, (RASTER_COLS * size.h) / size.w) };
+}
+
+/**
+ * Would changing this board's width move the paint that's already on it?
+ *
+ * The honest answer at the honest moment: no silent remap, no elaborate
+ * machinery to guess where a brushstroke meant to be. Cells are indices
+ * into a lattice, so a lattice of a different shape reads them somewhere
+ * else — and fog is tonight-state and areas are few, so a repaint is a
+ * real answer and a wrong remap is not.
+ *
+ * False when there is nothing painted (nothing can drift), and false when
+ * the lattice comes out the same shape anyway — calibrating a 40-column
+ * raster to a 40-inch map of the same picture moves nothing, and warning
+ * about it would teach the Warden to dismiss the warning that matters.
+ */
+export function paintDrifts(
+  before: number | null | undefined,
+  after: number | null | undefined,
+  size: ImageSize | null | undefined,
+  fog: Fog,
+  areas: Area[],
+): boolean {
+  if (!fog.dark.length && !areas.some((a) => a.cells.length)) return false;
+  const was = rasterOf(before, size);
+  const now = rasterOf(after, size);
+  if (!was || !now) return false;
+  return was.cols !== now.cols || Math.abs(was.rows - now.rows) > 1e-9;
+}
 
 /**
  * Where an area stands right now, DERIVED. `partial` is a real answer

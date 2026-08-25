@@ -114,8 +114,8 @@ cover all — not a mode.
 
 - **Two verbs, no modes.** `darken` puts cells in; `clear` takes them
   out. The brush never changes meaning. "Cover all" is every cell of
-  the calibrated grid, "clear all" is the empty set, and both are
-  bounded by the grid: no declared width means no cells means no fog.
+  the map, "clear all" is the empty set, and both are bounded by the
+  board's lattice — see the raster rule below.
 - **The set is FIGHT-SIDE**, in `board_state` with the tokens.
   Painting the dark back mid-fight is a gesture at speed and it must
   never write the shelf — play residue is not geography.
@@ -151,6 +151,28 @@ cover all — not a mode.
   only becomes a set once the map's proportions say how big it is
   (`imageSizeOf`, `gridOf`). Old regions become board areas in the same
   pass; old per-area fog state is consumed and ceases to exist.
+- **EVERY BOARD HAS A PAINT LATTICE, calibrated or not** (phase 0.5,
+  2026-08-24). A cell is an index into a lattice, and `rasterOf`
+  (`core/fog.ts`) is the one place either end derives which lattice a
+  board has: **calibrated** (`widthInches` set) means the raster IS the
+  1-inch grid, unchanged in every respect; **uncalibrated** means an
+  image-relative raster — `RASTER_COLS` (40) columns across the
+  picture, rows following the aspect so a cell is exactly square — used
+  ONLY for painting: fog, areas, painted ground, and terrain later.
+  Nothing tactical follows from it: the grid overlay, token snapping,
+  true scale and every measured distance still read `inchGrid` and stay
+  calibration-gated exactly as they were. A world map can now be
+  fogged and its regions named ("reveal the Northern Reach as the posse
+  travels"), which is what the coupling was costing. Only a board whose
+  picture can't be measured has no cells.
+- **Calibrating a painted board re-shapes its lattice, and the editor
+  says so.** The same indices land in different cells, so the fog and
+  areas drift. There is no honest remap of a brushstroke and none is
+  attempted: `paintDrifts` answers whether a width change would move
+  existing paint, and the editor asks before writing it (never
+  refuses — rule 1). It stays quiet when nothing is painted, and when
+  the lattice comes out the same shape anyway. A repaint is a real
+  answer; fog is tonight's and areas are few.
 - Fog never switches itself on. A new board's set is empty, which is no
   fog at all; reaching for the tool or shaping an area leaves the table
   showing its map, and every black cell is one somebody painted.

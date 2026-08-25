@@ -470,6 +470,37 @@ describe('GET /api/public', () => {
     await call('PUT', '/api/campaign/refs', { key: true, body: { board: null } });
   });
 
+  // Phase 0.5: a board with no declared width now has a paint lattice
+  // (the picture's own raster), so a world map can be fogged. The public
+  // boundary must not notice — the set IS the mask either way, and a
+  // watcher learns where the dark is and nothing else. This exists
+  // because "uncalibrated" was load-bearing for exactly one thing (no
+  // cells) and it would be easy to leave a calibration check in the
+  // redaction path by accident.
+  it('an uncalibrated board’s fog ships as the same bare set, names and all withheld', async () => {
+    session.shelf.putBoard({
+      id: boardId,
+      key: 'maps/crossing.png',
+      name: 'The Crossing',
+      // No widthInches at all — this is a world map, not a battlemap.
+      areas: [{ id: 'a1', name: 'the Northern Reach', cells: [[30, 12]] }],
+    });
+    await call('PUT', '/api/campaign/refs', { key: true, body: { board: boardId } });
+    session.putBoardState(
+      boardId,
+      { fog: { dark: [[30, 12], [31, 12]] } },
+      'console',
+    );
+
+    const { body } = await call('GET', '/api/public', { key: true });
+    expect(body.board.board.widthInches).toBeUndefined();
+    expect(body.board.state.fog).toEqual({ dark: [[30, 12], [31, 12]] });
+    expect(body.board.board.areas).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain('Northern Reach');
+
+    await call('PUT', '/api/campaign/refs', { key: true, body: { board: null } });
+  });
+
   // A movement record names a token that may be standing behind the
   // screen, so the record is DM material by construction. Nothing
   // player-facing reads the log at all — and that is exactly the kind

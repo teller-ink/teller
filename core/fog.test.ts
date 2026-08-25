@@ -16,13 +16,18 @@ import {
   coverAll,
   darken,
   fogVisible,
+  inchGrid,
   migrateFog,
   newAreaId,
+  paintDrifts,
+  RASTER_COLS,
+  rasterOf,
   restCells,
   toAreas,
   toFog,
   type Area,
   type Cell,
+  type Fog,
   type Grid,
 } from './fog.ts';
 
@@ -340,5 +345,84 @@ describe('areas, narrowed at both edges', () => {
   it('mints ids the shape everything else in teller mints', () => {
     expect(newAreaId()).toMatch(/^are_[0-9a-f]{12}$/);
     expect(newAreaId()).not.toBe(newAreaId());
+  });
+});
+
+// THE LATTICE — the one derivation both ends resolve, and the reason
+// there is only one of it. A console that rasters a board differently
+// from the server paints fog into cells the table never renders, and
+// nothing about that failure looks like a bug until somebody is at a
+// table wondering why the vault is still lit.
+describe('the paint lattice, calibrated or not', () => {
+  /** A landscape picture, so the aspect maths has something to say. */
+  const WIDE = { w: 1200, h: 900 };
+
+  it('a calibrated board rasters as its inch grid, exactly', () => {
+    expect(rasterOf(40, WIDE)).toEqual({ cols: 40, rows: 30 });
+    expect(rasterOf(40, WIDE)).toEqual(inchGrid(40, WIDE));
+  });
+
+  it('an uncalibrated board rasters against the picture, with square cells', () => {
+    const raster = rasterOf(null, WIDE)!;
+    expect(raster.cols).toBe(RASTER_COLS);
+    // Square by construction: a cell is w/COLS pixels each way.
+    expect(WIDE.w / raster.cols).toBeCloseTo(WIDE.h / raster.rows, 10);
+    // A tall picture answers more rows than columns, and still squares.
+    const tall = rasterOf(undefined, { w: 900, h: 1200 })!;
+    expect(tall.cols).toBe(RASTER_COLS);
+    expect(tall.rows).toBeCloseTo((RASTER_COLS * 1200) / 900, 10);
+  });
+
+  it('is deterministic — same inputs, same lattice, every time', () => {
+    expect(rasterOf(null, WIDE)).toEqual(rasterOf(null, { ...WIDE }));
+    expect(rasterOf(24, WIDE)).toEqual(rasterOf(24, { ...WIDE }));
+  });
+
+  it('a picture that could not be measured has no lattice at all', () => {
+    expect(rasterOf(null, null)).toBeNull();
+    expect(rasterOf(40, undefined)).toBeNull();
+    expect(rasterOf(null, { w: 0, h: 0 })).toBeNull();
+    // …which is the floor `allCells` already worked under.
+    expect(allCells(rasterOf(null, null))).toEqual([]);
+  });
+
+  it('gives an uncalibrated board real cells to cover', () => {
+    const raster = rasterOf(null, { w: 100, h: 100 });
+    expect(coverAll(raster).dark).toHaveLength(RASTER_COLS * RASTER_COLS);
+  });
+});
+
+// The crossing, and the one thing the editor has to know before it
+// happens: does re-declaring the width move paint that already exists?
+describe('paint drift, at the moment of calibration', () => {
+  const WIDE = { w: 1200, h: 900 };
+  const painted: Fog = { dark: [A] };
+  const vault = area('a1', [B]);
+
+  it('an unpainted board never warns — there is nothing to drift', () => {
+    expect(paintDrifts(null, 40, WIDE, { dark: [] }, [])).toBe(false);
+    // An area being drawn, with no cells yet, is nothing either.
+    expect(paintDrifts(null, 40, WIDE, { dark: [] }, [area('a2', [])])).toBe(false);
+  });
+
+  it('calibrating a painted board warns, and so does changing the width', () => {
+    expect(paintDrifts(null, 24, WIDE, painted, [])).toBe(true);
+    expect(paintDrifts(24, 36, WIDE, painted, [])).toBe(true);
+    // Areas count as paint, even with the fight's set empty — they are
+    // cells on the same lattice.
+    expect(paintDrifts(null, 24, WIDE, { dark: [] }, [vault])).toBe(true);
+    // And taking the width back off moves things just as much.
+    expect(paintDrifts(24, null, WIDE, painted, [])).toBe(true);
+  });
+
+  it('does not warn when the lattice comes out the same shape anyway', () => {
+    // 40 inches on this picture IS the 40-column raster: nothing moves,
+    // and crying wolf here teaches the Warden to dismiss the real one.
+    expect(paintDrifts(null, RASTER_COLS, WIDE, painted, [vault])).toBe(false);
+    expect(paintDrifts(24, 24, WIDE, painted, [])).toBe(false);
+  });
+
+  it('says nothing when the picture cannot be measured', () => {
+    expect(paintDrifts(null, 24, null, painted, [vault])).toBe(false);
   });
 });

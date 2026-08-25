@@ -35,7 +35,7 @@
  * cover a whole map, and it and the editor's "cover all" must mean the
  * same thing to the cell.
  */
-import type { Area, Cell, Fog } from '../../../core/fog.ts';
+import { inchGrid, type Area, type Cell, type Fog } from '../../../core/fog.ts';
 
 export {
   allCells,
@@ -46,8 +46,12 @@ export {
   darken,
   fogVisible,
   hasCell,
+  inchGrid,
   newAreaId,
   NO_FOG,
+  paintDrifts,
+  RASTER_COLS,
+  rasterOf,
   restCells,
   toFog,
   type Area,
@@ -55,6 +59,7 @@ export {
   type Cell,
   type Fog,
   type Grid,
+  type ImageSize,
 } from '../../../core/fog.ts';
 
 /**
@@ -179,15 +184,20 @@ export const SIZES = [0.5, 1, 2, 3, 4, 6, 8];
 
 export const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
-/** How many 1-inch cells across and down, from the map's own declared width. */
+/**
+ * How many 1-inch cells across and down, from the map's own declared
+ * width — the PHYSICAL lattice, and null when the board isn't calibrated.
+ *
+ * The arithmetic lives in `core/fog.ts` now, because the server measures
+ * with the same formula and the paint raster falls back to it. This is
+ * still what the grid overlay, snapping and true scale ask for; painting
+ * asks `rasterOf`, which answers for an uncalibrated board too.
+ */
 export function gridOf(
   widthInches: number | undefined,
   nat: { w: number; h: number } | null,
 ): { cols: number; rows: number } | null {
-  if (!widthInches || !nat || !nat.w || !nat.h) return null;
-  const cols = Math.max(1, Math.round(widthInches));
-  const rows = Math.max(1, (widthInches * nat.h) / nat.w);
-  return { cols, rows };
+  return inchGrid(widthInches, nat);
 }
 
 /**
