@@ -32,6 +32,7 @@ import { existsSync, mkdirSync, readdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { newId } from './id.ts';
 import { refIn, toEntity, type Entity, type Ref } from './entity.ts';
+import { toAreas, type Area } from './fog.ts';
 
 const now = () => new Date().toISOString();
 
@@ -769,6 +770,10 @@ CREATE TABLE IF NOT EXISTS boards (
   name          TEXT NOT NULL,
   width_inches  REAL,
   grid          TEXT,
+  -- Named patches of the map (core/fog.ts). Inherent geography, so it
+  -- sits on the asset beside the calibration and not in the fight: the
+  -- vault is where it is next campaign too.
+  areas         TEXT,
   created_at    TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS plugins (
@@ -812,6 +817,13 @@ export type Board = {
   name: string;
   widthInches?: number;
   grid?: unknown;
+  /**
+   * Named patches of the map — the layer fog lifts by name and terrain
+   * will claim later (docs/BATTLEMAP-NEXT.md). Prep-authored and
+   * campaign-independent, which is why it rides the shelf row; what a
+   * fight did to one is `board_state`.
+   */
+  areas?: Area[];
 };
 
 
@@ -909,6 +921,8 @@ function rowToBoard(row: Row): Board {
   if (typeof row.width_inches === 'number') out.widthInches = row.width_inches;
   const grid = parseJson(row.grid);
   if (grid !== undefined) out.grid = grid;
+  const areas = toAreas(parseJson(row.areas));
+  if (areas.length) out.areas = areas;
   return out;
 }
 
@@ -1174,11 +1188,12 @@ export class Shelf {
     const id = board.id ?? newId('brd');
     this.#db
       .prepare(
-        `INSERT INTO boards (id, key, name, width_inches, grid, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO boards (id, key, name, width_inches, grid, areas, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            key = excluded.key, name = excluded.name,
-           width_inches = excluded.width_inches, grid = excluded.grid`,
+           width_inches = excluded.width_inches, grid = excluded.grid,
+           areas = excluded.areas`,
       )
       .run(
         id,
@@ -1186,6 +1201,7 @@ export class Shelf {
         board.name,
         board.widthInches ?? null,
         board.grid === undefined ? null : JSON.stringify(board.grid),
+        board.areas === undefined ? null : JSON.stringify(toAreas(board.areas)),
         now(),
       );
     return { ...board, id };
@@ -1457,6 +1473,11 @@ export function openShelf(dataDir: string): Shelf {
   }
   try {
     db.exec('ALTER TABLE plugins ADD COLUMN wants TEXT');
+  } catch {
+    // already there
+  }
+  try {
+    db.exec('ALTER TABLE boards ADD COLUMN areas TEXT');
   } catch {
     // already there
   }

@@ -25,8 +25,11 @@
 //   * `refs` never travel: provenance is the DM's business.
 //   * Hidden map secrets never transmit. A hidden placement is REMOVED
 //     from the payload, not styled away — an ambush the table cannot
-//     find in devtools — and fog is flattened to revealed cells, since
-//     nobody needs the shape of a room they haven't walked into.
+//     find in devtools — and fog is flattened to one mask of cells,
+//     since nobody needs the shape of a room they haven't walked into.
+//     The board's own AREAS go the same way: a named patch of map is
+//     the name AND the shape of a secret, so the row is stripped of
+//     them before it travels (`publicBoardRow`).
 //   * Statuses ARE visible, for everyone including foes: the poison
 //     token is sitting on the mini, and its severity rides along.
 //
@@ -50,6 +53,7 @@
 
 import type { Entity, Entry } from '../core/entity.ts';
 import { isDraft, numberOf } from '../core/entity.ts';
+import { flatFog, toFog, type Area } from '../core/fog.ts';
 import { kindFor, toKindDef, type KindDef } from '../core/kind.ts';
 import type { Board } from '../core/store.ts';
 import { activeHandout, type Handout } from './handouts.ts';
@@ -76,10 +80,28 @@ export type PublicEntity = {
 };
 
 export type PublicBoard = {
+  /** The shelf row MINUS its areas — see `publicBoardRow`. */
   board: Board;
   /** Placements minus the hidden ones, fog flattened. Never the raw row. */
   state: unknown;
 };
+
+/**
+ * The board asset as the room may see it: everything that makes a
+ * drawn square a real inch, and nothing that names a place.
+ *
+ * The picture, the width and the grid are calibration —
+ * teller-the-program, and the table cannot render without them. AREAS
+ * are the opposite: "the vault", with its exact rectangle, is the
+ * shape and the name of a room nobody has walked into, and it would
+ * have ridden out beside the flattened mask that exists precisely to
+ * withhold it. A board row is not player-safe by default and no future
+ * field on it should be assumed to be.
+ */
+export function publicBoardRow(board: Board): Board {
+  const { areas: _areas, ...rest } = board;
+  return rest;
+}
 
 /**
  * What the art frame is showing — the ACTIVE handout and nothing else.
@@ -265,12 +287,23 @@ export function publicEntity(
  * Live board state as the table may see it.
  *
  * Hidden placements are removed rather than flagged, and fog collapses
- * to plain revealed cells. Everything else about the state passes
- * through: a passive surface has to render this whole, and the view /
- * scale metadata beside the tokens is what makes a drawn square a real
- * inch (§4's calibration, which is teller-the-program, not a secret).
+ * to its EFFECTIVE MASK — one flat list of cells and the base that says
+ * what they mean (`core/fog.ts`). Everything else about the state
+ * passes through: a passive surface has to render this whole, and the
+ * view / scale metadata beside the tokens is what makes a drawn square
+ * a real inch (§4's calibration, which is teller-the-program, not a
+ * secret).
+ *
+ * The AREAS are the reason this takes a second argument. They live on
+ * the board row now, and they are exactly the kind of thing that must
+ * not travel: "the vault", drawn as a rectangle the posse hasn't
+ * walked into, is the shape and the name of a secret. So the mask is
+ * computed here, from the board's areas and the fight's freehand
+ * cells, and what leaves is cells — under `dark` the lit ones, under
+ * `clear` the covered ones, and in neither case anything with a name
+ * on it.
  */
-export function publicBoardState(data: unknown): unknown {
+export function publicBoardState(data: unknown, areas: Area[] = []): unknown {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return data ?? null;
   const state = { ...(data as Record<string, unknown>) };
   for (const key of ['placements', 'zones']) {
@@ -281,18 +314,7 @@ export function publicBoardState(data: unknown): unknown {
       );
     }
   }
-  const fog = state.fog;
-  if (fog && typeof fog === 'object' && !Array.isArray(fog)) {
-    const f = fog as { on?: unknown; revealed?: unknown; regions?: unknown };
-    const revealed = Array.isArray(f.revealed) ? [...f.revealed] : [];
-    if (Array.isArray(f.regions)) {
-      for (const region of f.regions) {
-        const r = region as { revealed?: unknown; cells?: unknown };
-        if (r?.revealed && Array.isArray(r.cells)) revealed.push(...r.cells);
-      }
-    }
-    state.fog = { on: f.on ?? false, revealed };
-  }
+  if (state.fog !== undefined) state.fog = flatFog(toFog(state.fog), areas);
   return state;
 }
 
@@ -314,7 +336,10 @@ export function activeBoard(session: Session): PublicBoard | null {
   if (!id) return null;
   const board = session.shelf.board(id);
   if (!board) return null;
-  return { board, state: publicBoardState(session.campaign.boardState(id) ?? null) };
+  return {
+    board: publicBoardRow(board),
+    state: publicBoardState(session.campaign.boardState(id) ?? null, board.areas ?? []),
+  };
 }
 
 /**

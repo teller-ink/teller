@@ -382,8 +382,12 @@ export type PublicBoard = {
     placements?: PublicPlacement[];
     /** Hidden ones never arrive — the redaction strips them server-side. */
     zones?: { id?: string; effect?: string; cells: [number, number][] }[];
-    /** Already flattened to plain revealed cells — no region shapes. */
-    fog?: { on?: boolean; revealed?: [number, number][] };
+    /**
+     * Already flattened to one mask — no area names, no shapes. `base`
+     * says what the cells mean: under `dark` they are the lit ones,
+     * under `clear` they are the covered ones.
+     */
+    fog?: { base?: 'dark' | 'clear'; revealed?: [number, number][]; fogged?: [number, number][] };
     view?: { mode?: 'fit' | 'true'; zoom?: number; cu?: number; cv?: number };
   } | null;
 };

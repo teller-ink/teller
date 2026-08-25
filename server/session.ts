@@ -39,7 +39,13 @@ import { applyTurnOp, toTurnState, type TurnOp, type TurnState } from './turn.ts
 // The window an undo walks — the same bound the rows of one deploy are
 // collected under, because they are collected for exactly that walk.
 import { UNDO_WINDOW } from './undo.ts';
-import { countEntities, withDeployed, withoutEntities, type Deploying } from './boards.ts';
+import {
+  countEntities,
+  promoteFogRegions,
+  withDeployed,
+  withoutEntities,
+  type Deploying,
+} from './boards.ts';
 // The clearing rule is the REDACTOR'S rule, imported rather than
 // restated: one answer to "who was the fight", so the door that sweeps
 // them off the table and the door that hides their numbers can never
@@ -181,6 +187,11 @@ export class Session {
     this.dataDir = dataDir;
     this.room = room ?? new Room();
     this.loaded = loadCampaign(shelf, campaign, dataDir);
+    // The one structural migration a state serializer can't do for
+    // itself: fog regions are named geography and belong on the board
+    // row, which is only reachable from here (`server/boards.ts`). A
+    // no-op on every campaign that has already opened once.
+    promoteFogRegions(shelf, campaign);
   }
 
   /** Re-run the resolution law — after a pack upgrade, on the sweep's signal. */

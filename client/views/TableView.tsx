@@ -103,10 +103,15 @@ function GridOverlay({
 }
 
 // ---- the fog -----------------------------------------------------------
-// One dark sheet over the whole map with the revealed cells punched out
-// and blurred, so explored ground has soft edges instead of a staircase
-// of squares. The table gets it near-opaque; there is no DM mode here,
-// because this screen is never the DM's.
+// The darkness, near-opaque; there is no DM mode here, because this
+// screen is never the DM's.
+//
+// Two bases, one mask (`core/fog.ts`). Under `dark` a sheet covers the
+// map and the revealed cells are punched out of it — the shipped
+// behaviour, unchanged. Under `clear` the sheet is masked down to the
+// fogged cells alone, so the barn goes black and the rest of the map
+// keeps showing its own artwork. Either way the edges are soft because
+// the mask is blurred, not because the geometry is finer than an inch.
 
 function FogLayer({
   fog,
@@ -117,7 +122,7 @@ function FogLayer({
   cellPx,
   cellPxY,
 }: {
-  fog?: { on?: boolean; revealed?: [number, number][] };
+  fog?: { base?: 'dark' | 'clear'; revealed?: [number, number][]; fogged?: [number, number][] };
   left: number;
   top: number;
   width: number;
@@ -126,13 +131,16 @@ function FogLayer({
   cellPxY?: number;
 }) {
   const uid = useId();
-  if (!fog?.on || !cellPx || !width || !height) return null;
+  // The snapshot arrives already flattened — areas folded in, names and
+  // shapes left on the host. A clear map with nothing covered is just a
+  // map, and draws nothing at all.
+  const lit = fog?.base === 'dark';
+  const painted = (lit ? fog?.revealed : fog?.fogged) ?? [];
+  if (!fog?.base || (!lit && !painted.length)) return null;
+  if (!cellPx || !width || !height) return null;
   const cellY = cellPxY || cellPx;
   const blur = Math.min(cellPx, cellY) * 0.28;
   const bleed = Math.min(cellPx, cellY) * 0.12; // neighbours meet before the blur
-  // The snapshot already flattened regions into plain cells — the
-  // table never learns the shape of a room nobody has walked into.
-  const clear = fog.revealed ?? [];
   return (
     <svg
       className="pointer-events-none absolute"
@@ -145,11 +153,11 @@ function FogLayer({
           <feGaussianBlur stdDeviation={blur} />
         </filter>
         <mask id={`fogmask-${uid}`}>
-          <rect x="0" y="0" width={width} height={height} fill="white" />
+          <rect x="0" y="0" width={width} height={height} fill={lit ? 'white' : 'black'} />
           <g filter={`url(#fogblur-${uid})`}>
             {/* a cell can arrive twice — index keys, since the
                 coordinates are not unique here */}
-            {clear.map(([c, r], i) => (
+            {painted.map(([c, r], i) => (
               <rect
                 key={i}
                 x={c * cellPx - bleed}
@@ -157,7 +165,7 @@ function FogLayer({
                 width={cellPx + bleed * 2}
                 height={cellY + bleed * 2}
                 rx={cellPx * 0.3}
-                fill="black"
+                fill={lit ? 'black' : 'white'}
               />
             ))}
           </g>

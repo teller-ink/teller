@@ -76,10 +76,15 @@ Smallest, standalone, and it's the live complaint.
   revealed areas punch light). Clear = new default: world visible,
   **unrevealed areas ARE the fog** — paint the barn, lift it when the
   posse walks in.
-- One brush story both ways: paint-fog paints an area, reveal lifts
-  one; the base decides what the untouched map means. Freehand
-  painting creates an anonymous area; naming it is encouraged, not
-  required.
+- One brush story both ways: paint-fog darkens, reveal lightens; the
+  base decides what the untouched map means. **Freehand cells stay
+  fight-side** (`revealed[]` in dark, `fogged[]` in clear) so
+  paint-to-reveal at speed never writes the shelf — play residue is
+  not geography. NAMING a patch promotes it to a board AREA; areas
+  are the named, prep-authored layer, and per-area fog state
+  (fogged/lifted) is fight-side. (Sharpened at build time from
+  "freehand creates an anonymous area", which would have polluted
+  the board's areas with every mid-fight brushstroke.)
 - Migration: `on:true → base:'dark'`, `on:false → base:'clear'` with
   no fogged areas — renders identically. Existing FogRegions become
   areas.

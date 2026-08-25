@@ -27,7 +27,9 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { promoteRegions } from '../core/fog.ts';
 import { newId } from '../core/id.ts';
+import type { Campaign, Shelf } from '../core/store.ts';
 import { tokenColor } from '../core/tokens.ts';
 
 /** How big a picture the door will take. A battlemap is print artwork. */
@@ -100,6 +102,37 @@ export function toWidthInches(raw: unknown): number | null | undefined {
     if (Number.isFinite(n) && n > 0) return n;
   }
   return undefined;
+}
+
+/**
+ * Fog regions become board AREAS — once, when the campaign opens.
+ *
+ * The lazy half of this migration is `toFog`, which reads any old blob
+ * correctly on its own (rule 8, both edges). What it CANNOT do is the
+ * structural half: an area belongs to the shelf row and a state
+ * serializer only ever has the state. This is the one place both are
+ * in hand, so it runs here, at open, before a request has been served.
+ *
+ * It is a no-op for every board written since — the promoted fog
+ * carries a `base`, and `promoteRegions` refuses anything that already
+ * has one — so it costs a boot-time read of the board states and
+ * nothing else. Each promotion writes through the ordinary logged door
+ * (rule 3): a migration that edited the table silently would be the
+ * first thing in teller that did.
+ */
+export function promoteFogRegions(shelf: Shelf, campaign: Campaign, actor = 'migration'): number {
+  let moved = 0;
+  for (const { boardId, data } of campaign.boardStates()) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
+    const board = shelf.board(boardId);
+    if (!board) continue;
+    const promoted = promoteRegions((data as { fog?: unknown }).fog, board.areas ?? []);
+    if (!promoted) continue;
+    shelf.putBoard({ ...board, areas: promoted.areas });
+    campaign.putBoardState(boardId, { ...data, fog: promoted.fog }, actor);
+    moved++;
+  }
+  return moved;
 }
 
 // -- what a fight does to the state on a board -------------------------

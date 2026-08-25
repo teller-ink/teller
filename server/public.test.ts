@@ -148,20 +148,84 @@ describe('board state, stripped', () => {
     expect(state.view).toEqual({ scale: 2 });
   });
 
-  it('flattens fog to revealed cells and drops the unrevealed shapes', () => {
+  // The mask, both bases. What the table may know is WHERE the dark
+  // is; what it may never know is that the dark patch has a name, a
+  // shape, or a neighbour it hasn't walked into yet.
+  const VAULT = { id: 'a1', name: 'the vault', cells: [[9, 9]] as [number, number][] };
+  const PORCH = { id: 'a2', name: 'the porch', cells: [[1, 1], [1, 2]] as [number, number][] };
+
+  it('under dark, ships the lit cells — freehand and lifted areas, no names', () => {
+    const state = publicBoardState(
+      {
+        fog: {
+          base: 'dark',
+          revealed: [[0, 0]],
+          fogged: [],
+          areas: [
+            { areaId: 'a1', fogged: true },
+            { areaId: 'a2', fogged: false },
+          ],
+        },
+      },
+      [VAULT, PORCH],
+    ) as any;
+    expect(state.fog).toEqual({
+      base: 'dark',
+      revealed: [[0, 0], [1, 1], [1, 2]],
+      fogged: [],
+    });
+    expect(JSON.stringify(state)).not.toContain('vault');
+    expect(JSON.stringify(state)).not.toContain('porch');
+    expect(JSON.stringify(state)).not.toContain('9,9');
+    expect(JSON.stringify(state)).not.toContain('areaId');
+  });
+
+  it('under clear, ships the covered cells — and only those', () => {
+    const state = publicBoardState(
+      {
+        fog: {
+          base: 'clear',
+          revealed: [],
+          fogged: [[0, 0]],
+          areas: [{ areaId: 'a1', fogged: true }],
+        },
+      },
+      [VAULT, PORCH],
+    ) as any;
+    expect(state.fog).toEqual({
+      base: 'clear',
+      revealed: [],
+      fogged: [[0, 0], [9, 9]],
+    });
+    // The porch is not covered, so its shape never leaves the host —
+    // the same rule as an unentered room under the old model.
+    expect(JSON.stringify(state)).not.toContain('1,1');
+    expect(JSON.stringify(state)).not.toContain('porch');
+  });
+
+  it('an old blob flattens the way it always rendered', () => {
     const state = publicBoardState({
       fog: {
         on: true,
-        revealed: ['0,0'],
+        revealed: [[0, 0]],
         regions: [
-          { name: 'the vault', revealed: false, cells: ['9,9'] },
-          { name: 'the porch', revealed: true, cells: ['1,1', '1,2'] },
+          { name: 'the vault', revealed: false, cells: [[9, 9]] },
+          { name: 'the porch', revealed: true, cells: [[1, 1], [1, 2]] },
         ],
       },
     }) as any;
-    expect(state.fog).toEqual({ on: true, revealed: ['0,0', '1,1', '1,2'] });
+    expect(state.fog).toEqual({
+      base: 'dark',
+      revealed: [[0, 0], [1, 1], [1, 2]],
+      fogged: [],
+    });
     expect(JSON.stringify(state)).not.toContain('vault');
     expect(JSON.stringify(state)).not.toContain('9,9');
+  });
+
+  it('a clear map with nothing covered carries no darkness at all', () => {
+    const state = publicBoardState({ fog: { base: 'clear' } }, [VAULT]) as any;
+    expect(state.fog).toEqual({ base: 'clear', revealed: [], fogged: [] });
   });
 
   it('passes nothing through when there is nothing', () => {
@@ -372,7 +436,7 @@ describe('GET /api/public', () => {
           { entityId: barrett, u: 1, v: 1 },
           { label: 'the ambush', u: 8, v: 8, hidden: true },
         ],
-        fog: { on: true, regions: [{ name: 'the vault', revealed: false, cells: ['9,9'] }] },
+        fog: { on: true, regions: [{ name: 'the vault', revealed: false, cells: [[9, 9]] }] },
       },
       'console',
     );
@@ -380,7 +444,7 @@ describe('GET /api/public', () => {
     const { body } = await call('GET', '/api/public', { key: true });
     expect(body.board.board.name).toBe('The Crossing');
     expect(body.board.state.placements).toEqual([{ entityId: barrett, u: 1, v: 1 }]);
-    expect(body.board.state.fog).toEqual({ on: true, revealed: [] });
+    expect(body.board.state.fog).toEqual({ base: 'dark', revealed: [], fogged: [] });
     expect(JSON.stringify(body)).not.toContain('ambush');
 
     // And clearing it puts the table back to idle.
@@ -392,6 +456,59 @@ describe('GET /api/public', () => {
       (await call('PUT', '/api/campaign/refs', { key: true, body: { board: 'brd_nope' } }))
         .status,
     ).toBe(400);
+  });
+
+  // The board row grew a field that is not player-safe, and the row
+  // ships whole inside the snapshot. Areas are the name AND the shape
+  // of a place — exactly what the flattened mask exists to withhold —
+  // so this pins that the two halves can't drift apart: the mask says
+  // where the dark is, and nothing anywhere in the payload says what
+  // it's called.
+  it('a board’s areas never travel — only the mask they add up to', async () => {
+    session.shelf.putBoard({
+      id: boardId,
+      key: 'maps/crossing.png',
+      name: 'The Crossing',
+      areas: [
+        { id: 'a1', name: 'the vault', cells: [[9, 9]] },
+        { id: 'a2', name: 'the porch', cells: [[1, 1]] },
+      ],
+    });
+    await call('PUT', '/api/campaign/refs', { key: true, body: { board: boardId } });
+    session.putBoardState(
+      boardId,
+      {
+        fog: {
+          base: 'clear',
+          revealed: [],
+          fogged: [[0, 0]],
+          areas: [{ areaId: 'a1', fogged: true }],
+        },
+      },
+      'console',
+    );
+
+    const { body } = await call('GET', '/api/public', { key: true });
+    expect(body.board.state.fog).toEqual({
+      base: 'clear',
+      revealed: [],
+      fogged: [[0, 0], [9, 9]],
+    });
+    expect(body.board.board.areas).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain('vault');
+    expect(JSON.stringify(body)).not.toContain('porch');
+    // The porch isn't covered, so its cells aren't in the mask either.
+    expect(JSON.stringify(body.board.state.fog)).not.toContain('1,1');
+
+    // And the shelf listing a passive screen may read is stripped the
+    // same way — one law, every door.
+    const display = await passiveScreen();
+    const listed = await call('GET', '/api/boards', { display });
+    expect(listed.status).toBe(200);
+    expect(listed.body[0].areas).toBeUndefined();
+    expect((await call('GET', '/api/boards', { key: true })).body[0].areas).toHaveLength(2);
+
+    await call('PUT', '/api/campaign/refs', { key: true, body: { board: null } });
   });
 
   // A movement record names a token that may be standing behind the

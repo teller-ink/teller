@@ -29,8 +29,16 @@
 //     stripped server-side (`server/public.ts`), never dimmed, so
 //     nothing is discoverable in devtools. New tokens start hidden.
 //   * FOG NEVER SWITCHES ITSELF ON. Reaching for the tool, or shaping
-//     an area, leaves the table clear; blacking it out is a decision
-//     someone takes in the panel.
+//     an area, leaves the table clear; darkness is a decision someone
+//     takes with the brush or the base switch. A new board is `clear`
+//     with nothing covered, which renders as no fog at all.
+//   * GEOGRAPHY AND RESIDUE WRITE THROUGH DIFFERENT DOORS. A named
+//     AREA is inherent to the map, so it lands on the board row via
+//     `onBoard` — prep, reusable, campaign-independent. Freehand fog
+//     cells are what happened tonight, so they stay in `board_state`
+//     with the tokens. Which door a control uses says which kind of
+//     thing it is editing, and that is the seam this whole file is
+//     organised around.
 //
 // Pointer events throughout, never HTML5 drag-and-drop: this console is
 // an iPad as often as it is a laptop, and DnD does not exist there
@@ -49,19 +57,26 @@ import { FogLayer, GridOverlay } from './Layers.tsx';
 import { Zones } from './Zones.tsx';
 import {
   allCells,
+  areaFogged,
   cellOf,
   clamp01,
   DEFAULT_VIEW,
   EFFECTS,
+  flatFog,
   gridOf,
   hasCell,
   localId,
+  newAreaId,
   SIZES,
   snapUv,
+  toFog,
   TOKEN_COLORS,
+  withAreaFogged,
   withIds,
+  withoutArea,
   withoutCell,
   zoneBase,
+  type Area,
   type Board,
   type BoardState,
   type BoardView,
@@ -132,7 +147,12 @@ export function BoardEditor({
   tableViewport?: { w: number; h: number };
   combatRunning?: boolean;
   onState: (next: BoardState) => void;
-  onBoard: (patch: { name?: string; widthInches?: number | null; grid?: unknown }) => void;
+  onBoard: (patch: {
+    name?: string;
+    widthInches?: number | null;
+    grid?: unknown;
+    areas?: Area[];
+  }) => void;
   onClose: () => void;
 }) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -148,7 +168,8 @@ export function BoardEditor({
   const [snap, setSnap] = useState(() => localStorage.getItem(SNAP_PREF) !== '0');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [zoneEditId, setZoneEditId] = useState<string | null>(null);
-  const [regionEditId, setRegionEditId] = useState<string | null>(null);
+  const [areaEditId, setAreaEditId] = useState<string | null>(null);
+  const [areaName, setAreaName] = useState('');
   const [carrying, setCarrying] = useState<RosterRow | null>(null);
 
   // --- the draft ------------------------------------------------------
@@ -168,6 +189,38 @@ export function BoardEditor({
   const strokeRef = useRef<string | null>(null);
   const confirmedRef = useRef(false);
 
+  // --- the AREAS draft ------------------------------------------------
+  //
+  // The same live-and-debounced posture as the state draft above, and
+  // for the same reason: shaping a room is a drag, and a PATCH per cell
+  // would be a hundred writes to the shelf for one gesture. Separate
+  // because the destination is separate — areas are the BOARD's, so
+  // they go out through `onBoard` while everything else in this editor
+  // goes out through `onState`.
+
+  const [areas, setAreas] = useState<Area[]>(board.areas ?? []);
+  const areasRef = useRef<Area[]>(board.areas ?? []);
+  const areasDirty = useRef(false);
+  const areasTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (areasDirty.current) return;
+    areasRef.current = board.areas ?? [];
+    setAreas(board.areas ?? []);
+  }, [board.areas]);
+
+  const commitAreas = (next: Area[]) => {
+    areasRef.current = next;
+    areasDirty.current = true;
+    setAreas(next);
+    if (areasTimer.current) clearTimeout(areasTimer.current);
+    areasTimer.current = setTimeout(() => {
+      areasTimer.current = null;
+      areasDirty.current = false;
+      onBoard({ areas: areasRef.current });
+    }, 350);
+  };
+
   // A different board is a different draft, always — no carry-over.
   useEffect(() => {
     const seeded = withIds(state);
@@ -177,7 +230,10 @@ export function BoardEditor({
     dirty.current = false;
     setSelectedId(null);
     setZoneEditId(null);
-    setRegionEditId(null);
+    setAreaEditId(null);
+    areasRef.current = board.areas ?? [];
+    areasDirty.current = false;
+    setAreas(board.areas ?? []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board.id]);
 
@@ -322,9 +378,12 @@ export function BoardEditor({
 
   const placements = draft.placements ?? [];
   const zones = draft.zones ?? [];
-  const fog: Fog = draft.fog ?? { on: false, revealed: [] };
-  const regions = fog.regions ?? [];
-  const editingRegion = regions.find((r) => r.id === regionEditId) ?? null;
+  const fog: Fog = toFog(draft.fog);
+  const editingArea = areas.find((a) => a.id === areaEditId) ?? null;
+  // What the brush's freehand strokes go into under this base — the
+  // EXCEPTION to the untouched map, which is `revealed` when the world
+  // is dark and `fogged` when it is clear.
+  const freehand = fog.base === 'dark' ? fog.revealed : fog.fogged;
   const view: BoardView = { ...DEFAULT_VIEW, ...(draft.view ?? {}) };
   const selected = placements.find((p) => p.id === selectedId) ?? null;
 
@@ -340,7 +399,7 @@ export function BoardEditor({
     );
 
   const setFog = (patch: Partial<Fog>) =>
-    commit({ ...draftRef.current, fog: { ...fog, ...patch } });
+    commit({ ...draftRef.current, fog: { ...toFog(draftRef.current.fog), ...patch } });
 
   const setView = (patch: Partial<BoardView>, living = true) => {
     const d = draftRef.current;
@@ -400,25 +459,77 @@ export function BoardEditor({
   };
 
   const fogPainted = (cell: Cell) =>
-    regionEditId ? hasCell(editingRegion?.cells ?? [], cell) : hasCell(fog.revealed ?? [], cell);
+    areaEditId ? hasCell(editingArea?.cells ?? [], cell) : hasCell(freehand, cell);
 
+  /**
+   * One stroke. Shaping an area writes the BOARD; everything else is
+   * freehand and stays in the fight, which is the whole reason
+   * paint-to-reveal mid-combat is cheap.
+   */
   const applyFog = (cell: Cell, op: 'add' | 'remove') => {
-    const d = draftRef.current;
-    const f: Fog = d.fog ?? { on: false, revealed: [] };
     const edit = (cells: Cell[]) => {
       const next = withoutCell(cells, cell);
       return op === 'add' ? [...next, cell] : next;
     };
-    // Painting into an area SHAPES the room; otherwise it clears ground.
-    const nextFog: Fog = regionEditId
-      ? {
-          ...f,
-          regions: (f.regions ?? []).map((r) =>
-            r.id === regionEditId ? { ...r, cells: edit(r.cells) } : r,
-          ),
-        }
-      : { ...f, revealed: edit(f.revealed ?? []) };
-    commit({ ...d, fog: nextFog });
+    if (areaEditId) {
+      commitAreas(
+        areasRef.current.map((a) => (a.id === areaEditId ? { ...a, cells: edit(a.cells) } : a)),
+      );
+      return;
+    }
+    const d = draftRef.current;
+    const f = toFog(d.fog);
+    const next: Fog =
+      f.base === 'dark' ? { ...f, revealed: edit(f.revealed) } : { ...f, fogged: edit(f.fogged) };
+    commit({ ...d, fog: next });
+  };
+
+  /**
+   * A painted patch becomes a NAMED PLACE — the one promotion in this
+   * editor that moves a fact from the fight to the map. The freehand
+   * cells leave the state and arrive on the board as an area, and the
+   * area's fight-side state is set to whatever those cells already
+   * looked like, so nothing on the table changes at the moment of
+   * naming. (Freehand does NOT create an area by itself: every
+   * brushstroke of a running fight would silently become geography.)
+   */
+  const promotePatch = () => {
+    const f = toFog(draftRef.current.fog);
+    const cells = f.base === 'dark' ? f.revealed : f.fogged;
+    if (!cells.length) return;
+    mark();
+    const area: Area = {
+      id: newAreaId(),
+      name: areaName.trim() || `Area ${areasRef.current.length + 1}`,
+      cells,
+    };
+    commitAreas([...areasRef.current, area]);
+    const emptied: Fog =
+      f.base === 'dark' ? { ...f, revealed: [] } : { ...f, fogged: [] };
+    commit({
+      ...draftRef.current,
+      fog: withAreaFogged(emptied, area.id, f.base === 'clear'),
+    });
+    setAreaName('');
+  };
+
+  /** An area off the map, and its fight-side state with it. */
+  const dropArea = (id: string) => {
+    mark();
+    commitAreas(areasRef.current.filter((a) => a.id !== id));
+    commit({ ...draftRef.current, fog: withoutArea(toFog(draftRef.current.fog), id) });
+    if (areaEditId === id) setAreaEditId(null);
+  };
+
+  /** Everything lit, or everything covered — areas included, since "all" means all. */
+  const setAll = (dark: boolean) => {
+    mark();
+    const f = toFog(draftRef.current.fog);
+    setFog({
+      revealed: f.base === 'dark' ? (dark ? [] : allCells(grid)) : f.revealed,
+      fogged: f.base === 'clear' ? (dark ? allCells(grid) : []) : f.fogged,
+      areas: areasRef.current.map((a) => ({ areaId: a.id, fogged: dark })),
+    });
   };
 
   /** Drop one on the map. New markers start behind the screen, always. */
@@ -500,7 +611,15 @@ export function BoardEditor({
       if (!cell) return;
       mark();
       if (tool === 'fog') {
-        const op = fogBrush === 'reveal' ? (fogPainted(cell) ? 'remove' : 'add') : 'remove';
+        // ONE BRUSH STORY BOTH WAYS: 'reveal' means make it visible and
+        // 'cover' means make it dark, and the base decides whether that
+        // is adding to the exception list or taking away from it.
+        // Shaping an area is the odd one out — there the brush is
+        // drawing an outline, so 'reveal' extends the shape.
+        const adds = areaEditId
+          ? fogBrush === 'reveal' && !fogPainted(cell)
+          : (fogBrush === 'reveal') === (fog.base === 'dark');
+        const op: 'add' | 'remove' = adds ? 'add' : 'remove';
         dragRef.current = { kind: 'paint', op, last: cell.join(',') };
         applyFog(cell, op);
         return;
@@ -635,17 +754,23 @@ export function BoardEditor({
           )}
           {cellPx && <GridOverlay cellPx={cellPx} grid={board.grid} />}
           {cellPx && (
-            <FogLayer fog={fog} width={baseW} height={baseH} cellPx={cellPx} dm />
+            <FogLayer
+              fog={flatFog(fog, areas)}
+              width={baseW}
+              height={baseH}
+              cellPx={cellPx}
+              dm
+            />
           )}
 
           {/* Area extents — rooms the Warden can see and the table
               can't, and which one the brush is shaping. */}
           {cellPx &&
             tool === 'fog' &&
-            regions.map((region) =>
-              region.cells.map(([c, r]) => (
+            areas.map((area) =>
+              area.cells.map(([c, r]) => (
                 <div
-                  key={`${region.id}:${c},${r}`}
+                  key={`${area.id}:${c},${r}`}
                   className="pointer-events-none absolute"
                   style={{
                     left: c * cellPx,
@@ -653,12 +778,12 @@ export function BoardEditor({
                     width: cellPx,
                     height: cellPx,
                     border: `${Math.max(1, cellPx * 0.04)}px solid ${
-                      region.id === regionEditId
+                      area.id === areaEditId
                         ? 'rgba(251,191,36,0.85)'
                         : 'rgba(125,211,252,0.45)'
                     }`,
                     background:
-                      region.id === regionEditId
+                      area.id === areaEditId
                         ? 'rgba(251,191,36,0.12)'
                         : 'rgba(125,211,252,0.07)',
                   }}
@@ -851,7 +976,7 @@ export function BoardEditor({
             disabled={!grid}
             title={
               grid
-                ? "fog (G) — paint what the posse can see. Reaching for the tool never blacks out the table; that's the switch in the fog panel."
+                ? 'fog (G) — paint darkness onto the map, or lift it. Reaching for the tool never darkens anything; every black cell is one somebody painted.'
                 : 'set the map width first — fog uses inch tiles'
             }
             aria-label="fog tool"
@@ -901,8 +1026,17 @@ export function BoardEditor({
                 }`}
                 onClick={() => setFogBrush(m)}
                 aria-label={`fog brush ${m}`}
+                title={
+                  areaEditId
+                    ? m === 'reveal'
+                      ? 'extend this area'
+                      : 'trim this area'
+                    : m === 'reveal'
+                      ? 'make it visible'
+                      : 'make it dark'
+                }
               >
-                {m}
+                {areaEditId ? (m === 'reveal' ? 'shape' : 'trim') : m === 'reveal' ? 'lift' : 'fog'}
               </button>
             ))}
           </div>
@@ -967,10 +1101,19 @@ export function BoardEditor({
         {tool === 'fog' && (
           <FogPanel
             fog={fog}
-            grid={grid}
-            editing={regionEditId}
-            onEdit={setRegionEditId}
+            areas={areas}
+            patch={freehand.length}
+            editing={areaEditId}
+            onEdit={setAreaEditId}
             setFog={setFog}
+            setAll={setAll}
+            areaName={areaName}
+            onAreaName={setAreaName}
+            onPromote={promotePatch}
+            onRename={(id, name) =>
+              commitAreas(areasRef.current.map((a) => (a.id === id ? { ...a, name } : a)))
+            }
+            onDrop={dropArea}
             mark={mark}
           />
         )}
@@ -1281,142 +1424,177 @@ function GroundPanel({
 }
 
 /**
- * Fog, and the AREAS that make it usable at speed: paint a room once
- * during prep, reveal the whole thing with one tap when the posse walks
- * in. Areas are DM-only structure — the snapshot flattens fog to plain
- * revealed cells, so the name and shape of an unentered room never
- * reaches the table.
+ * Fog: what the untouched map MEANS, the brush's leftovers, and the
+ * named places darkness is lifted from.
+ *
+ * The base switch is the whole feature. `clear` is the default and the
+ * common case — a board arrives showing its artwork and the Warden
+ * paints the barn black — while `dark` is the dungeon-crawl posture the
+ * old model hard-coded for everybody. Plain words on the buttons,
+ * because "base: dark" is a field name and "dark until revealed" is
+ * what a person means.
+ *
+ * AREAS are the board's, not the fight's: named in prep, reusable next
+ * campaign, and lifted with one tap when the posse walks in. Only their
+ * fog state is tonight's. They stay DM-only — the snapshot flattens
+ * everything to one mask, so the name and shape of an unentered room
+ * never reach the table.
  */
 function FogPanel({
   fog,
-  grid,
+  areas,
+  patch,
   editing,
   onEdit,
   setFog,
+  setAll,
+  areaName,
+  onAreaName,
+  onPromote,
+  onRename,
+  onDrop,
   mark,
 }: {
   fog: Fog;
-  grid: { cols: number; rows: number } | null;
+  areas: Area[];
+  /** How many freehand cells are sitting there unnamed. */
+  patch: number;
   editing: string | null;
   onEdit: (id: string | null) => void;
   setFog: (patch: Partial<Fog>) => void;
+  setAll: (dark: boolean) => void;
+  areaName: string;
+  onAreaName: (name: string) => void;
+  onPromote: () => void;
+  onRename: (id: string, name: string) => void;
+  onDrop: (id: string) => void;
   mark: () => void;
 }) {
-  const regions = fog.regions ?? [];
+  const dark = fog.base === 'dark';
   return (
     <section className={`space-y-1.5 p-3 ${panel}`}>
-      <div className="flex items-center justify-between">
-        <span className="font-mono text-[10px] uppercase tracking-widest text-stone-500">fog</span>
-        <button
-          className={`rounded-md px-2 py-1 text-xs ${
-            fog.on ? 'bg-amber-700 text-stone-950' : 'bg-stone-800 text-stone-300'
-          }`}
-          onClick={() => {
-            mark();
-            setFog({ on: !fog.on });
-          }}
-          title={
-            fog.on
-              ? 'the table is dark except where you have revealed'
-              : 'the table is clear — turn this on to black it out'
-          }
-        >
-          {fog.on ? 'on' : 'off'}
-        </button>
+      <span className="font-mono text-[10px] uppercase tracking-widest text-stone-500">fog</span>
+      <div className="flex gap-1.5">
+        {(
+          [
+            ['clear', 'clear until fogged'],
+            ['dark', 'dark until revealed'],
+          ] as const
+        ).map(([base, label]) => (
+          <button
+            key={base}
+            className={`flex-1 rounded-md px-2 py-1 text-[11px] leading-tight ${
+              fog.base === base
+                ? 'bg-amber-700 text-stone-950'
+                : 'bg-stone-800 text-stone-300 hover:bg-stone-700'
+            }`}
+            onClick={() => {
+              if (fog.base === base) return;
+              mark();
+              setFog({ base });
+            }}
+            title={
+              base === 'clear'
+                ? 'the map shows itself; you paint the darkness'
+                : 'the map is unlit; you paint what can be seen'
+            }
+          >
+            {label}
+          </button>
+        ))}
       </div>
       <div className="flex gap-1.5">
         <button
           className="rounded-md bg-stone-800 px-2 py-1 text-xs text-stone-300 hover:bg-stone-700"
-          onClick={() => {
-            mark();
-            setFog({ revealed: allCells(grid) });
-          }}
-          disabled={!grid}
-          title="reveal the whole map"
+          onClick={() => setAll(false)}
+          disabled={!dark}
+          title="lift everything, areas included"
         >
-          reveal all
+          lift all
         </button>
         <button
           className="rounded-md bg-stone-800 px-2 py-1 text-xs text-stone-300 hover:bg-stone-700"
-          onClick={() => {
-            mark();
-            setFog({ revealed: [] });
-          }}
-          title="cover the whole map again"
+          onClick={() => setAll(true)}
+          title="cover everything, areas included"
         >
-          hide all
+          cover all
         </button>
       </div>
-      <div className="flex items-center justify-between pt-1">
-        <span className="font-mono text-[10px] uppercase tracking-widest text-stone-500">areas</span>
-        <button
-          className="rounded px-1.5 text-sm text-stone-400 hover:text-stone-100"
-          onClick={() => {
-            mark();
-            const region = {
-              id: localId('rgn'),
-              name: `Area ${regions.length + 1}`,
-              cells: [] as Cell[],
-              revealed: false,
-            };
-            setFog({ regions: [...regions, region] });
-            onEdit(region.id);
-          }}
-          title="paint a room now, reveal it in one tap later"
-          aria-label="add an area"
-        >
-          +
-        </button>
+
+      {/* The promotion: a patch the brush drew becomes a place with a
+          name on the board. Only offered when there is something to
+          name, so it is never a button that does nothing. */}
+      <div className="flex items-center gap-1.5 pt-1">
+        <span className="font-mono text-[10px] uppercase tracking-widest text-stone-500">
+          areas
+        </span>
+        <span className="font-mono text-[10px] text-stone-600">{areas.length}</span>
       </div>
-      {regions.length === 0 && <p className="text-xs text-stone-600">no areas yet</p>}
-      {regions.map((region) => (
-        <div key={region.id} className="flex items-center gap-1.5">
-          <button
-            className={`h-4 w-4 shrink-0 rounded border ${
-              editing === region.id ? 'border-amber-400 bg-amber-400/30' : 'border-sky-400/50'
-            }`}
-            onClick={() => onEdit(editing === region.id ? null : region.id)}
-            title="shape this area with the brush"
-            aria-label={`shape ${region.name}`}
-          />
+      {patch > 0 && (
+        <div className="flex items-center gap-1.5">
           <input
-            className="min-w-0 flex-1 bg-transparent text-xs text-stone-300 focus:outline-none"
-            value={region.name}
-            onChange={(e) =>
-              setFog({
-                regions: regions.map((r) =>
-                  r.id === region.id ? { ...r, name: e.target.value } : r,
-                ),
-              })
-            }
-            aria-label="area name"
+            className={`${input} min-w-0 flex-1 text-xs`}
+            value={areaName}
+            placeholder={`name these ${patch} cells`}
+            onChange={(e) => onAreaName(e.target.value)}
+            aria-label="name this patch"
           />
-          <span className="font-mono text-[10px] text-stone-600">{region.cells.length}</span>
           <button
-            className={`rounded px-1.5 py-0.5 text-[10px] ${
-              region.revealed ? 'bg-emerald-800/70 text-emerald-100' : 'bg-stone-800 text-amber-300'
-            }`}
-            onClick={() => {
-              mark();
-              setFog({
-                regions: regions.map((r) =>
-                  r.id === region.id ? { ...r, revealed: !r.revealed } : r,
-                ),
-              });
-            }}
-            title={region.revealed ? 'the posse has been here' : 'the posse has not been here'}
+            className="rounded-md bg-stone-800 px-2 py-1 text-xs text-amber-300 hover:bg-stone-700"
+            onClick={onPromote}
+            title="make this patch a named place on the map — it outlives the fight"
           >
-            {region.revealed ? 'shown' : 'hidden'}
-          </button>
-          <button
-            className="rounded px-1 text-xs text-stone-500 hover:text-red-300"
-            onClick={() => setFog({ regions: regions.filter((r) => r.id !== region.id) })}
-            aria-label={`delete ${region.name}`}
-          >
-            ✕
+            name it
           </button>
         </div>
-      ))}
+      )}
+      {areas.length === 0 && patch === 0 && (
+        <p className="text-xs text-stone-600">
+          paint a patch with the brush, then name it to keep it
+        </p>
+      )}
+      {areas.map((area) => {
+        const covered = areaFogged(fog, area.id);
+        return (
+          <div key={area.id} className="flex items-center gap-1.5">
+            <button
+              className={`h-4 w-4 shrink-0 rounded border ${
+                editing === area.id ? 'border-amber-400 bg-amber-400/30' : 'border-sky-400/50'
+              }`}
+              onClick={() => onEdit(editing === area.id ? null : area.id)}
+              title="shape this area with the brush"
+              aria-label={`shape ${area.name}`}
+            />
+            <input
+              className="min-w-0 flex-1 bg-transparent text-xs text-stone-300 focus:outline-none"
+              value={area.name}
+              onChange={(e) => onRename(area.id, e.target.value)}
+              aria-label="area name"
+            />
+            <span className="font-mono text-[10px] text-stone-600">{area.cells.length}</span>
+            <button
+              className={`rounded px-1.5 py-0.5 text-[10px] ${
+                covered ? 'bg-stone-800 text-amber-300' : 'bg-emerald-800/70 text-emerald-100'
+              }`}
+              onClick={() => {
+                mark();
+                setFog({ areas: withAreaFogged(fog, area.id, !covered).areas });
+              }}
+              title={covered ? 'dark — tap to lift it' : 'lifted — tap to cover it'}
+              aria-label={covered ? `lift ${area.name}` : `cover ${area.name}`}
+            >
+              {covered ? 'dark' : 'lifted'}
+            </button>
+            <button
+              className="rounded px-1 text-xs text-stone-500 hover:text-red-300"
+              onClick={() => onDrop(area.id)}
+              aria-label={`delete ${area.name}`}
+            >
+              ✕
+            </button>
+          </div>
+        );
+      })}
     </section>
   );
 }

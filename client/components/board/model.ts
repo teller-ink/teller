@@ -20,12 +20,33 @@
 //
 // The stored shapes below are the ones `server/public.ts` already knows
 // how to strip: a hidden placement or zone is REMOVED from the
-// player-safe snapshot rather than dimmed, and fog flattens to plain
-// revealed cells so the shape of an unentered room never reaches the
+// player-safe snapshot rather than dimmed, and fog flattens to one mask
+// of cells so the name and shape of an unentered room never reach the
 // table. Nothing here may invent a second spelling of `hidden`.
 
-/** A grid cell, by index from the map's origin. */
-export type Cell = [number, number];
+/**
+ * Fog's vocabulary is not declared here — it lives in `core/fog.ts`,
+ * because the console, the server and the table all have to agree
+ * about what a base means and three copies of that agreement is three
+ * chances to disagree. Re-exported rather than re-declared, the way
+ * `TOKEN_COLORS` is, so every existing import still reads `model.ts`.
+ */
+import type { Area, Cell, Fog } from '../../../core/fog.ts';
+
+export {
+  areaFogged,
+  flatFog,
+  fogVisible,
+  newAreaId,
+  toFog,
+  withAreaFogged,
+  withoutArea,
+  type Area,
+  type Cell,
+  type FlatFog,
+  type Fog,
+  type FogBase,
+} from '../../../core/fog.ts';
 
 /**
  * Where a thing stands and what it looks like (§5).
@@ -50,24 +71,6 @@ export type Placement = {
   shape?: 'circle' | 'square' | 'triangle';
   /** Behind the screen: stripped server-side, not dimmed (rule: hidden means absent). */
   hidden?: boolean;
-};
-
-/** A named area, painted once in prep and revealed with one tap. */
-export type FogRegion = {
-  id: string;
-  name: string;
-  cells: Cell[];
-  revealed: boolean;
-};
-
-/**
- * Stored as what's REVEALED, because the common case is a mostly-dark
- * map: a fresh cover costs one flag, not nine hundred cells.
- */
-export type Fog = {
-  on: boolean;
-  revealed: Cell[];
-  regions?: FogRegion[];
 };
 
 /**
@@ -110,9 +113,19 @@ export type Board = {
   name: string;
   widthInches?: number;
   grid?: { on?: boolean; color?: string; opacity?: number };
+  /** Named places — prep-authored, board-side, and never sent to a passive screen. */
+  areas?: Area[];
 };
 
 export const DEFAULT_VIEW: BoardView = { mode: 'fit', zoom: 1, cu: 0.5, cv: 0.5 };
+
+/**
+ * A board nobody has fogged. `clear` with nothing covered renders as no
+ * fog at all, which is rule 1's floor written as a default: reaching
+ * for the tool, opening the workshop, or shaping an area leaves the
+ * table showing its map.
+ */
+export const DEFAULT_FOG: Fog = { base: 'clear', revealed: [], fogged: [], areas: [] };
 
 /**
  * The ground markers a painted layer can be. Environmental, not

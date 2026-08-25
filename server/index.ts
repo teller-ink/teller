@@ -119,11 +119,13 @@ import { toRights } from '../core/bundle.ts';
 import { notesOf, passNote, visibleTo, type NoteHandout } from './notes.ts';
 import { setNotice } from './notice.ts';
 import {
+  publicBoardRow,
   publicBoardState,
   publicEntityList,
   publicSnapshot,
   publicTurnState,
 } from './public.ts';
+import { toAreas } from '../core/fog.ts';
 import { ACTIVE_CAMPAIGN, Host, Session, type EntryEdit } from './session.ts';
 import { peekUndo, undo } from './undo.ts';
 import type { TurnOp } from './turn.ts';
@@ -2259,8 +2261,14 @@ export async function handleApi(
   // is the only log there is, and a board arriving is a thing that
   // happened at this table even though the row outlives it.
   if (head === 'boards') {
+    // The shelf, listed. Anyone at the table may see WHICH boards exist
+    // — the gate up top is `canWatch` — but only the DM sees what the
+    // places on them are called: an area is a named secret, and it is
+    // stripped from the row for everyone else exactly as it is in the
+    // snapshot (`publicBoardRow`).
     if (method === 'GET' && !a) {
-      return reply(200, session.shelf.boards());
+      const boards = session.shelf.boards();
+      return reply(200, canDm(auth) ? boards : boards.map(publicBoardRow));
     }
 
     if (method === 'POST' && a === 'upload' && !b) {
@@ -2326,6 +2334,17 @@ export async function handleApi(
         if (grid) next.grid = grid;
         else delete next.grid;
       }
+      // The named layer (`core/fog.ts`). It comes in through the BOARD
+      // door and not the fight's, because that is the whole claim: an
+      // area is geography the campaign borrows, not something tonight
+      // did. Ids are minted here for anything that arrives without
+      // one, so a client that forgets can't author two nameless rows
+      // that later collide.
+      if ('areas' in body) {
+        const areas = toAreas(body.areas);
+        if (areas.length) next.areas = areas;
+        else delete next.areas;
+      }
       const saved = session.shelf.putBoard(next);
       session.campaign.append(null, actorOf(auth), 'board.edited', {
         id: saved.id,
@@ -2381,7 +2400,10 @@ export async function handleApi(
       // it as the table may — hidden placements gone, fog flattened.
       // Same function the snapshot uses, because two strippings would
       // eventually disagree and one of them would be the leak.
-      return reply(200, canDm(auth) ? state : publicBoardState(state));
+      return reply(
+        200,
+        canDm(auth) ? state : publicBoardState(state, session.shelf.board(a)?.areas ?? []),
+      );
     }
     if (method === 'PUT') {
       if (!canDm(auth)) return denied();

@@ -9,7 +9,7 @@
 // (`dm`), because the Warden has to work on ground the posse can't see.
 
 import { useId } from 'react';
-import type { Cell } from './model.ts';
+import { fogVisible, type Cell, type FlatFog } from './model.ts';
 
 const GRID_DEFAULTS = { color: '#fbbf24', opacity: 0.22 };
 
@@ -53,14 +53,20 @@ export function GridOverlay({
 }
 
 /**
- * One dark sheet with the revealed cells punched out and blurred, so
- * explored ground has soft edges instead of a staircase of squares.
+ * The darkness, drawn from the FLATTENED fog and nothing else — the
+ * same `FlatFog` the server hands the table (`core/fog.ts`), so the
+ * Warden's preview and the players' glass cannot disagree about where
+ * the dark is. Areas have already been folded in by the time this runs;
+ * their extents are drawn separately, as outlines, so the Warden can
+ * see a room the table cannot.
  *
- * The DM's copy is translucent, the table's is not — and the cells it
- * punches include every REVEALED area, which is exactly the flattening
- * `publicBoardState` does on the way out. An area still closed stays
- * dark here too; its extents are drawn separately, as an outline, so
- * the Warden can see a room the table cannot.
+ * ONE MASK, TWO POLARITIES. Under `dark` a sheet covers the map and the
+ * revealed cells are punched out of it. Under `clear` the same sheet is
+ * masked down to the fogged cells alone, so the darkness is the patch
+ * rather than the ground. Both go through the blur, which is where the
+ * soft edges come from — the geometry stays inch-sized either way.
+ *
+ * The DM's copy is translucent, the table's is not.
  */
 export function FogLayer({
   fog,
@@ -70,7 +76,7 @@ export function FogLayer({
   cellPxY,
   dm = false,
 }: {
-  fog?: { on?: boolean; revealed?: Cell[]; regions?: { cells: Cell[]; revealed: boolean }[] };
+  fog?: FlatFog;
   width: number;
   height: number;
   cellPx: number;
@@ -78,14 +84,12 @@ export function FogLayer({
   dm?: boolean;
 }) {
   const uid = useId();
-  if (!fog?.on || !cellPx || !width || !height) return null;
+  if (!fog || !fogVisible(fog) || !cellPx || !width || !height) return null;
   const cellY = cellPxY || cellPx;
   const blur = Math.min(cellPx, cellY) * 0.28;
   const bleed = Math.min(cellPx, cellY) * 0.12;
-  const clear: Cell[] = [
-    ...(fog.revealed ?? []),
-    ...(fog.regions ?? []).filter((r) => r.revealed).flatMap((r) => r.cells),
-  ];
+  const lit = fog.base === 'dark';
+  const painted: Cell[] = lit ? fog.revealed : fog.fogged;
   return (
     <svg
       className="pointer-events-none absolute inset-0"
@@ -99,9 +103,13 @@ export function FogLayer({
           <feGaussianBlur stdDeviation={blur} />
         </filter>
         <mask id={`fogmask-${uid}`}>
-          <rect x="0" y="0" width={width} height={height} fill="white" />
+          {/* White shows the sheet, black hides it. Under `dark` the
+              ground starts covered and the brush cuts holes; under
+              `clear` it starts bare and the brush is the only thing
+              that shows. */}
+          <rect x="0" y="0" width={width} height={height} fill={lit ? 'white' : 'black'} />
           <g filter={`url(#fogblur-${uid})`}>
-            {clear.map(([c, r], i) => (
+            {painted.map(([c, r], i) => (
               <rect
                 key={i}
                 x={c * cellPx - bleed}
@@ -109,7 +117,7 @@ export function FogLayer({
                 width={cellPx + bleed * 2}
                 height={cellY + bleed * 2}
                 rx={cellPx * 0.3}
-                fill="black"
+                fill={lit ? 'black' : 'white'}
               />
             ))}
           </g>
