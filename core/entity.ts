@@ -62,11 +62,21 @@ export type Entry = {
   max?: number;
 };
 
+/** Which side of the table an entity is handled on — `core/side.ts`. */
+export type Side = 'party' | 'foe' | 'none';
+
 export type Entity = {
   id: string;
   name: string;
-  /** Question C — deliberately loose. Nothing in Core branches on it. */
+  /** Question C, settled (TEL-126): FLAVOUR — a trade, a category, a plugin's word. Nothing in Core branches on it; the side is `side`. */
   type?: string;
+  /**
+   * The side — READING-ONLY, filled by the host on every entity it hands
+   * out (`core/side.ts`), never stored here: the stored fact is a `side`
+   * entry in the `meta` list, and `toEntity` drops this key so a reading
+   * written back can't bake a derivation in.
+   */
+  side?: Side;
   /** 'skills' · 'resources' · 'conditions' · 'marks' · … the system's words, not Core's. */
   lists: Record<string, Entry[]>;
   notes?: string;

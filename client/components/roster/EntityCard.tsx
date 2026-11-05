@@ -30,6 +30,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { isDraft, type Entity, type Entry } from '../../../core/entity.ts';
+import { SIDE_LIST, SIDE_MARK, SIDES, storedSide, type Side } from '../../../core/side.ts';
 import type { PanelDef } from '../../../core/panels.ts';
 import { api } from '../../lib/api.ts';
 import { useArtMap } from '../../lib/art.ts';
@@ -119,6 +120,57 @@ function Portrait({
   );
 }
 
+/**
+ * The side, as the tile's left edge — which side someone is on is the
+ * row's edge in the runner too, and saying it twice makes a party
+ * shout. The posse is silent; a foe is red; nobody's is grey.
+ */
+const SIDE_EDGE: Record<Side, string> = {
+  party: '',
+  foe: 'border-l-2 border-l-red-900/70',
+  none: 'border-l-2 border-l-stone-600',
+};
+
+/**
+ * The one control TEL-126 is for: a human setting the side over whatever
+ * the host derived (rule 1). Writes the `meta` mark through the ordinary
+ * entry door, so it's logged, undone and read back like any edit; the
+ * tooltip says what each side DOES, since that's the only reason to pick.
+ */
+const SIDE_MEANS: Record<Side, string> = {
+  party: 'party — numbers shown on the table, offered a seat',
+  foe: 'foe — numbers hidden from the table, swept by clear',
+  none: 'nobody’s — off the public roster, never offered a turn, spared by clear',
+};
+
+function SideControl({ e, onPick }: { e: Entity; onPick: (side: Side) => void }) {
+  // The stored mark first so a tap reads back in the same frame; the
+  // host's reading until there is one.
+  const current = storedSide(e) ?? e.side;
+  return (
+    <span className="flex gap-0.5" role="radiogroup" aria-label="side">
+      {SIDES.map((side) => {
+        const on = current === side;
+        return (
+          <button
+            key={side}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            title={SIDE_MEANS[side]}
+            className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${
+              on ? 'bg-amber-700 text-stone-950' : 'bg-stone-800 text-stone-500 hover:text-stone-200'
+            }`}
+            onClick={() => !on && onPick(side)}
+          >
+            {side}
+          </button>
+        );
+      })}
+    </span>
+  );
+}
+
 /** The half-made mark, as a caption — the only trace a draft carries. */
 function DraftBadge() {
   return (
@@ -150,7 +202,7 @@ export function EntityTile({
 
   return (
     <article
-      className={`${card} group cursor-pointer space-y-3 transition-colors hover:border-stone-700 hover:bg-stone-900`}
+      className={`${card} ${SIDE_EDGE[e.side ?? 'foe']} group cursor-pointer space-y-3 transition-colors hover:border-stone-700 hover:bg-stone-900`}
       role="button"
       tabIndex={0}
       onClick={onOpen}
@@ -309,13 +361,21 @@ export function EntitySheet({
               }}
               aria-label="name"
             />
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               {e?.type && (
                 <span className={sectionLabel} style={accent ? { color: accent } : undefined}>
                   {e.type}
                 </span>
               )}
               {isDraft(e) && <DraftBadge />}
+              {e && (
+                <SideControl
+                  e={e}
+                  onPick={(side) =>
+                    writeEntry(id, { list: SIDE_LIST, name: SIDE_MARK, value: side }).catch(() => {})
+                  }
+                />
+              )}
             </div>
           </div>
           <button className={btnGhost} onClick={onClose} aria-label="close">

@@ -50,7 +50,8 @@ import {
 // restated: one answer to "who was the fight", so the door that sweeps
 // them off the table and the door that hides their numbers can never
 // come to disagree (`server/public.ts`).
-import { isParty, tradeNames } from './public.ts';
+import { FURNITURE, tradeNames } from './public.ts';
+import { sideOf } from '../core/side.ts';
 import { movesBetween, type MoveRecord } from './geometry.ts';
 
 /**
@@ -341,7 +342,7 @@ export class Session {
    * Warden decided, so it is one action here.
    *
    * WHO GOES is asked with the redactor's own question, and deliberately
-   * not with a second one. `isParty` is the fail-closed rule the public
+   * not with a second one. `sideOf` is the fail-closed rule the public
    * snapshot already keys on (`server/public.ts`) — a `pc`, or one of
    * the trades the system declares — so the two can never disagree about
    * who the fight was: anything player-facing glass was hiding numbers
@@ -375,12 +376,7 @@ export class Session {
     const root = this.campaign.root();
     const doomed = this.campaign
       .children(root.id)
-      .filter(
-        (child) =>
-          !isParty(child, trades) &&
-          (child.type ?? '').trim().toLowerCase() !== 'vendor' &&
-          !isDraft(child),
-      );
+      .filter((child) => sideOf(child, trades, FURNITURE) === 'foe' && !isDraft(child));
 
     // Everything below this rowid is this sweep's own work.
     const mark = this.campaign.events({ limit: 1 })[0]?.id ?? 0;
@@ -485,7 +481,9 @@ export class Session {
 
   /** The entity as a player reads it — template underneath, stored on top. */
   reading(entity: Entity): Entity {
-    return resolve(entity, this.loaded.templateOf(...STAMP_SLOTS));
+    const resolved = resolve(entity, this.loaded.templateOf(...STAMP_SLOTS));
+    // The side rides every reading so no client derives one (TEL-126).
+    return { ...resolved, side: sideOf(resolved, tradeNames(this), FURNITURE) };
   }
 
   /**

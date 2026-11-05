@@ -352,7 +352,9 @@ export function TurnStage({
   onArm: (armed: Armed | undefined) => void;
   costCounter?: string;
 }) {
-  const foe = acting.type === 'foe';
+  // The stage is handed a READING (the runner's resolved sheet), which
+  // carries the host's side; `Template` is the printed shape it shares.
+  const foe = (acting as Entity).side === 'foe';
   const conditions = acting.lists?.conditions ?? [];
   // Bounded first: mid-fight you want Health and Grit, not a running
   // Prestige total that has no ceiling to draw.

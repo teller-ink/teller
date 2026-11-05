@@ -102,8 +102,10 @@ describe('entities over HTTP', () => {
     const id = made.body.id;
 
     const roster = await api('GET', '/api/entities');
+    // `side` rides the list (TEL-126): 'character' is no declared trade
+    // and nobody stored a side, so the host reads him fail-closed.
     expect(roster.body).toEqual([
-      { id, name: 'Barrett', type: 'character' },
+      { id, name: 'Barrett', type: 'character', side: 'foe' },
     ]);
 
     made.body.lists.resources[0].value = 1;

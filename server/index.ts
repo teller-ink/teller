@@ -118,13 +118,8 @@ import {
 import { toRights } from '../core/bundle.ts';
 import { notesOf, passNote, visibleTo, type NoteHandout } from './notes.ts';
 import { setNotice } from './notice.ts';
-import {
-  publicBoardRow,
-  publicBoardState,
-  publicEntityList,
-  publicSnapshot,
-  publicTurnState,
-} from './public.ts';
+import { FURNITURE, publicBoardRow, publicBoardState, publicEntityList, publicSnapshot, publicTurnState, tradeNames } from './public.ts';
+import { sideOf } from '../core/side.ts';
 import { toAreas } from '../core/fog.ts';
 import { toTerrain } from '../core/terrain.ts';
 import { ACTIVE_CAMPAIGN, Host, Session, type EntryEdit } from './session.ts';
@@ -1466,11 +1461,15 @@ export async function handleApi(
           parent === session.loaded.manifest.id ? publicEntityList(session) : [],
         );
       }
+      const trades = tradeNames(session);
       return reply(
         200,
-        session.campaign
-          .children(parent)
-          .map(({ id, name, type }) => ({ id, name, type: type ?? null })),
+        session.campaign.children(parent).map((e) => ({
+          id: e.id,
+          name: e.name,
+          type: e.type ?? null,
+          side: sideOf(e, trades, FURNITURE),
+        })),
       );
     }
     if (method === 'POST') {

@@ -10,7 +10,7 @@
 //     stripped and a qualitative `vitality` substitutes — a STATE, not
 //     a number, safe on a screen the players are looking at.
 //   * Party members keep their numbers; they are on the table anyway.
-//     Who counts as one is DECLARED and asked fail-closed (`isParty`) —
+//     Who counts as one is DECLARED and asked fail-closed (`sideAt`) —
 //     the audit of 2026-08-24 found the question asked the other way
 //     round, and a foe nobody typed a word onto came through as posse.
 //   * A HIDDEN THING IS HIDDEN EVERYWHERE. The same audit found the
@@ -52,6 +52,7 @@
 // party member keeps everything either way.
 
 import type { Entity, Entry } from '../core/entity.ts';
+import { sideOf, type Side } from '../core/side.ts';
 import { isDraft, numberOf } from '../core/entity.ts';
 import { toFog } from '../core/fog.ts';
 import { kindFor, toKindDef, type KindDef } from '../core/kind.ts';
@@ -74,7 +75,7 @@ export type PublicEntity = {
   name: string;
   type?: string;
   /** Which law was applied — the shape is the tag, so a view needn't re-derive it. */
-  side: 'foe' | 'party';
+  side: Side;
   lists: Record<string, Entry[]>;
   vitality?: Vitality;
 };
@@ -147,7 +148,7 @@ export type PublicHandout = { id: string; name: string; key: string };
  * the public snapshot is a real question and an open one; it is not
  * answered by leaving half a store behind.
  */
-const FURNITURE_TYPES = ['vendor'];
+export const FURNITURE: ReadonlySet<string> = new Set(['vendor']);
 
 export type PublicSnapshot = {
   campaign: { slug: string; name: string };
@@ -167,38 +168,16 @@ export type PublicSnapshot = {
 
 /**
  * WHO IS ON THE PARTY'S SIDE — the one question the whole redaction
- * hangs off, asked FAIL-CLOSED (the adversarial audit, 2026-08-24).
- *
- * It used to be asked the other way round — `type === 'foe'` meant foe
- * and everything else was party — and that read the type field as
- * though it held a side. It never did. `type` is DOUBLE-BOOKED: a live
- * character carries its TRADE there (creation writes `type: trade.name`
- * — "Marshal", "Trapper"), the roster bar mints `npc`/`pc`, and a foe
- * stamped from a template whose author never typed the word arrives
- * with no type at all. Every one of those fell through to "party" and
- * put a full sheet of numbers on the glass in the middle of the room.
- *
- * So the question is now asked from the party's end, where the answer
- * is DECLARED rather than assumed: an entity is party if it says `pc`,
- * or if its type is one of the trades the system declares — the same
- * list creation picked the trade from. Everything else — `npc`, `foe`,
- * `vendor`, a word nobody recognises, no word at all — gets the foe
- * treatment: a name and a vitality band, no numbers, no lists. A system
- * that declares no trades leaves `pc` as the only way in, which is the
- * honest floor and not a failure.
- *
- * **The known cost, stated rather than discovered**: a friendly NPC —
- * the sheriff fighting beside the posse — now has its numbers hidden on
- * player-facing glass. That is the constitution's own line ("NPC numbers
- * never shown", rule 6), not a regression; the real fix is a STORED
- * side a human can set and overrule (TEL-126), which is rule 1's answer
- * to every question this shape raises. Until it exists, over-stripping
- * is the safe direction and always was.
+ * hangs off, asked FAIL-CLOSED (the adversarial audit, 2026-08-24) and
+ * answered by `core/side.ts` since TEL-126: a side a human stored wins,
+ * the declared trades derive the default, furniture is on no side, and
+ * everything else gets the foe treatment — a name and a vitality band,
+ * no numbers, no lists. The sheriff fighting beside the posse shows
+ * their numbers the moment the DM flips them to `party` (rule 1), which
+ * is the answer this shape always wanted.
  */
-export function isParty(entity: { type?: string }, trades: ReadonlySet<string>): boolean {
-  const type = (entity.type ?? '').trim().toLowerCase();
-  if (!type) return false;
-  return type === 'pc' || trades.has(type);
+export function sideAt(session: Session, entity: Entity): Side {
+  return sideOf(entity, tradeNames(session), FURNITURE);
 }
 
 /**
@@ -270,7 +249,8 @@ export function publicEntity(
   kinds: KindDef[],
   trades: ReadonlySet<string>,
 ): PublicEntity {
-  const foe = !isParty(reading, trades);
+  const side = sideOf(reading, trades, FURNITURE);
+  const foe = side !== 'party';
   const lists: Record<string, Entry[]> = {};
   for (const [list, entries] of Object.entries(reading.lists ?? {})) {
     if (foe && !tagLike(kinds, list)) continue;
@@ -279,7 +259,7 @@ export function publicEntity(
   const out: PublicEntity = {
     id: reading.id,
     name: reading.name,
-    side: foe ? 'foe' : 'party',
+    side,
     lists,
   };
   if (reading.type) out.type = reading.type;
@@ -404,7 +384,7 @@ export function publicRoster(session: Session): PublicEntity[] {
   const hidden = hiddenOnActiveBoard(session);
   return session.campaign
     .children(session.campaign.root().id)
-    .filter((entity) => !FURNITURE_TYPES.includes(entity.type ?? ''))
+    .filter((entity) => sideOf(entity, trades, FURNITURE) !== 'none')
     .filter((entity) => !hidden.has(entity.id))
     .map((entity) => session.reading(entity))
     .filter((reading) => !isDraft(reading))

@@ -32,6 +32,7 @@
 // would be strange.
 
 import { useState } from 'react';
+import type { Side } from '../../core/entity.ts';
 import { registerTool } from './index.ts';
 import {
   api,
@@ -52,7 +53,7 @@ import { useArtMap } from '../lib/art.ts';
 import { PUBLIC, useLive } from '../lib/use-session.ts';
 import { btn, btnGhost, btnPrimary, card, input, sectionLabel } from '../lib/ui.ts';
 
-type RosterRow = { id: string; name: string; type?: string | null };
+type RosterRow = { id: string; name: string; type?: string | null; side?: Side };
 
 /**
  * The lines this table puts up often, as the merged stack declares
@@ -124,7 +125,7 @@ function HandoutsTool() {
   if (!list) return null;
 
   const activeId = snapshot?.handout?.id ?? null;
-  const party = (roster ?? []).filter((r) => r.type !== 'foe');
+  const party = (roster ?? []).filter((r) => r.side === 'party');
   const names = new Map((roster ?? []).map((r) => [r.id, r.name]));
 
   const guard = (work: Promise<unknown>, after?: () => void) => {

@@ -39,7 +39,7 @@
 // tool.
 
 import { useEffect, useRef, useState, type PointerEvent as PointerEvt } from 'react';
-import type { Entity } from '../../core/entity.ts';
+import type { Entity, Side } from '../../core/entity.ts';
 import type { TurnProposal } from '../../core/registry.ts';
 import { pendingEvents } from '../../core/frenzy.ts';
 import { api } from '../lib/api.ts';
@@ -110,7 +110,7 @@ type TurnOp =
   | { op: 'rolling'; on: boolean }
   | { op: 'score'; entryId: string; score: number | null };
 
-type RosterEntry = { id: string; name: string; type: string | null };
+type RosterEntry = { id: string; name: string; type: string | null; side: Side };
 
 /**
  * Enough of the live board to answer one question per row: is this
@@ -418,9 +418,11 @@ function RunnerTool() {
 
 
   const names = new Map((roster.data ?? []).map((e) => [e.id, e.name]));
-  const roles = new Map((roster.data ?? []).map((e) => [e.id, e.type]));
+  const roles = new Map((roster.data ?? []).map((e) => [e.id, e.side]));
   const seated = new Set(order.map((e) => e.entityId).filter(Boolean));
-  const unlisted = (roster.data ?? []).filter((e) => e.type && e.type !== 'foe' && !seated.has(e.id));
+  // The posse, not yet seated — a foe arrives by deploy, and furniture
+  // (a vendor, on no side) is never offered a turn.
+  const unlisted = (roster.data ?? []).filter((e) => e.side === 'party' && !seated.has(e.id));
 
   /** Which entities somebody is sitting in front of, and whether they're live. */
   const seats = new Map(
@@ -973,7 +975,7 @@ function RunnerTool() {
                 <ProviderSlot
                   point="propose.turn"
                   plain="the exchange"
-                  offer={stagedSheet.type === 'foe'}
+                  offer={stagedSheet.side === 'foe'}
                   ask="what would they do?"
                   placeholder="…or tell it what they do, and press enter"
                   // Arming something IS a decision, so it goes over as
@@ -1040,7 +1042,7 @@ function RunnerTool() {
                 {/* A player's turn gets no proposal, and the stage says
                     why rather than going blank. teller does not play
                     player characters. */}
-                {stagedSheet.type !== 'foe' && (
+                {stagedSheet.side !== 'foe' && (
                   <p className="px-1 text-[12px] italic text-stone-600">
                     {stagedSheet.name} plays themselves.
                   </p>

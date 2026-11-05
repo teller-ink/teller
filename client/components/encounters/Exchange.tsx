@@ -426,7 +426,7 @@ export function Exchange({
   /** Pools already filed as rolls, so applying doesn't file them twice. */
   const filed = useRef(new Set<string>());
 
-  const foe = actor.type === 'foe';
+  const foe = actor.side === 'foe';
   /** The printed profile decides this, never the Warden and never this file. */
   const aoe = armed.aoe === true;
 
@@ -932,7 +932,7 @@ export function Exchange({
 
           {targets.map((target) => {
             const s = stateOf(target.id);
-            const targetFoe = target.type === 'foe';
+            const targetFoe = target.side === 'foe';
             const offered = offeredOn(target);
             const defPool = defPoolOn(target);
             const typedNumber = typedOn(target.id);

@@ -497,7 +497,9 @@ Roles a screen can be assigned:
   Passive surfaces never grow buttons.
 - `board` — vertical player-facing companion display in front of the
   DM (passive, player-safe: consumes only the `/public` endpoint —
-  notes stripped, NPC numbers never shown)
+  notes stripped, a foe's numbers never shown; which SIDE someone is
+  on is a stored fact the DM sets, derived fail-closed until they do —
+  `core/side.ts`, TEL-126)
 - `art` — fullscreen frame for the active handout (passive,
   player-safe: public snapshot only)
 - `seat` — one player's own card (self-serve counters), for the one

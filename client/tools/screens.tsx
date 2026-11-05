@@ -24,6 +24,7 @@
 
 import { useState } from 'react';
 import { DRAFT_LIST, DRAFT_MARK } from '../../core/entity.ts';
+import { SIDE_MARK, type Side } from '../../core/side.ts';
 import { api, panes as fetchPanes } from '../lib/api.ts';
 import { CalibrationWizard } from '../components/board/CalibrationWizard.tsx';
 import { surfaces } from '../lib/panes.ts';
@@ -53,7 +54,7 @@ type Display = {
 };
 
 type PanelDecl = { name: string; label?: string; subject?: 'entity' | 'none' };
-type RosterEntry = { id: string; name: string; type: string | null };
+type RosterEntry = { id: string; name: string; type: string | null; side: Side };
 
 const ROLES: { value: DisplayRole; label: string; needsEntity?: boolean }[] = [
   { value: 'blank', label: 'blank' },
@@ -158,13 +159,16 @@ function ScreensTool() {
   // pane picker. A seat's shape is the merge's business, not a DM's
   // (Brian, 2026-08-20) — so there is no `'entity'` list here.
   const panes = surfaces(panels.data as PanelDecl[] | undefined, provided.data, 'none');
-  // core-next has no reliable PC/NPC signal left on an entity (rule 2 —
-  // `type` is free text, a trade name here, and often absent on a fresh
-  // character). The old app could restrict this to `kind === 'pc'`;
-  // this can't, so a seat or badge picks from everyone, sorted by name —
-  // a DM finding the wrong name in a short list beats a right name
-  // that never appears because a guessed filter excluded it.
-  const party = [...(roster.data ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+  // A seat or badge picks from EVERYONE — the DM may hand a player the
+  // sheriff for a scene — with the posse first, because that's who a
+  // seat is nearly always pointed at. The side is the host's reading
+  // (`core/side.ts`, TEL-126), never a guess off the type word: a right
+  // name that never appears because a guessed filter excluded it is the
+  // failure this list used to be unable to rule out.
+  const party = [...(roster.data ?? [])].sort(
+    (a, b) =>
+      Number(a.side !== 'party') - Number(b.side !== 'party') || a.name.localeCompare(b.name),
+  );
 
   const claim = () => {
     if (!code.trim()) return;
@@ -196,8 +200,10 @@ function ScreensTool() {
       body: {
         draft: {
           name: FRESH_NAME,
-          type: 'pc',
-          lists: { [DRAFT_LIST]: [{ name: DRAFT_MARK }] },
+          // Both marks are meta's: half-made, and on the posse's side —
+          // said outright, since a character with no trade yet would
+          // otherwise derive to foe (fail closed) until creation names one.
+          lists: { [DRAFT_LIST]: [{ name: DRAFT_MARK }, { name: SIDE_MARK, value: 'party' }] },
         },
       },
     })

@@ -12,7 +12,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createCampaign, openShelf } from '../core/store.ts';
 import { serve } from './index.ts';
 import { Session } from './session.ts';
-import { isParty, publicBoardState, publicTurn, vitalityOf } from './public.ts';
+import { FURNITURE, publicBoardState, publicTurn, vitalityOf } from './public.ts';
+import { sideOf } from '../core/side.ts';
 import type { KindDef } from '../core/kind.ts';
 
 const KEY = 'test-key-0123456789abcdef';
@@ -56,32 +57,12 @@ describe('vitality, off the first max-bearing entry', () => {
   });
 });
 
-describe('who is on the party’s side, asked fail-closed', () => {
-  const TRADES = new Set(['marshal', 'trapper']);
-
-  it('lets in the declared word and the declared trades, and nothing else', () => {
-    expect(isParty({ type: 'pc' }, TRADES)).toBe(true);
-    expect(isParty({ type: 'Marshal' }, TRADES)).toBe(true);
-    // The trade as creation might have cased it, and as a human retyped it.
-    expect(isParty({ type: 'trapper' }, TRADES)).toBe(true);
-    expect(isParty({ type: ' Trapper ' }, TRADES)).toBe(true);
-  });
-
-  it('everything else is a foe — including the words nobody typed', () => {
-    expect(isParty({ type: 'foe' }, TRADES)).toBe(false);
-    expect(isParty({ type: 'npc' }, TRADES)).toBe(false);
-    expect(isParty({ type: 'vendor' }, TRADES)).toBe(false);
-    expect(isParty({ type: 'Sheriff' }, TRADES)).toBe(false);
-    // The one that put numbers on the glass: a foe whose template
-    // never said the word.
-    expect(isParty({}, TRADES)).toBe(false);
-    expect(isParty({ type: '   ' }, TRADES)).toBe(false);
-  });
-
-  it('a system with no trades leaves `pc` as the only way in', () => {
-    const none: Set<string> = new Set();
-    expect(isParty({ type: 'pc' }, none)).toBe(true);
-    expect(isParty({ type: 'Marshal' }, none)).toBe(false);
+describe('the boundary names its furniture', () => {
+  // The law itself is tested in core/side.test.ts; this is the one word
+  // the host adds to it.
+  it('a vendor is on no side here', () => {
+    expect(sideOf({ type: 'vendor' }, new Set(), FURNITURE)).toBe('none');
+    expect(sideOf({ type: 'Sheriff' }, new Set(), FURNITURE)).toBe('foe');
   });
 });
 

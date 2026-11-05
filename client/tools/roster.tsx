@@ -10,7 +10,8 @@
 
 import { useState } from 'react';
 import type { ComponentType } from 'react';
-import type { Entity } from '../../core/entity.ts';
+import type { Entity, Side } from '../../core/entity.ts';
+import { SIDE_LIST, SIDE_MARK, SIDES } from '../../core/side.ts';
 import { api } from '../lib/api.ts';
 import { presentationOf, useSystemFaces } from '../lib/presentations.ts';
 import { addChild } from '../lib/refs.ts';
@@ -21,7 +22,7 @@ import { Refusal } from '../panels/render.tsx';
 import { EntitySheet, EntityTile, usePanelRecords, useSheetPanel } from '../components/roster/EntityCard.tsx';
 import { registerTool } from './index.ts';
 
-type RosterEntry = { id: string; name: string; type: string | null };
+type RosterEntry = { id: string; name: string; type: string | null; side: Side };
 
 /**
  * The system's own way of making a character, if it has one.
@@ -75,25 +76,13 @@ const FILTERS: {
   match: (e: RosterEntry) => boolean;
 }[] = [
   { key: 'all', label: 'all', match: () => true },
-  // core-next dropped the old `kind: 'pc'|'npc'` column — `type` is now
-  // free text (rule 2: no game-specific column). WiW's own convention,
-  // seen live in the campaign this was verified against, is a trade
-  // name ("Gunslinger", "Doctor") for the posse and the literal string
-  // 'foe' for anything stamped from the bestiary — so that's what these
-  // filter on. A pack using a different word for its foes reads as
-  // "party" here; there's no generic signal left to tell the two apart.
-  // …and a live vendor is neither. It's an entity like any other — it
-  // has to be, so its depleted shelf is a stored value a human can
-  // retype — but it is nobody's posse member, and it turned up under
-  // 'party' the moment a shop first transacted. The store stamps it
-  // with a type saying so (`VENDOR_TYPE`, `server/store-flow.ts`), so
-  // this excludes something declared rather than guessing at a name.
-  {
-    key: 'party',
-    label: 'party',
-    match: (e) => !!e.type && e.type !== 'foe' && e.type !== 'vendor',
-  },
-  { key: 'foes', label: 'foes', match: (e) => e.type === 'foe' },
+  // The side is the host's answer (`core/side.ts`, TEL-126): stored
+  // where a human set it, derived from the declared trades otherwise,
+  // and furniture — a live vendor — on no side at all. The filter reads
+  // it and never the type word, which is a trade here and was never a
+  // side.
+  { key: 'party', label: 'party', match: (e) => e.side === 'party' },
+  { key: 'foes', label: 'foes', match: (e) => e.side === 'foe' },
 ];
 
 function RosterTool() {
@@ -104,7 +93,7 @@ function RosterTool() {
   const [filter, setFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [newName, setNewName] = useState('');
-  const [newType, setNewType] = useState<'pc' | 'npc'>('pc');
+  const [newSide, setNewSide] = useState<Side>('party');
   const [building, setBuilding] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
 
@@ -121,7 +110,12 @@ function RosterTool() {
   const add = () => {
     const name = newName.trim();
     if (!name) return;
-    api('/api/entities', { body: { draft: { name, type: newType, lists: {} } } })
+    // A hand-made entity STATES its side — the one thing the bar used to
+    // write (`pc`/`npc`) was a type word nothing read, and a nameless
+    // character derives to foe, which is right for a boundary and wrong
+    // for the posse member you just typed in.
+    const lists = { [SIDE_LIST]: [{ name: SIDE_MARK, value: newSide }] };
+    api('/api/entities', { body: { draft: { name, lists } } })
       .then(() => {
         setNewName('');
         list.reload();
@@ -235,11 +229,15 @@ function RosterTool() {
           />
           <select
             className={input}
-            value={newType}
-            onChange={(e) => setNewType(e.target.value as 'pc' | 'npc')}
+            value={newSide}
+            onChange={(e) => setNewSide(e.target.value as Side)}
+            aria-label="side"
           >
-            <option value="pc">PC</option>
-            <option value="npc">NPC</option>
+            {SIDES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
           </select>
           <button className={btn} onClick={add}>
             add

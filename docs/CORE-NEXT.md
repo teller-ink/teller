@@ -799,7 +799,7 @@ One Ref shape covers all five existing cases (see §10's walk). Left:
   touches the ref, accept staleness otherwise — it is display, not
   identity.
 
-### C · Does an entity have a TYPE, and whose is it?
+### C · Does an entity have a TYPE, and whose is it? — SETTLED (2026-11-05, TEL-126)
 
 Core needs none for storage. But something has to answer "is this a
 party member, a foe, a horse, a scene?" for filtering and for the
@@ -809,8 +809,22 @@ list-membership (the campaign holds a `party` list of references).
 Note `pc | npc` is already too coarse — a horse owned by a player is
 neither, and gets stripped or exposed wrongly either way.
 
-*Settles by:* §18 (horses). It's the first real thing the binary can't
-hold.
+**Settled** by `core/side.ts`, the way the 2026-08-24 audit's interim
+rule pointed: `type` is FLAVOUR (a trade, a bestiary category, a
+plugin's own word — nothing in Core branches on it), and the handling
+class is a fact of its own, **`side`**, with three values because the
+binary couldn't hold a horse: `party` (numbers shown, offered a seat),
+`foe` (numbers hidden, swept by clear), `none` (nobody's — off the
+public roster, never offered a turn, spared by clear; the vendor, the
+windmill of TEL-127). Stored as a `side` entry in the `meta` list
+beside the draft mark, written through the ordinary entry door; the
+stored value wins, the declared trades derive the default (fail
+closed), furniture words are the host's to name. Nothing migrated — a
+derived default a human overrules IS rule 1, and baking it would have
+frozen a guess. The host fills `entity.side` on every reading and on
+the roster list so no client derives one; `toEntity` drops the key so a
+reading written back can't store it. §18 never got written; it didn't
+need to.
 
 ### D · The unified kind declaration
 
