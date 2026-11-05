@@ -1,11 +1,12 @@
-// The 'roster' tool — every entity at the table, filterable, each drawn
-// with the 'sheet' panel (same statblock as the seat's own screen, per
-// `EntityCard.tsx`). Ported grammar from the old app's DmView cast
-// section + CharacterCard's header (src/views/DmView.tsx, ~1185-1287;
-// src/components/CharacterCard.tsx): filter chips with counts, a search
-// box, a card grid, an "add" bar at the bottom. What CharacterCard did
-// with fields/counters/items/tags/notes, the sheet panel now does —
-// this tool supplies the list, the filter, and entity CRUD around it.
+// The 'roster' tool — every entity at the table, filterable, each a
+// TILE you glance at and open into its 'sheet' (same statblock as the
+// seat's own screen, per `EntityCard.tsx`). Ported grammar from the old
+// app's DmView cast section + CharacterCard's header
+// (src/views/DmView.tsx, ~1185-1287; src/components/CharacterCard.tsx):
+// filter chips with counts, a search box, a grid, an "add" bar at the
+// bottom. What CharacterCard did with fields/counters/items/tags/notes,
+// the sheet panel now does, behind a tap — this tool supplies the list,
+// the filter, the one open sheet, and entity CRUD around it.
 
 import { useState } from 'react';
 import type { ComponentType } from 'react';
@@ -17,7 +18,7 @@ import { useLive } from '../lib/use-session.ts';
 import { writeEntry } from '../lib/entry.ts';
 import { btn, btnGhost, card, input, sectionLabel } from '../lib/ui.ts';
 import { Refusal } from '../panels/render.tsx';
-import { EntityCard, usePanelRecords, useSheetPanel } from '../components/roster/EntityCard.tsx';
+import { EntitySheet, EntityTile, usePanelRecords, useSheetPanel } from '../components/roster/EntityCard.tsx';
 import { registerTool } from './index.ts';
 
 type RosterEntry = { id: string; name: string; type: string | null };
@@ -105,6 +106,7 @@ function RosterTool() {
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState<'pc' | 'npc'>('pc');
   const [building, setBuilding] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
 
   // Re-render when the system module lands, so the builder appears
   // rather than staying missing for the life of the tab.
@@ -129,8 +131,15 @@ function RosterTool() {
 
   const remove = (id: string, name: string) => {
     if (!window.confirm(`Delete ${name}?`)) return;
-    api(`/api/entities/${id}`, { method: 'DELETE' }).then(list.reload);
+    api(`/api/entities/${id}`, { method: 'DELETE' }).then(() => {
+      setOpen((cur) => (cur === id ? null : cur));
+      list.reload();
+    });
   };
+
+  // The one sheet open, if its entity is still at the table — a delete
+  // from elsewhere closes it rather than leaving a dialog over nothing.
+  const opened = open ? shown.find((e) => e.id === open) ?? entities.find((e) => e.id === open) : undefined;
 
   return (
     <div className="space-y-4">
@@ -162,34 +171,50 @@ function RosterTool() {
         />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         {shown.length === 0 && (
           <p className="text-sm text-stone-600">
             {query ? 'nobody by that name' : 'nobody here yet'}
           </p>
         )}
-        {panel &&
-          shown.map((e) => (
-            <EntityCard
-              key={e.id}
-              id={e.id}
-              panel={panel}
-              records={records.data ?? {}}
-              actions={
-                <button
-                  className={`${btnGhost} hover:text-red-300`}
-                  onClick={() => remove(e.id, e.name)}
-                  title="delete entity"
-                >
-                  ✕
-                </button>
-              }
-            />
-          ))}
-        {!panel && shown.length > 0 && (
-          <Refusal>the 'sheet' panel isn't declared — nothing to render a card with</Refusal>
-        )}
+        {shown.map((e) => (
+          <EntityTile
+            key={e.id}
+            id={e.id}
+            records={records.data ?? {}}
+            onOpen={() => setOpen(e.id)}
+            actions={
+              <button
+                className={`${btnGhost} hover:text-red-300`}
+                onClick={() => remove(e.id, e.name)}
+                title="delete entity"
+              >
+                ✕
+              </button>
+            }
+          />
+        ))}
       </div>
+
+      {opened && !panel && (
+        <Refusal>the 'sheet' panel isn't declared — nothing to open a sheet with</Refusal>
+      )}
+      {opened && panel && (
+        <EntitySheet
+          id={opened.id}
+          panel={panel}
+          records={records.data ?? {}}
+          onClose={() => setOpen(null)}
+          actions={
+            <button
+              className={`${btnGhost} mr-auto hover:text-red-300`}
+              onClick={() => remove(opened.id, opened.name)}
+            >
+              delete
+            </button>
+          }
+        />
+      )}
 
       <div className={`${card} space-y-2`}>
         <div className="flex items-baseline justify-between">
