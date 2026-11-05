@@ -3031,7 +3031,7 @@ export async function boot(args: Record<string, string>) {
   }
   for (const p of plugins.problems) console.log(`  PLUGIN PROBLEM ${p.dir}: ${p.problem}`);
   // The host's own terminal is the DM's device — this is `teller key`.
-  console.log(`  DM key: ${key}  (open /?console and paste it)`);
+  console.log(`  DM key: ${key}  (open /#console and paste it)`);
   // Last, so it's the thing still on screen when the addresses print.
   const stale = staleClientWarning();
   if (stale) console.log(stale);
