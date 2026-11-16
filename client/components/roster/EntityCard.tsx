@@ -37,7 +37,8 @@ import { useArtMap } from '../../lib/art.ts';
 import { DECLARED, useLive } from '../../lib/use-session.ts';
 import { useOptimistic, writeEntry, type EntryEdit } from '../../lib/entry.ts';
 import { btn, btnGhost, card, sectionLabel } from '../../lib/ui.ts';
-import { PanelSurface, Refusal, type BlockCtx } from '../../panels/render.tsx';
+import { PanelSurface, Refusal, RenderBlock, type BlockCtx } from '../../panels/render.tsx';
+import { shaped } from '../../panels/blocks.tsx';
 import { StatusChip } from '../encounters/TemplateSheet.tsx';
 import { VitalBar } from '../Vitals.tsx';
 
@@ -97,6 +98,10 @@ function useEntity(id: string) {
   });
   return useOptimistic(entity.data);
 }
+
+/** The list a table's counters live in — the same one the tile's bar and
+ * the runner's steppers already read. */
+const LEDGER_LIST = 'resources';
 
 /**
  * Every bounded counter, `resources` first — the ones a bar can be drawn
@@ -358,6 +363,13 @@ export function EntitySheet({
       }
     : undefined;
   const accent = e ? accentOf(records, e) : undefined;
+  // The counters the sheet's own plates leave for other screens — asked
+  // with the SAME question the sheet asks (`shaped`), so the two can't
+  // drift into both drawing Health or neither drawing Aces.
+  const unshaped =
+    e && ctx
+      ? (e.lists[LEDGER_LIST] ?? []).filter((entry) => !shaped(ctx, e, entry)).map((entry) => entry.name)
+      : [];
 
   return (
     <div
@@ -413,6 +425,29 @@ export function EntitySheet({
               ctx={ctx}
               fallback={<Refusal>this sheet failed to render — the floor has it</Refusal>}
             />
+          )}
+          {/* A seat keeps a character across SEVERAL screens, and the
+              sheet is only the first: what its two plates don't draw
+              (the Ace hand, the coin, the supplies) lives on the header
+              and on 'More'. The Warden opens ONE dialog, so the rest of
+              the ledger sits under the sheet — every counter the sheet
+              didn't shape, each one a number to type over (rule 1). The
+              2026-11-16 audit found this dialog showing a character
+              with no way to reach half its numbers. */}
+          {ctx && unshaped.length > 0 && (
+            <div className="space-y-2 border-t border-stone-800 pt-4">
+              <span className={sectionLabel}>the rest of the ledger</span>
+              <RenderBlock
+                block={{
+                  block: 'list',
+                  list: LEDGER_LIST,
+                  as: 'ledger',
+                  filter: 'named',
+                  names: unshaped,
+                }}
+                ctx={ctx}
+              />
+            </div>
           )}
         </div>
 

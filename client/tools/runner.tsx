@@ -51,6 +51,7 @@ import { btn, btnGhost, btnPrimary, card, input, sectionLabel } from '../lib/ui.
 import { registerBlock, type BlockCtx } from '../panels/render.tsx';
 import { ProviderSlot } from '../components/ProviderSlot.tsx';
 import { VitalBar } from '../components/Vitals.tsx';
+import { TypeOver } from '../components/TypeOver.tsx';
 import { Exchange, type Armed, type StatusDecl } from '../components/encounters/Exchange.tsx';
 import { TurnStage } from '../components/encounters/TurnStage.tsx';
 import { registerTool } from './index.ts';
@@ -770,8 +771,17 @@ function RunnerTool() {
               >
                 −
               </button>
-              <span className="min-w-9 text-center font-mono text-[11px] text-stone-300">
-                {typeof vital.value === 'number' ? vital.value : 0}
+              {/* The number itself is a door (rule 1): nine damage is
+                  "-9" and Enter, not nine presses. Its slot is fixed wide
+                  enough for the input, so opening it moves nothing. */}
+              <span className="min-w-12 text-center font-mono text-[11px] text-stone-300">
+                <TypeOver
+                  value={typeof vital.value === 'number' ? vital.value : 0}
+                  label={`${label} — ${vital.name}`}
+                  onSet={(next) =>
+                    writeEntry(entry.entityId!, { list: 'resources', name: vital.name, value: next })
+                  }
+                />
                 {typeof vital.max === 'number' && (
                   <span className="text-stone-600">/{vital.max}</span>
                 )}

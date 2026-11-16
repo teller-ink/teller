@@ -199,6 +199,11 @@ type Undoable = {
   also?: string[];
 };
 
+/** The undo button when it's reaching past something — `btnGhost`'s
+ * shape, with a border and a colour of its own. */
+const undoWary =
+  'rounded-md border border-amber-500/70 bg-amber-950/40 px-2 py-1 text-sm text-amber-300 transition-colors hover:bg-amber-900/50 hover:text-amber-200 disabled:opacity-40';
+
 /**
  * Step the table back one mutation, from the screen that shows what
  * there is to step back. The peek says what WOULD go before anything
@@ -279,7 +284,11 @@ function UndoButton({ onUndone }: { onUndone: () => void }) {
       ))}
       <div className="flex flex-wrap items-center gap-2">
         <button
-          className={`${btnGhost} ${surprising ? 'border-amber-500/70 text-amber-300' : ''}`}
+          // Its own whole string when it's about to surprise, not amber
+          // utilities stacked on `btnGhost`: that string already says a
+          // colour and has no border, so the stack lost both arguments
+          // and the button that needed to look different looked the same.
+          className={surprising ? undoWary : btnGhost}
           disabled={busy || !undoable}
           title={undoable ? 'step the table back one mutation' : 'nothing behind this table yet'}
           onClick={step}
