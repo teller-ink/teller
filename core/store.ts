@@ -26,6 +26,7 @@
 // backward from, because `/undo` is a reader of this table, not a
 // feature bolted on later.
 
+import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -1643,6 +1644,29 @@ function alive(pid: number): boolean {
   }
 }
 
+/**
+ * Is that pid plausibly a teller? "Alive" is not enough: pids are
+ * reused, and a lock left by a host that died without cleaning up can
+ * come to name somebody's text editor — which this used to refuse to
+ * start over, while advising `kill` on it. A teller is a node process;
+ * anything that is not one is a stale claim. If the question can't be
+ * asked at all, the answer is yes: refusing to share a folder is the
+ * safe mistake.
+ */
+function couldBeHost(pid: number): boolean {
+  if (!alive(pid)) return false;
+  try {
+    const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
+      encoding: 'utf8',
+      timeout: 2000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return /(^|[\\/\s])node(\s|$)|teller/i.test(command);
+  } catch {
+    return true;
+  }
+}
+
 export type HostClaim = {
   /** Say which port we actually got (port 0 is a request, not an answer). */
   port(port: number): void;
@@ -1680,7 +1704,7 @@ export function claimDataDir(dataDir: string, port: number): HostClaim {
       if ((err as { code?: string }).code !== 'EEXIST') throw err;
     }
     const held = readLock(path);
-    if (held && held.pid !== process.pid && alive(held.pid)) {
+    if (held && held.pid !== process.pid && couldBeHost(held.pid)) {
       throw new Error(
         `another teller is already serving ${dataDir} — pid ${held.pid}, ` +
           `on http://localhost:${held.port}. Stop that one first (ctrl-c in its ` +

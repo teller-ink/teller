@@ -167,6 +167,33 @@ describe('entities over HTTP', () => {
     await api('DELETE', `/api/entities/${id}`);
   });
 
+  // Audit 2026-11-16, second pass: three more ways the doors took
+  // something that wasn't what they were for.
+  it('a stamp needs a parent that exists, and the root keeps its refs', async () => {
+    const orphan = await api('POST', '/api/stamp', { slot: 'bestiary', templateId: 'npc_x', parentId: 'ent_nope' });
+    expect(orphan.status).toBe(400);
+    expect(orphan.body.error).toMatch(/parent that exists/);
+
+    const root = (await api('GET', '/api/campaign')).body.manifest;
+    expect((await api('PUT', '/api/campaign/refs', { system: 'sys_wiw' })).status).toBe(200);
+    const before = (await api('GET', `/api/entities/${root.id}`)).body;
+    expect(before.refs?.system?.id).toBe('sys_wiw');
+    // A whole-row write that simply leaves the refs out.
+    const { refs: _dropped, ...bare } = before;
+    expect((await api('PUT', `/api/entities/${root.id}`, { entity: { ...bare, notes: 'a note on the campaign' } })).status).toBe(200);
+    const after = (await api('GET', `/api/entities/${root.id}`)).body;
+    expect(after.notes).toBe('a note on the campaign');
+    expect(after.refs?.system?.id).toBe('sys_wiw');
+  });
+
+  it('a placement is an object, or the board is not written', async () => {
+    const bad = await api('PUT', '/api/board-state/brd_canyon', { data: { placements: [null] } });
+    expect(bad.status).toBe(400);
+    const worse = await api('PUT', '/api/board-state/brd_canyon', { data: { placements: 'all of them' } });
+    expect(worse.status).toBe(400);
+    expect((await api('PUT', '/api/board-state/brd_canyon', { data: { placements: [] } })).status).toBe(200);
+  });
+
   // Audit 2026-11-16: a list named `__proto__` read the object's
   // prototype instead of a list, and the write came back a 500.
   it('a list cannot be named after a key no object has', async () => {

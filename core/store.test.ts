@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -102,6 +103,21 @@ describe('one host per data folder', () => {
     expect(JSON.parse(readFileSync(lock(), 'utf8')).port).toBe(4713);
     claim.release();
     expect(existsSync(lock())).toBe(false);
+  });
+
+  // Audit 2026-11-16, second pass: pids are reused, and a lock left by a
+  // host that died came to name some other live process — which this
+  // refused to start over, while advising `kill` on it.
+  it('a live pid that is not a teller is a stale claim', () => {
+    const bystander = spawn('sleep', ['30'], { stdio: 'ignore' });
+    try {
+      hold(bystander.pid!, 4711);
+      const claim = claimDataDir(dir, 4715);
+      expect(JSON.parse(readFileSync(lock(), 'utf8'))).toMatchObject({ pid: process.pid, port: 4715 });
+      claim.release();
+    } finally {
+      bystander.kill();
+    }
   });
 
   it('never releases a claim that is no longer its own', () => {

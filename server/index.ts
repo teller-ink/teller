@@ -1747,14 +1747,23 @@ export async function handleApi(
     const body = await bodyOf(req);
     const slot = String(body.slot ?? 'bestiary');
     const templateId = String(body.templateId ?? '');
+    // A parent has to be somebody. Stamping under an id that isn't on
+    // the table made an entity nothing could reach — in the file, on no
+    // roster — and an empty name answered a 500 on its way to the store.
+    // An empty name means "the template's own", which is what leaving it
+    // out already meant.
+    const parentId = typeof body.parentId === 'string' && body.parentId ? body.parentId : undefined;
+    if (parentId && !session.campaign.get(parentId)) {
+      return reply(400, { error: `nobody at this table is ${parentId} — a stamp needs a parent that exists` });
+    }
     const entity = session.stampFrom(
       slot,
       templateId,
       actorOf(auth, String(body.actor ?? '')),
       {
-        name: typeof body.name === 'string' ? body.name : undefined,
+        name: typeof body.name === 'string' && body.name.trim() ? body.name : undefined,
         thick: body.thick === true,
-        parentId: typeof body.parentId === 'string' ? body.parentId : undefined,
+        parentId,
       },
     );
     if (!entity)
@@ -1792,6 +1801,17 @@ export async function handleApi(
             )
           : undefined;
         if (why) return reply(401, { error: why });
+      }
+      // The campaign's own row keeps its refs through THIS door. They
+      // are where the campaign says which system it runs on and which
+      // board is up, and they have a door of their own
+      // (`PUT /api/campaign/refs`); a whole-row write that simply left
+      // them out — a client that built the row by hand — used to strip
+      // the system off the campaign, quietly, until the next restart.
+      if (session.campaign.isRoot(a)) {
+        const kept = session.campaign.get(a)?.refs;
+        if (kept) entity.refs = kept;
+        else delete entity.refs;
       }
       try {
         return reply(200, session.save(entity, actorOf(auth, String(body.actor ?? ''))));
@@ -2787,6 +2807,19 @@ export async function handleApi(
       const data = body.data;
       if (!data || typeof data !== 'object' || Array.isArray(data)) {
         return reply(400, { error: 'a board’s state is an object — send { data: { … } }' });
+      }
+      // A placement that isn't an object is a token nobody can draw (a
+      // `null` in that list used to answer a 500). The board itself is
+      // NOT checked against the shelf: state is the campaign's and a
+      // board is the host's, and a campaign carried to a host that
+      // lacks the picture must still be able to keep where everyone
+      // stood.
+      const placements = (data as { placements?: unknown }).placements;
+      if (
+        placements !== undefined &&
+        (!Array.isArray(placements) || placements.some((p) => !p || typeof p !== 'object' || Array.isArray(p)))
+      ) {
+        return reply(400, { error: 'placements is a list of tokens, each an object' });
       }
       session.putBoardState(a, data, actorOf(auth, String(body.actor ?? '')));
       return reply(200, { ok: true });
