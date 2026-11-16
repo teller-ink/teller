@@ -29,9 +29,12 @@ class Teller < Formula
     # An explicit shim rather than a symlink, so the command always runs
     # under Homebrew's node — not whatever `node` happens to be first on
     # a user's PATH, which on a developer's machine is anyone's guess.
+    # The opt path is spelled out rather than asked of a formula object:
+    # it is the same stable path, and it reads the same on a Homebrew
+    # too old to know the newer helper the audit would prefer.
     (bin/"teller").write <<~SH
       #!/bin/bash
-      exec "#{Formula["node"].opt_bin}/node" "#{libexec}/bin/teller" "$@"
+      exec "#{HOMEBREW_PREFIX}/opt/node/bin/node" "#{libexec}/bin/teller" "$@"
     SH
     chmod 0755, bin/"teller"
   end
