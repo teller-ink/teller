@@ -27,6 +27,7 @@
 import { useEffect, useState } from 'react';
 import { registerTool } from './index.ts';
 import type { Template } from '../../core/stamp.ts';
+import { refIn, type Entity } from '../../core/entity.ts';
 import {
   api,
   boards as fetchBoards,
@@ -547,6 +548,23 @@ function EncounterCard({
   );
 }
 
+/**
+ * How many of what this encounter stamped last time are still on the
+ * table — the generation a deploy would sweep (`Session.deployEncounter`
+ * finds it by the same `encounter` ref). Asked only when deploy is
+ * pressed, never polled: the roster door doesn't carry refs, so it is
+ * one read per non-party row, and that price belongs to the press.
+ */
+async function standingFrom(encounterId: string): Promise<number> {
+  const roster = await api<{ id: string; side?: string }[]>('/api/entities');
+  const sheets = await Promise.all(
+    roster
+      .filter((e) => e.side !== 'party')
+      .map((e) => api<Entity>(`/api/entities/${e.id}`).catch(() => undefined)),
+  );
+  return sheets.filter((e) => refIn(e?.refs, 'encounter')?.id === encounterId).length;
+}
+
 function EncountersTool() {
   const { data: encounters, reload: reloadEncounters } = useLive(
     () => api<EncounterTemplate[]>('/api/templates/encounters'),
@@ -584,6 +602,23 @@ function EncountersTool() {
   const deploy = async (enc: EncounterTemplate) => {
     setBusyId(enc.id);
     try {
+      // Deploying a fight that's already standing is a RESET, and one
+      // misclick mid-combat used to be the whole fight's health, scores
+      // and reveals (the audit, 2026-11-16). So a second deploy asks,
+      // naming what goes; a first one never does. Undo still covers it.
+      const standing = await standingFrom(enc.id);
+      if (
+        standing > 0 &&
+        !window.confirm(
+          `"${enc.name}" is already on the table — ${standing} of its foe${
+            standing === 1 ? ' is' : 's are'
+          } still there.\n\nDeploying again starts the fight over: ` +
+            `${standing === 1 ? 'it is' : 'they are'} removed and stamped fresh, so health, ` +
+            `initiative scores, places in the turn order and anything revealed on the board ` +
+            `go back to the recipe.\n\nOK — start the fight over.\nCancel — leave it as it is.`,
+        )
+      )
+        return;
       const out = await api<{
         deployed?: { id: string; name: string }[];
         placed?: number;

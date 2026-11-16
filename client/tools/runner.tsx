@@ -4,11 +4,12 @@
 //
 //   * the ORDER on the left, a thing you SCAN — a number, a name, a bar,
 //     a dot — with the acting row picked out and the health steppers on
-//     the row you're hovering. The edit you make most often is to
-//     somebody ELSE'S health, on the turn of the thing that just hit
-//     them, so it lives there and never costs you the stage;
+//     every row, quiet until you're over it. The edit you make most
+//     often is to somebody ELSE'S health, on the turn of the thing that
+//     just hit them, so it lives there and never costs you the stage;
 //   * the STAGE on the right, one combatant at full size (`TurnStage`);
-//   * the controls under it: back, next turn, end;
+//   * the controls over both, pinned in place: back, next turn, end
+//     (old app: under the stage — which moved them every turn);
 //   * and setup folded to one line the moment a fight is running.
 //
 // The old panel's ✦ card is back, in one piece, under the stage — and
@@ -145,6 +146,41 @@ function isLive(display: Display): boolean {
   const raw = display.lastSeenAt;
   const seen = Date.parse(raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z');
   return Number.isFinite(seen) && Date.now() - seen < 60_000;
+}
+
+/**
+ * A turn-order row's buttons: a finger-sized slot that is always there.
+ * Rest and hover differ by COLOUR only — never size, never presence —
+ * so nothing on a row can move under a pointer that's already moving.
+ */
+const rowBtn =
+  'flex h-8 shrink-0 items-center justify-center rounded-md leading-none transition-colors active:bg-stone-700 disabled:opacity-30';
+const rowHover = 'hover:bg-stone-800 hover:text-stone-100';
+const rowQuiet = 'text-stone-600 group-hover:text-stone-400 group-focus-within:text-stone-400';
+
+/**
+ * Next turn from the keyboard. A CHORD, not a letter: a stray key on a
+ * laptop at a crowded table must not pass somebody's turn, and shift+N
+ * is something nobody presses without meaning it.
+ */
+const NEXT_KEY_LABEL = 'shift+N';
+
+function isNextKey(e: KeyboardEvent): boolean {
+  return (
+    e.code === 'KeyN' && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat
+  );
+}
+
+/**
+ * Is the GM typing? A shortcut that fires inside a text box is a turn
+ * passed in the middle of an initiative score or a note.
+ */
+function typingIn(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return Boolean(
+    target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])'),
+  );
 }
 
 function move(order: TurnEntry[], from: number, to: number): TurnEntry[] {
@@ -370,6 +406,23 @@ function RunnerTool() {
     return api('/api/turn', { body: o }).then(turn.reload);
   };
 
+  // The shortcut reaches the latest `op` and order through a ref, so the
+  // listener is bound once rather than torn down on every render.
+  const nextRef = useRef<() => void>(() => {});
+  nextRef.current = () => {
+    if (order.length > 0) void op({ op: 'next' });
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !isNextKey(e)) return;
+      if (typingIn(e.target) || typingIn(document.activeElement)) return;
+      e.preventDefault();
+      nextRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // The drag, in three handlers. The pointer is captured by the handle
   // it went down on, so the gesture survives the row moving out from
   // under it, and the drop is one `{op:'set'}` — a move is a move, and
@@ -572,12 +625,22 @@ function RunnerTool() {
         }}
       >
         {over === i && marker}
-        <div className="flex items-center gap-1.5">
+        {/* Two lines, and the split is the point (the audit, 2026-11-16).
+            One line held a name, five markers and five buttons in 240px,
+            so the buttons hid until hover and the name gave its width up
+            when they came — the − slid in under a pointer aimed at the
+            end of a name and took a hit point, silently, mid-fight. Now
+            the NAME owns the first line and wraps rather than truncate
+            (the end of "Bark Watcher 3" is the part that tells it from
+            2), and every control lives on the second, in a slot it holds
+            whether or not anything is hovering. Nothing on this row
+            changes size or place on hover or focus — only colour. */}
+        <div className="flex items-start gap-1.5">
           {/* The position number IS the handle — it costs the row no
               width, and the thing you grab to move a row to third is the
               thing that says which place it's in. */}
           <span
-            className={`w-4 shrink-0 cursor-grab touch-none select-none text-right font-mono text-[10px] ${
+            className={`w-4 shrink-0 cursor-grab touch-none select-none text-right font-mono text-[10px] leading-[18px] ${
               isTurn ? 'text-amber-300' : 'text-stone-600'
             } ${lifting ? 'cursor-grabbing text-amber-200' : ''}`}
             title="drag to reorder"
@@ -627,68 +690,76 @@ function RunnerTool() {
               the steppers still edit, and clicking what a row IS puts
               that thing under the light. Clicking it again lets go. */}
           <button
-            className={`min-w-0 flex-1 truncate text-left text-[13px] ${
+            className={`min-w-0 flex-1 break-words text-left text-[13px] leading-[18px] ${
               isTurn ? 'text-amber-100' : 'text-stone-300'
             } hover:text-amber-200`}
-            title="put on the stage"
+            title={label}
             onClick={() => setViewing((v) => (v === entry.id ? null : entry.id))}
           >
             {label}
           </button>
 
-          {/* The one thing on this row that can't wait for a turn. */}
-          {pending.length > 0 && (
-            <span
-              className="shrink-0 animate-pulse font-mono text-[11px] text-rose-300"
-              title={`${pending.map((f) => f.name).join(', ')} — happens now, once`}
-            >
-              ◈
-            </span>
-          )}
+          {/* The markers, held to the first line's height so a name that
+              wraps keeps them beside its first line, not adrift between. */}
+          <span className="flex h-[18px] shrink-0 items-center gap-1.5">
+            {/* The one thing on this row that can't wait for a turn. */}
+            {pending.length > 0 && (
+              <span
+                className="animate-pulse font-mono text-[11px] text-rose-300"
+                title={`${pending.map((f) => f.name).join(', ')} — happens now, once`}
+              >
+                ◈
+              </span>
+            )}
 
-          {/* There's a mini for this one on the live board. A GLYPH, not
-              a dot, so it can't be read as one more condition — and
-              nothing at all when no board is up. */}
-          {onTable && (
-            <span
-              className="shrink-0 font-mono text-[10px] leading-none text-emerald-500/80"
-              title="on the table"
-            >
-              ▣
-            </span>
-          )}
+            {/* There's a mini for this one on the live board. A GLYPH, not
+                a dot, so it can't be read as one more condition — and
+                nothing at all when no board is up. */}
+            {onTable && (
+              <span
+                className="font-mono text-[10px] leading-none text-emerald-500/80"
+                title="on the table"
+              >
+                ▣
+              </span>
+            )}
 
-          {/* Somebody is sitting in front of this one, and whether their
-              screen is still talking to us. */}
-          {seat && (
-            <span
-              className="h-1.5 w-1.5 shrink-0 rounded-full"
-              style={{ backgroundColor: isLive(seat) ? seat.color || '#34d399' : '#44403c' }}
-              title={isLive(seat) ? 'seated, live' : 'seated, not answering'}
-            />
-          )}
+            {/* Somebody is sitting in front of this one, and whether their
+                screen is still talking to us. */}
+            {seat && (
+              <span
+                className="h-1.5 w-1.5 rounded-full"
+                style={{ backgroundColor: isLive(seat) ? seat.color || '#34d399' : '#44403c' }}
+                title={isLive(seat) ? 'seated, live' : 'seated, not answering'}
+              />
+            )}
 
-          {/* Conditions, as colour. The chips live on the stage. */}
-          {(sheet?.lists.conditions ?? []).length > 0 && (
-            <span
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"
-              title={(sheet?.lists.conditions ?? [])
-                .map((c) => (c.value === undefined ? c.name : `${c.name} ${c.value}`))
-                .join(', ')}
-            />
-          )}
+            {/* Conditions, as colour. The chips live on the stage. */}
+            {(sheet?.lists.conditions ?? []).length > 0 && (
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-sky-400"
+                title={(sheet?.lists.conditions ?? [])
+                  .map((c) => (c.value === undefined ? c.name : `${c.name} ${c.value}`))
+                  .join(', ')}
+              />
+            )}
+          </span>
+        </div>
 
+        {/* The controls line. Always drawn, always the same size: quiet
+            at rest and full strength on the row under the pointer (or the
+            acting row), by colour alone — a control that only exists on
+            hover doesn't exist at all under a finger on an iPad. Finger-
+            sized slots, and none of them shares a line with the name. */}
+        <div className="mt-0.5 flex items-center gap-0.5 pl-[22px]">
           {/* The edit you make most often is to somebody ELSE'S health,
               on the turn of the thing that just hit them. */}
           {vital && entry.entityId && (
-            <span
-              className={`flex shrink-0 items-center gap-0.5 transition-opacity ${
-                isTurn ? '' : 'opacity-0 focus-within:opacity-100 group-hover:opacity-100'
-              }`}
-            >
+            <>
               <button
-                className="rounded px-1 text-xs text-stone-400 hover:bg-stone-800 hover:text-stone-100"
+                className={`${rowBtn} ${rowHover} w-8 text-base ${isTurn ? 'text-stone-300' : rowQuiet}`}
                 aria-label={`${vital.name} down`}
+                title={`${vital.name} down`}
                 onClick={() =>
                   writeEntry(entry.entityId!, {
                     list: 'resources',
@@ -706,8 +777,9 @@ function RunnerTool() {
                 )}
               </span>
               <button
-                className="rounded px-1 text-xs text-stone-400 hover:bg-stone-800 hover:text-stone-100"
+                className={`${rowBtn} ${rowHover} w-8 text-base ${isTurn ? 'text-stone-300' : rowQuiet}`}
                 aria-label={`${vital.name} up`}
+                title={`${vital.name} up`}
                 onClick={() =>
                   writeEntry(entry.entityId!, {
                     list: 'resources',
@@ -721,36 +793,34 @@ function RunnerTool() {
               >
                 +
               </button>
-            </span>
+            </>
           )}
 
-          {/* The rare row actions — reorder, remove — ride along on hover
-              rather than crowding a row you read eight of at a glance.
-              HIDDEN rather than transparent, unlike the steppers: a
-              stepper reserves its space so the number it edits doesn't
-              jump under the hand, and these have no such number. Held
-              transparent they cost 3rem of every name, and a column of
-              "Bark Wa…" is what the sidebar is for reading. */}
-          <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+          {/* The rare row actions — reorder, remove — at the far end,
+              as far from the steppers as the row allows. */}
+          <span className="ml-auto flex items-center gap-0.5">
             <button
-              className="rounded px-1 text-xs text-stone-400 hover:bg-stone-800 hover:text-stone-100 disabled:opacity-30"
+              className={`${rowBtn} ${rowHover} w-7 text-[10px] ${rowQuiet}`}
               disabled={i === 0}
               title="earlier in the order"
+              aria-label={`move ${label} earlier`}
               onClick={() => op({ op: 'set', order: move(order, i, i - 1) })}
             >
               ▲
             </button>
             <button
-              className="rounded px-1 text-xs text-stone-400 hover:bg-stone-800 hover:text-stone-100 disabled:opacity-30"
+              className={`${rowBtn} ${rowHover} w-7 text-[10px] ${rowQuiet}`}
               disabled={i === order.length - 1}
               title="later in the order"
+              aria-label={`move ${label} later`}
               onClick={() => op({ op: 'set', order: move(order, i, i + 1) })}
             >
               ▼
             </button>
             <button
-              className="rounded px-1 text-xs text-stone-500 hover:bg-red-950 hover:text-red-300"
+              className={`${rowBtn} w-7 text-[11px] ${rowQuiet} hover:bg-red-950 hover:text-red-300`}
               title="remove from the order"
+              aria-label={`remove ${label} from the order`}
               onClick={() => op({ op: 'remove', entryId: entry.id })}
             >
               ✕
@@ -758,7 +828,7 @@ function RunnerTool() {
           </span>
         </div>
 
-        {vital && <VitalBar entry={vital} className="mt-1.5" />}
+        {vital && <VitalBar entry={vital} className="mt-1" />}
         {over === order.length && i === order.length - 1 && marker}
       </li>
     );
@@ -798,14 +868,23 @@ function RunnerTool() {
     </div>
   );
 
+  // The controls sit ABOVE the order and the stage, pinned to the top of
+  // the window when the page scrolls (the audit, 2026-11-16). Under the
+  // stage they moved every turn — the stage is as tall as whoever is
+  // acting — and on most turns they were off the bottom of a laptop's
+  // screen, so the one button pressed every turn cost a scroll to find.
+  // Up here nothing variable sits above them, so they are in one place
+  // all fight long. The next button holds a fixed width for the same
+  // reason: "start combat" turning into "next turn" mustn't nudge it.
   const turnControls = (
-    <div className="flex items-center gap-2">
+    <div className="sticky top-0 z-20 flex items-center gap-2 rounded-md bg-stone-900 px-2 py-1.5 shadow-lg shadow-stone-950/60">
       <button className={btn} disabled={!running} onClick={() => op({ op: 'prev' })}>
         ◂ back
       </button>
       <button
-        className={`${btnPrimary} px-6`}
+        className={`${btnPrimary} w-36 text-center`}
         disabled={order.length === 0}
+        title={`${running ? 'next turn' : 'start combat'} — ${NEXT_KEY_LABEL}`}
         onClick={() => op({ op: 'next' })}
       >
         {running ? 'next turn ▸' : 'start combat'}
@@ -840,6 +919,8 @@ function RunnerTool() {
             </span>
           )}
         </div>
+
+        {turnControls}
 
         {order.length === 0 && (
           <p className="text-sm text-stone-600">
@@ -893,7 +974,7 @@ function RunnerTool() {
           </div>
         )}
 
-        <div className="grid items-start gap-4 @2xl:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]">
+        <div className="grid items-start gap-4 @2xl:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
           <div className="space-y-2">
             {order.length > 0 ? (
               <ol
@@ -1061,7 +1142,6 @@ function RunnerTool() {
               </p>
             )}
 
-            {turnControls}
           </div>
         </div>
       </div>
