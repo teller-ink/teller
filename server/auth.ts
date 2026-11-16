@@ -150,6 +150,111 @@ export function canEditEntity(auth: Auth, entityId: string): boolean {
   return adopted(d) && d.role === 'seat' && d.params.entityId === entityId;
 }
 
+/** The one character a seat was pointed at — undefined for anything else, and for a seat nobody pointed. */
+export function seatEntity(auth: Auth): string | undefined {
+  const d = auth.display;
+  if (!adopted(d) || d.role !== 'seat') return undefined;
+  const id = d.params.entityId;
+  return typeof id === 'string' && id ? id : undefined;
+}
+
+// ---------------------------------------------------------------------
+// What a screen that isn't the DM may READ off the content stack.
+//
+// The write side was always role-derived; the read side was a gate per
+// door and one door had none (the audit, 2026-11-16): `/api/stack/
+// declarations/<slot>` answered any adopted screen for any slot, and
+// because the campaign's own template half is a layer of that stack,
+// "any slot" meant the encounter recipes with their hidden foes, every
+// bestiary stat block and the handouts nobody had been shown. A slot is
+// a name anyone can type, so the answer has to be a list someone WROTE
+// DOWN — what the shipped client asks for, role by role — and a slot
+// that isn't on it belongs to the DM. A new screen that needs a new
+// slot adds it here, out loud, rather than inheriting it by accident.
+//
+// THE SEAT's line (decided for the project owner, 2026-11-16): a seat
+// reads its OWN character whole, the PUBLIC roster and turn order for
+// everyone else, and the slots its own screens use — the sheet's
+// vocabulary, the creation builder's trades and creation, and the
+// catalogue it shops and fits upgrades from. It does not read the
+// encounters, the bestiary's stat blocks, the handout gallery or anybody
+// else's sheet: a seat lives on a player's own phone, and "the player
+// can see the ambush from a terminal" is the same leak as the table TV
+// showing it. Before this the seat read all prep by design, because it
+// shopped the catalogue and the gate couldn't tell the catalogue from
+// the encounters.
+
+/** What a passive screen renders with: the kind declarations behind its chips, and nothing else. */
+const PASSIVE_DECLARATIONS: ReadonlySet<string> = new Set(['kinds']);
+
+/**
+ * What a seat's own screens ask for: the sheet (`panels`, `screens`,
+ * `ladders`, `statuses`, `sections`, `bands`, `kinds`) and the creation
+ * builder (`trades`, `creation` — the system's mechanic, §M-4a — and
+ * `catalog`, because a starting kit is picked off the goods list).
+ *
+ * `catalog` is here because a builder that lives on somebody's SHELF
+ * asks for it as a declaration, not only as a stampable template, and
+ * this list was first written from the repo alone: the shelf's own
+ * panel code is the other half of "what the shipped client requests",
+ * and a slot missing here is a player's character builder answering
+ * 401 at the table. Goods and prices are what a shop shows a customer;
+ * nothing in them is prep.
+ */
+const SEAT_DECLARATIONS: ReadonlySet<string> = new Set([
+  'panels',
+  'screens',
+  'ladders',
+  'statuses',
+  'sections',
+  'bands',
+  'kinds',
+  'trades',
+  'creation',
+  'catalog',
+]);
+
+/**
+ * The stampable slots a seat reads: the catalogue it shops from and the
+ * upgrades a fitting may have been stamped from (`client/lib/spend.ts`,
+ * `client/lib/amend.ts`). The bestiary is not here — a foe's numbers are
+ * what the public snapshot exists to withhold.
+ */
+const SEAT_TEMPLATES: ReadonlySet<string> = new Set(['catalog', 'upgrades']);
+
+/** May this caller read one declaration slot? Unknown slots are the DM's. */
+export function mayReadDeclarations(auth: Auth, slot: string): boolean {
+  if (canDm(auth)) return true;
+  if (!adopted(auth.display)) return false;
+  // A seat nobody pointed at a character draws nothing, so it reads as
+  // passive glass does.
+  if (seatEntity(auth)) return SEAT_DECLARATIONS.has(slot);
+  return PASSIVE_DECLARATIONS.has(slot);
+}
+
+/** May the ROOM — a passive screen, or a door any of them can knock on — read this slot? */
+export function roomMayReadDeclarations(slot: string): boolean {
+  return PASSIVE_DECLARATIONS.has(slot);
+}
+
+/** May this caller read one template slot? The DM any; a seat its shop; nobody else. */
+export function mayReadTemplates(auth: Auth, slot: string): boolean {
+  if (canDm(auth)) return true;
+  return seatEntity(auth) !== undefined && SEAT_TEMPLATES.has(slot);
+}
+
+/** Every declaration slot this caller may read — what the file door scans for art. */
+export function readableDeclarations(auth: Auth): string[] {
+  if (canDm(auth)) return [];
+  if (!adopted(auth.display)) return [];
+  return [...(seatEntity(auth) ? SEAT_DECLARATIONS : PASSIVE_DECLARATIONS)];
+}
+
+/** Every template slot this caller may read, short of the DM's all. */
+export function readableTemplates(auth: Auth): string[] {
+  return seatEntity(auth) !== undefined ? [...SEAT_TEMPLATES] : [];
+}
+
 /** Who did it, for the event log (rule 3). Never a bare display id. */
 export function actorOf(auth: Auth, claimed?: string): string {
   if (canDm(auth)) return claimed?.trim() || 'console';

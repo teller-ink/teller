@@ -647,6 +647,9 @@ describe('GET /api/public', () => {
     expect(dm.body.placements).toHaveLength(2);
 
     const table = await passiveScreen();
+    // Not on the table yet: a watcher is told there is nothing there.
+    expect((await call('GET', `/api/board-state/${boardId}`, { display: table })).status).toBe(404);
+    await call('PUT', '/api/campaign/refs', { key: true, body: { board: boardId } });
     const watching = await call('GET', `/api/board-state/${boardId}`, { display: table });
     expect(watching.status).toBe(200);
     expect(watching.body.placements).toEqual([{ label: 'seen', u: 0, v: 0 }]);
@@ -1061,16 +1064,23 @@ describe('GET /api/public', () => {
       expect(watching.body.order.map((e: any) => e.entityId)).toEqual([barrett]);
     });
 
-    it('the console and the seat keep the truth', async () => {
+    it('the console keeps the truth', async () => {
+      const roster = await call('GET', '/api/entities', { key: true });
+      expect(roster.body.map((e: any) => e.name)).toEqual(
+        expect.arrayContaining(['Barrett', 'Watcher', 'Unnamed']),
+      );
+      const turn = await call('GET', '/api/turn', { key: true });
+      expect(turn.body.order.map((e: any) => e.entityId)).toEqual([barrett, watcher]);
+    });
+
+    // The seat's line (2026-11-16): its own character whole, the ROOM's
+    // roster and turn order for everyone else.
+    it('a seat reads what the room reads', async () => {
       const seat = await seatScreen(barrett);
-      for (const opts of [{ key: true }, { display: seat }]) {
-        const roster = await call('GET', '/api/entities', opts);
-        expect(roster.body.map((e: any) => e.name)).toEqual(
-          expect.arrayContaining(['Barrett', 'Watcher', 'Unnamed']),
-        );
-        const turn = await call('GET', '/api/turn', opts);
-        expect(turn.body.order.map((e: any) => e.entityId)).toEqual([barrett, watcher]);
-      }
+      const roster = await call('GET', '/api/entities', { display: seat });
+      expect(roster.body.map((e: any) => e.name)).toEqual(['Barrett']);
+      const turn = await call('GET', '/api/turn', { display: seat });
+      expect(turn.body.order.map((e: any) => e.entityId)).toEqual([barrett]);
     });
   });
 });

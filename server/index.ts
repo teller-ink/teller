@@ -16,12 +16,20 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { createReadStream, readFileSync, existsSync } from 'node:fs';
+import { createReadStream, readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, extname, join, normalize, resolve as resolvePath } from 'node:path';
+import { basename, dirname, extname, join, normalize, relative, resolve as resolvePath, sep } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { toEntity, type Ref } from '../core/entity.ts';
+import {
+  DRAFT_MARK,
+  findEntry,
+  isDraft,
+  sameName,
+  toEntity,
+  type Entity,
+  type Ref,
+} from '../core/entity.ts';
 import { toExchangeRecord, toRollRecord } from '../core/exchange.ts';
 import {
   claimDataDir,
@@ -32,6 +40,7 @@ import {
   renameCampaign,
   trashCampaign,
   validSlug,
+  type Display,
   type EntityDraft,
 } from '../core/store.ts';
 import {
@@ -43,8 +52,13 @@ import {
   checkTicket,
   displayHandle,
   loadDmKey,
+  mayReadDeclarations,
+  mayReadTemplates,
   mintTicket,
+  readableDeclarations,
+  readableTemplates,
   resolveAuth,
+  seatEntity,
   STREAM_MINUTES,
   type Auth,
 } from './auth.ts';
@@ -121,8 +135,19 @@ import {
 import { toRights } from '../core/bundle.ts';
 import { notesOf, passNote, visibleTo, type NoteHandout } from './notes.ts';
 import { setNotice } from './notice.ts';
-import { FURNITURE, publicBoardRow, publicBoardState, publicEntityList, publicSnapshot, publicTurnState, tradeNames } from './public.ts';
-import { sideOf } from '../core/side.ts';
+import {
+  activeBoard,
+  fileIsPublic,
+  FURNITURE,
+  HIDDEN_MARK,
+  publicBoardState,
+  publicEntityList,
+  publicSnapshot,
+  publicTurnState,
+  tradeNames,
+  type FileSources,
+} from './public.ts';
+import { SIDE_LIST, SIDE_MARK, sideOf } from '../core/side.ts';
 import { toAreas } from '../core/fog.ts';
 import { toTerrain } from '../core/terrain.ts';
 import { ACTIVE_CAMPAIGN, Host, Session, type EntryEdit } from './session.ts';
@@ -235,17 +260,74 @@ function fileReply(bytes: Buffer, filename: string): Reply {
 }
 
 /**
- * Who may read PREP — the template half: encounter recipes, bestiary
- * numbers, the catalogue. The DM, obviously; and a seat, which shops
- * the catalogue at the table and browses what it may stamp. A passive
- * screen (table, board, badge, art) may not: it is player-facing glass
- * in the middle of the room, and the recipes are what the fight is
- * about to be. Vocabulary and records stay watchable — those aren't
- * secrets, they're what a panel renders with.
+ * The DM or a seat — the gate for the doors a seat legitimately knocks
+ * on that are not a SLOT: the rulebooks, and a plugin door declared
+ * `prep` (the store's counter, which answers a seat with its own cart
+ * and nothing else). It used to gate every prep read as well, and that
+ * is how a seat came to read the encounters: "DM or seat" cannot tell
+ * the catalogue from the ambush. Slots are asked per slot now
+ * (`mayReadDeclarations`, `mayReadTemplates` in `server/auth.ts`).
  */
 const canPrep = (auth: Auth): boolean =>
   canDm(auth) || (adopted(auth.display) && auth.display.role === 'seat');
 const notAtTable = () => reply(401, { error: 'not at this table' });
+
+/**
+ * THE MARKS A SEAT DOESN'T HOLD — teller's own facts about a character,
+ * which live in the `meta` list beside whatever else a sheet keeps there:
+ * which side it is on, whether it is lying in wait, whether it is still
+ * being made. `core/side.ts` says it plainly — the DM holds the side —
+ * and the audit (2026-11-16) found a seat could set its own to `none`
+ * and walk off the public roster, or point its `refs` at a foe template
+ * and read as one. The seat may edit everything else about its own
+ * character; these it may not.
+ *
+ * Two allowances, both CREATION, and both only while the stored row
+ * still wears the draft mark: the builder runs on the seat (the rail's
+ * "what's yer trade?", §M-4a's companion), so it may name the trade in
+ * `type` and set `refs` while it composes, and it may strike the draft
+ * mark at the last step — that is how creation hands the strip back.
+ * Putting a draft mark ON is the DM's act; a finished character's type
+ * and refs are the DM's to change.
+ */
+const SEAT_HELD_MARKS = [SIDE_MARK, HIDDEN_MARK, DRAFT_MARK];
+
+function canon(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canon).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value as Record<string, unknown>).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canon((value as Record<string, unknown>)[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+/** Why a seat may not save this over that, or undefined when it may. */
+function seatOverreach(stored: Entity, next: Entity): string | undefined {
+  const drafting = isDraft(stored);
+  if (!drafting && (stored.type ?? '').trim() !== (next.type ?? '').trim()) {
+    return "a character's type is the DM's to change";
+  }
+  if (!drafting && canon(stored.refs ?? {}) !== canon(next.refs ?? {})) {
+    return "a character's refs are the DM's to change";
+  }
+  for (const mark of SEAT_HELD_MARKS) {
+    const was = findEntry(stored.lists?.[SIDE_LIST] ?? [], mark);
+    const now = findEntry(next.lists?.[SIDE_LIST] ?? [], mark);
+    if (canon(was) === canon(now)) continue;
+    if (mark === DRAFT_MARK && was && !now) continue;
+    return `the '${mark}' mark is the DM's to set`;
+  }
+  return undefined;
+}
+
+/** The same question, asked of one entry-door write. */
+function seatEntryOverreach(stored: Entity, edit: EntryEdit): string | undefined {
+  if (edit.list !== SIDE_LIST) return undefined;
+  const mark = SEAT_HELD_MARKS.find((m) => sameName(m, edit.name));
+  if (!mark) return undefined;
+  if (mark === DRAFT_MARK && edit.remove && isDraft(stored)) return undefined;
+  return `the '${mark}' mark is the DM's to set`;
+}
 
 /**
  * One proposer's share of the turn snapshot, cut to what its manifest
@@ -692,6 +774,55 @@ function shelfSystem(host: Host, id: string): Ref | undefined {
   return found ? { id: found.id, name: found.name } : undefined;
 }
 
+// -- how many screens may be waiting to be adopted ----------------------
+//
+// `hello` is unauthenticated by necessity — it is how a screen comes to
+// exist — and it was unbounded: three hundred rows in two seconds from a
+// loop, each one a pairing code in the table's namespace (the audit,
+// 2026-11-16). Two bounds, both sized so a real table never meets them.
+//
+// HOW MANY: a room with a dozen screens waiting at once is a big table;
+// past the cap the rows that have gone quietest leave first. A real
+// pairing screen asks again every three seconds, so it is never the
+// quietest — the rows a loop made and never visited are.
+//
+// HOW FAST: a bucket that holds a burst and refills a screen a second.
+// A whole rail of kiosks booting together is a burst, not a stream; a
+// loop is a stream, and it is the one thing told to wait (429), never a
+// screen that already has an id — those don't mint anything.
+
+const WAITING_SCREENS = 64;
+const NEW_SCREEN_BURST = 30;
+const NEW_SCREENS_PER_SECOND = 1;
+const newScreenBuckets = new WeakMap<object, { tokens: number; at: number }>();
+
+function mayMintScreen(shelf: Host['shelf']): boolean {
+  const now = Date.now();
+  const bucket = newScreenBuckets.get(shelf) ?? { tokens: NEW_SCREEN_BURST, at: now };
+  bucket.tokens = Math.min(
+    NEW_SCREEN_BURST,
+    bucket.tokens + ((now - bucket.at) / 1000) * NEW_SCREENS_PER_SECOND,
+  );
+  bucket.at = now;
+  newScreenBuckets.set(shelf, bucket);
+  if (bucket.tokens < 1) return false;
+  bucket.tokens -= 1;
+  return true;
+}
+
+function makeRoomForScreen(shelf: Host['shelf']): void {
+  const waiting = () => shelf.displays().filter((d) => d.code);
+  if (waiting().length < WAITING_SCREENS) return;
+  // A minute of silence is twenty missed heartbeats — that row is gone.
+  shelf.expireUnclaimedDisplays(60_000);
+  const left = waiting().sort((x, y) =>
+    (x.lastSeenAt ?? '').localeCompare(y.lastSeenAt ?? ''),
+  );
+  for (const d of left.slice(0, Math.max(0, left.length - WAITING_SCREENS + 1))) {
+    shelf.removeDisplay(d.id);
+  }
+}
+
 /**
  * The API, as one function — testable without a socket, servable with
  * one. Returns undefined for paths that aren't the API's.
@@ -744,7 +875,14 @@ export async function handleApi(
         shelf.touchDisplay(display.id);
         display = shelf.refreshCodeIfExpired(display);
       } else {
+        if (!mayMintScreen(shelf)) {
+          return reply(429, { error: 'too many new screens at once — try again in a moment' });
+        }
+        makeRoomForScreen(shelf);
         display = shelf.createDisplay();
+        // Seen at birth, so the oldest silence is a row that stopped
+        // asking — never the screen whose code is on the glass right now.
+        shelf.touchDisplay(display.id);
       }
       // The handle is told, not derived: a LAN origin is not a secure
       // context, so the client couldn't compute its own sha-256.
@@ -1492,7 +1630,25 @@ export async function handleApi(
       // the header's own rule about `children`, so a watcher asking
       // after any other parent is answered with nothing rather than
       // with the roster it didn't ask for.
-      if (!canPrep(auth)) {
+      //
+      // A SEAT reads it the same way now (2026-11-16): the room's roster
+      // and not the console's, because the console's names the ambush
+      // and the half-made character to a phone in a player's hand. What
+      // a seat holds beyond the room's is its own character — whole,
+      // through `/api/entities/<own>` — and that character's own
+      // children, which are its business and nobody else's.
+      if (!canDm(auth)) {
+        const own = seatEntity(auth);
+        if (own && parent === own) {
+          return reply(
+            200,
+            session.campaign.children(own).map((e) => ({
+              id: e.id,
+              name: e.name,
+              type: e.type ?? null,
+            })),
+          );
+        }
         return reply(
           200,
           parent === session.loaded.manifest.id ? publicEntityList(session) : [],
@@ -1572,6 +1728,13 @@ export async function handleApi(
       const body = await bodyOf(req);
       const entity = toEntity({ ...((body.entity as object) ?? {}), id: a });
       if (!entity) return reply(400, { error: 'not an entity' });
+      if (!canDm(auth)) {
+        // A whole-row PUT carries the marks back as it read them (the
+        // seat's carry does exactly that), so only a CHANGE is refused.
+        const stored = session.campaign.get(a);
+        const why = stored ? seatOverreach(stored, entity) : undefined;
+        if (why) return reply(401, { error: why });
+      }
       try {
         return reply(200, session.save(entity, actorOf(auth, String(body.actor ?? ''))));
       } catch (err) {
@@ -1631,6 +1794,11 @@ export async function handleApi(
     }
     if (body.max === null || typeof body.max === 'number') edit.max = body.max;
     if (body.remove === true) edit.remove = true;
+    if (!canDm(auth)) {
+      const stored = session.campaign.get(a);
+      const why = stored ? seatEntryOverreach(stored, edit) : undefined;
+      if (why) return reply(401, { error: why });
+    }
     const saved = session.writeEntry(a, edit, actorOf(auth, String(body.actor ?? '')));
     if (!saved) return reply(404, { error: `no entity ${a}` });
     return reply(200, { stored: saved, reads: session.reading(saved) });
@@ -1884,6 +2052,9 @@ export async function handleApi(
       path: parts.slice(4),
       body,
       who,
+      // A door any adopted screen may knock on is handed the room's
+      // table, whoever happens to be knocking (TEL-125).
+      room: access !== 'dm' && access !== 'prep',
     });
     return reply(out.status, out.body);
   }
@@ -2085,25 +2256,39 @@ export async function handleApi(
     // re-aimed (`publicTurn`). Same reason as the roster door above,
     // found in the same audit: a hidden combatant was announcing itself
     // through the one endpoint nobody thought of as player-facing.
+    //
+    // A SEAT reads the room's order too (2026-11-16) — with one row the
+    // room may not see put back: its own, so a player whose character is
+    // hidden or still being made can still answer when initiative is
+    // called. The pointer is re-aimed over the same list.
     if (method === 'GET') {
-      return reply(200, canPrep(auth) ? session.turnState() : publicTurnState(session));
+      if (canDm(auth)) return reply(200, session.turnState());
+      return reply(200, publicTurnState(session, seatEntity(auth)));
     }
     if (method === 'POST') {
       const body = await bodyOf(req);
       const op = body as unknown as TurnOp;
       if (typeof op.op !== 'string') return reply(400, { error: 'an op needs an op' });
       if (!canDm(auth)) {
-        const seat = auth.display;
+        // A seat's ONE op, and only while the table is taking rolls: a
+        // score re-sorts the order, so outside the rolling phase it was
+        // a way to jump the queue and become the acting row (the audit,
+        // 2026-11-16). Finite, because a string or `Infinity` sorts
+        // wherever its author wanted. A seat nobody pointed at a
+        // character owns no row — the label-only "3 coyotes" row has no
+        // entity either, and `undefined === undefined` used to say yes.
+        const own = seatEntity(auth);
+        const state = session.turnState();
         const owns =
           op.op === 'score' &&
-          adopted(seat) &&
-          seat.role === 'seat' &&
-          session
-            .turnState()
-            .order.some(
-              (e) => e.id === op.entryId && e.entityId === seat.params.entityId,
-            );
+          own !== undefined &&
+          state.rolling === true &&
+          typeof op.score === 'number' &&
+          Number.isFinite(op.score) &&
+          state.order.some((e) => e.id === op.entryId && e.entityId === own);
         if (!owns) return denied();
+        session.turnOp(op, actorOf(auth, String(body.actor ?? '')));
+        return reply(200, publicTurnState(session, own));
       }
       // Asked after the gate, so a screen that may not write learns
       // nothing about the order from the sentence.
@@ -2121,11 +2306,11 @@ export async function handleApi(
   //
   // Reading is gated too: encounter recipes and bestiary numbers are
   // the Warden's prep, and an adopted table TV is player-facing glass.
-  // A SEAT reads it legitimately (the catalogue it shops from), so the
-  // gate is DM-or-seat rather than DM alone.
+  // A SEAT reads the slots it shops from and nothing else — the same
+  // per-slot answer the stack door gives (`mayReadTemplates`).
   if (head === 'templates' && a) {
     if (method === 'GET' && !b) {
-      if (!canPrep(auth)) return denied();
+      if (!mayReadTemplates(auth, a)) return denied();
       return reply(200, session.campaign.templatesIn(a));
     }
     if (!canDm(auth)) return denied();
@@ -2159,12 +2344,14 @@ export async function handleApi(
   // completely. Reading has its own door because a list of rows with a
   // dead `data` wrapper is not what a gallery wants to render.
   //
-  // The read gate is `canPrep`, matching the templates door it shadows
-  // — a seat already reads this slot legitimately through that one, and
-  // a gate here that disagreed would be a difference without a reason.
+  // The read gate is the DM's, matching the templates door it shadows:
+  // the gallery is every picture the Warden MIGHT show, with their notes,
+  // and a seat is not owed the ones nobody has shown yet (2026-11-16).
+  // What a seat is handed travels in its passed note, resolved; what the
+  // room is shown travels in the snapshot.
   if (head === 'handouts') {
     if (method === 'GET' && !a) {
-      if (!canPrep(auth)) return denied();
+      if (!canDm(auth)) return denied();
       return reply(200, handoutsOf(session));
     }
 
@@ -2335,13 +2522,23 @@ export async function handleApi(
   }
 
   if (method === 'GET' && head === 'stack' && a && b) {
-    // Declarations and records are the table's vocabulary — panels,
-    // statuses, what the dice are called — and every passive surface
-    // renders from them. Templates are prep, so they take the same
-    // gate the campaign's own template half does.
-    if (a === 'declarations') return reply(200, session.loaded.declarations(b));
+    // Records are the table's vocabulary — what the dice are called,
+    // which colour a trade wears — and every surface renders from them.
+    //
+    // Declarations LOOK like vocabulary and mostly are, but the slot is
+    // a name anyone can type and the campaign's own template half is a
+    // layer of this stack: `declarations/encounters` was the recipes,
+    // hidden foes and all, to a blank screen (the audit, 2026-11-16).
+    // So a slot is open to a screen only when its role's list says so
+    // (`mayReadDeclarations`), and an unknown slot is the DM's.
+    // Templates are prep, so they take the same per-slot gate the
+    // campaign's own template half does.
+    if (a === 'declarations') {
+      if (!mayReadDeclarations(auth, b)) return denied();
+      return reply(200, session.loaded.declarations(b));
+    }
     if (a === 'templates') {
-      if (!canPrep(auth)) return denied();
+      if (!mayReadTemplates(auth, b)) return denied();
       return reply(200, session.loaded.templates(b));
     }
     if (a === 'record') return reply(200, session.loaded.record(b));
@@ -2364,14 +2561,16 @@ export async function handleApi(
   // is the only log there is, and a board arriving is a thing that
   // happened at this table even though the row outlives it.
   if (head === 'boards') {
-    // The shelf, listed. Anyone at the table may see WHICH boards exist
-    // — the gate up top is `canWatch` — but only the DM sees what the
-    // places on them are called: an area is a named secret, and it is
-    // stripped from the row for everyone else exactly as it is in the
-    // snapshot (`publicBoardRow`).
+    // The shelf, listed — to the DM. Everyone else at the table is
+    // answered with the board the table is SHOWING and no other, row
+    // stripped as the snapshot strips it (`publicBoardRow`): the names
+    // and pictures of the scenes still to come are the Warden's prep,
+    // and the shelf crosses campaigns besides (the audit, 2026-11-16 —
+    // "every board on the shelf, and the unrevealed map's bytes").
     if (method === 'GET' && !a) {
-      const boards = session.shelf.boards();
-      return reply(200, canDm(auth) ? boards : boards.map(publicBoardRow));
+      if (canDm(auth)) return reply(200, session.shelf.boards());
+      const active = activeBoard(session);
+      return reply(200, active ? [active.board] : []);
     }
 
     if (method === 'POST' && a === 'upload' && !b) {
@@ -2503,16 +2702,18 @@ export async function handleApi(
 
   if (head === 'board-state' && a && !b) {
     if (method === 'GET') {
-      const state = session.campaign.boardState(a) ?? null;
       // The DM sees the board as it is; anyone else at the table sees
       // it as the table may — hidden placements gone, fog reduced to
       // its bare set of dark cells.
       // Same function the snapshot uses, because two strippings would
       // eventually disagree and one of them would be the leak.
-      return reply(
-        200,
-        canDm(auth) ? state : publicBoardState(state),
-      );
+      //
+      // And only the ACTIVE board: the next scene's staged tokens are
+      // the next fight, and a watcher asking after any other board is
+      // told there is nothing there rather than which one it guessed.
+      if (canDm(auth)) return reply(200, session.campaign.boardState(a) ?? null);
+      if (a !== session.activeBoardId()) return reply(404, { error: `no board ${a} on the table` });
+      return reply(200, publicBoardState(session.campaign.boardState(a) ?? null));
     }
     if (method === 'PUT') {
       if (!canDm(auth)) return denied();
@@ -2646,6 +2847,108 @@ const MIME: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
 };
+
+/**
+ * A file under one of the file door's roots, by its REAL path.
+ *
+ * `normalize` sees `..` and nothing else, so a symlink planted under
+ * `art/` (a pack folder can carry one) used to serve `dm.key` and the
+ * campaign's database to any adopted screen (the audit, 2026-11-16).
+ * The answer is resolved on disk first and must still be inside the
+ * root it claims, and a directory is not a file.
+ */
+function fileUnder(dataDir: string, rel: string): { path: string; key: string } | undefined {
+  const path = normalize(join(dataDir, rel));
+  for (const root of ['art', 'map']) {
+    const base = join(dataDir, root);
+    if (!path.startsWith(base + sep)) continue;
+    try {
+      const real = realpathSync(path);
+      const realBase = realpathSync(base);
+      if (!real.startsWith(realBase + sep) || !statSync(real).isFile()) return undefined;
+      return { path: real, key: relative(dataDir, path).split(sep).join('/') };
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The record slots a seat's screens draw pictures from — the seat
+ * chrome's own list (`client/components/seat/SeatChrome.tsx`), which is
+ * where a portrait, a brand mark or a die's face is named.
+ */
+const SEAT_ART_RECORDS = [
+  'accents',
+  'dials',
+  'brand',
+  'portraits',
+  'pins',
+  'use',
+  'carry',
+  'currency',
+  'icons',
+  'groups',
+  'dice',
+  'marks',
+  'spends',
+  'vocabulary',
+];
+
+/** Everything a non-DM screen reads that could name a picture (`fileIsPublic`). */
+function fileSources(session: Session, auth: Auth): FileSources {
+  return {
+    notes: visibleTo(notesOf(session), auth),
+    reads: () => {
+      const out: unknown[] = [];
+      for (const slot of readableDeclarations(auth)) out.push(session.loaded.declarations(slot));
+      for (const slot of readableTemplates(auth)) out.push(session.loaded.templates(slot));
+      const own = seatEntity(auth);
+      const entity = own ? session.campaign.get(own) : undefined;
+      if (entity) {
+        out.push(entity, session.reading(entity));
+        for (const slot of SEAT_ART_RECORDS) out.push(session.loaded.record(slot));
+      }
+      return out;
+    },
+  };
+}
+
+/**
+ * The bytes go out as what they are and nothing more. A picture or a
+ * PDF is served as one; anything else that landed under `art/` or `map/`
+ * — a `.story` import may write any extension there, and an `.html` or
+ * `.svg` is live code on the host's own origin, where the key sits in
+ * localStorage — goes out as an attachment inside a sandbox, so opening
+ * it runs nothing. An `<img>` ignores both headers, so an SVG logo
+ * still draws.
+ */
+const FILE_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.avif': 'image/avif',
+  '.pdf': 'application/pdf',
+  '.svg': 'image/svg+xml',
+};
+const INERT_FILES = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif', '.pdf']);
+
+function fileHeaders(path: string): Record<string, string> {
+  const ext = extname(path).toLowerCase();
+  const headers: Record<string, string> = {
+    'Content-Type': FILE_MIME[ext] ?? 'application/octet-stream',
+    'Cache-Control': 'private, max-age=3600',
+    'X-Content-Type-Options': 'nosniff',
+  };
+  if (!INERT_FILES.has(ext)) {
+    headers['Content-Disposition'] = 'attachment';
+    headers['Content-Security-Policy'] = "sandbox; default-src 'none'";
+  }
+  return headers;
+}
 
 function serveStatic(pathname: string, res: ServerResponse): boolean {
   const rel = pathname === '/' ? '/index.html' : pathname;
@@ -2891,15 +3194,24 @@ export function serve(what: Session | Host, port: number, key: string) {
     // Bytes from the data dir — pack art and board images — behind the
     // same ticket law as the stream (an <img> can't send headers).
     // Only art/ and map/ are reachable, and only inside the data dir.
+    //
+    // A ticket proves WHICH screen is asking; what it may fetch is the
+    // assignment's business, like everything else (rule 7). The DM's
+    // own device and a console fetch anything; any other screen fetches
+    // what the room can see right now and what its own reads name
+    // (`fileIsPublic`), and is told "not here" about the rest — the same
+    // answer a missing file gets, so a guess learns nothing.
     if (url.pathname.startsWith('/files/')) {
       const handle = url.searchParams.get('handle') ?? '';
       const ticket = url.searchParams.get('ticket');
       let valid = Boolean(handle) && checkTicket(key, `files:${handle}`, ticket);
+      let viewer: Auth = { key: true };
       if (valid && handle !== 'dm') {
         const display = host.shelf
           .displays()
           .find((d) => displayHandle(d.id) === handle);
         valid = adopted(display);
+        viewer = { key: false, display };
       }
       const dataDir = host.dataDir;
       if (!valid || !dataDir) {
@@ -2908,20 +3220,19 @@ export function serve(what: Session | Host, port: number, key: string) {
         return;
       }
       const rel = decodeURIComponent(url.pathname.slice('/files/'.length));
-      const path = normalize(join(dataDir, rel));
-      const allowed = ['art', 'map'].some((root) =>
-        path.startsWith(join(dataDir, root) + '/'),
-      );
-      if (!allowed || !existsSync(path)) {
+      const found = fileUnder(dataDir, rel);
+      const session = host.session;
+      const shown =
+        found &&
+        (canDm(viewer) ||
+          (session !== undefined && fileIsPublic(session, found.key, fileSources(session, viewer))));
+      if (!found || !shown) {
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         res.end('not here');
         return;
       }
-      res.writeHead(200, {
-        'Content-Type': MIME[extname(path)] ?? 'application/octet-stream',
-        'Cache-Control': 'private, max-age=3600',
-      });
-      res.end(readFileSync(path));
+      res.writeHead(200, fileHeaders(found.path));
+      res.end(readFileSync(found.path));
       return;
     }
 
@@ -2941,11 +3252,12 @@ export function serve(what: Session | Host, port: number, key: string) {
       const handle = url.searchParams.get('handle') ?? '';
       const ticket = url.searchParams.get('ticket');
       let valid = Boolean(handle) && checkTicket(key, `stream:${handle}`, ticket);
+      let opened: Display | undefined;
       if (valid && handle !== 'dm') {
-        const display = host.shelf
+        opened = host.shelf
           .displays()
           .find((d) => displayHandle(d.id) === handle);
-        valid = adopted(display);
+        valid = adopted(opened);
       }
       if (!valid) {
         res.writeHead(401, { 'Content-Type': 'text/plain' });
@@ -2958,17 +3270,40 @@ export function serve(what: Session | Host, port: number, key: string) {
         Connection: 'keep-alive',
       });
       res.write('retry: 2000\n\n');
+      // The assignment is asked again on every word, not only at the
+      // door: a screen the DM deleted or pointed somewhere else used to
+      // keep its open stream for as long as the socket lived (the audit,
+      // 2026-11-16). The word that announced the change still goes out
+      // — `assign` is how the screen learns to look at itself — and then
+      // the stream ends. A screen that was reassigned reconnects under
+      // its new assignment in two seconds; a deleted one is refused.
+      const assigned = opened && canon({ role: opened.role, params: opened.params });
+      const stillSo = () => {
+        if (!opened) return true;
+        const now = host.shelf.display(opened.id);
+        return adopted(now) && canon({ role: now.role, params: now.params }) === assigned;
+      };
+      let ended = false;
+      const end = () => {
+        if (ended) return;
+        ended = true;
+        clearInterval(ping);
+        unsubscribe();
+        res.end();
+      };
       const unsubscribe = host.room.subscribe(
         (what) => {
+          if (ended) return;
           res.write(`data: ${what}\n\n`);
+          if (!stillSo()) end();
         },
         handle === 'dm' ? undefined : handle,
       );
-      const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
-      req.on('close', () => {
-        clearInterval(ping);
-        unsubscribe();
-      });
+      const ping = setInterval(() => {
+        if (!stillSo()) return end();
+        res.write(': ping\n\n');
+      }, 25_000);
+      req.on('close', end);
       return;
     }
 

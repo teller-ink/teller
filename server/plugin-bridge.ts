@@ -41,7 +41,8 @@ import type { Entity } from '../core/entity.ts';
 import type { LoadedPlugin } from '../core/plugins.ts';
 import { grants, type DoorRequest, type DoorResult, type Effect, type Need, type TableSnapshot } from '../core/registry.ts';
 import { fightGeometry } from './geometry.ts';
-import { adopted, canDm, type Auth } from './auth.ts';
+import { adopted, canDm, roomMayReadDeclarations, type Auth } from './auth.ts';
+import { publicRoster } from './public.ts';
 import type { Session } from './session.ts';
 
 /** Per-table plugin memory: session → plugin id → whatever it left there. */
@@ -68,8 +69,20 @@ export function pluginState(session: Session, pluginId: string): unknown {
  * courtesy: a plugin that never asked for `read:entities` is handed a
  * snapshot with no entities in it, and no amount of asking differently
  * at the door changes that, because there is nowhere to ask.
+ *
+ * `room` is the second gate, and it is the CALLER's, not the plugin's:
+ * a door declared `access: 'table'` answers any adopted screen — the
+ * table TV, a badge, a blank — so whatever it is handed it can hand
+ * straight back to player-facing glass. Such a door is given the table
+ * as the ROOM sees it (TEL-125, the audit of 2026-11-16, which found a
+ * throwaway table door returning every foe's notes and exact numbers to
+ * a blank screen): the public roster, the redactor's own output and
+ * never the stored rows; only the declaration slots a passive screen
+ * may read; no templates, which are prep; and no board, because the
+ * measured board reports the hidden tokens as hidden and keeps them.
+ * Fail closed — a need this list doesn't know is answered with absence.
  */
-export function snapshotFor(session: Session, needs: Need[]): TableSnapshot {
+export function snapshotFor(session: Session, needs: Need[], room = false): TableSnapshot {
   const manifest = session.loaded.manifest;
   const out: TableSnapshot = {
     campaign: { slug: session.campaign.slug, name: manifest.name, rootId: manifest.id },
@@ -77,6 +90,27 @@ export function snapshotFor(session: Session, needs: Need[]): TableSnapshot {
     templates: {},
     records: {},
   };
+  if (room) {
+    for (const need of needs) {
+      if (need.verb !== 'read') continue;
+      if (need.subject === 'declarations' && need.slot && roomMayReadDeclarations(need.slot)) {
+        out.declarations[need.slot] = {
+          merged: session.loaded.declarations(need.slot),
+          own: session.campaign.templatesIn(need.slot),
+        };
+      } else if (need.subject === 'records' && need.slot) {
+        out.records[need.slot] = session.loaded.record(need.slot);
+      } else if (need.subject === 'entities') {
+        // The redacted entity is both readings: there is no stored row
+        // to protect from thickening, because there is no stored row.
+        out.entities = publicRoster(session).map((entity) => ({
+          stored: entity,
+          reading: entity,
+        }));
+      }
+    }
+    return out;
+  }
   for (const need of needs) {
     if (need.verb !== 'read') continue;
     if (need.subject === 'declarations' && need.slot) {
@@ -265,7 +299,14 @@ export async function callDoor(
   session: Session,
   plugin: LoadedPlugin,
   door: string,
-  call: { method: string; path: string[]; body: Record<string, unknown>; who: DoorRequest['who'] },
+  call: {
+    method: string;
+    path: string[];
+    body: Record<string, unknown>;
+    who: DoorRequest['who'];
+    /** The door answers the room — hand it the room's view (`snapshotFor`). */
+    room?: boolean;
+  },
 ): Promise<BridgeReply> {
   const point = `door.${door}` as const;
   const handler = plugin.provides[point];
@@ -277,7 +318,7 @@ export async function callDoor(
     path: call.path,
     body: call.body,
     who: call.who,
-    table: snapshotFor(session, plugin.manifest.needs),
+    table: snapshotFor(session, plugin.manifest.needs, call.room === true),
     state: memoryOf(session).get(plugin.manifest.id) ?? null,
   };
 

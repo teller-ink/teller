@@ -529,7 +529,10 @@ describe('saying what it will do before it does it', () => {
 });
 
 describe('prep is the Warden\'s, and a seat shops', () => {
-  it('lets the DM and a seat read templates, and refuses passive glass', async () => {
+  // A seat reads the slots it shops from and nothing else (2026-11-16):
+  // the encounter recipes and the bestiary's numbers are prep, and a
+  // seat lives on a player's own phone.
+  it('lets the DM read templates, a seat its shop, and refuses passive glass', async () => {
     await call('POST', '/api/templates/encounters', {
       key: true,
       body: { template: { name: 'Ambush at the Crossing' } },
@@ -539,16 +542,20 @@ describe('prep is the Warden\'s, and a seat shops', () => {
     const table = await screen('table');
 
     expect((await call('GET', '/api/templates/encounters', { key: true })).status).toBe(200);
-    expect((await call('GET', '/api/templates/encounters', { display: seat })).status).toBe(200);
+    expect((await call('GET', '/api/templates/encounters', { display: seat })).status).toBe(401);
     expect((await call('GET', '/api/templates/encounters', { display: table })).status).toBe(401);
 
     // The merged stack's template half takes the same gate...
-    expect((await call('GET', '/api/stack/templates/bestiary', { display: seat })).status).toBe(200);
+    expect((await call('GET', '/api/stack/templates/bestiary', { display: seat })).status).toBe(401);
+    expect((await call('GET', '/api/stack/templates/catalog', { display: seat })).status).toBe(200);
     expect((await call('GET', '/api/stack/templates/bestiary', { display: table })).status).toBe(401);
-    // ...while vocabulary and records stay watchable, because that is
-    // what a passive panel renders with.
+    // ...while records stay watchable, and a declaration slot is open
+    // to a role only when its list names it.
     expect(
-      (await call('GET', '/api/stack/declarations/panels', { display: table })).status,
+      (await call('GET', '/api/stack/declarations/panels', { display: seat })).status,
+    ).toBe(200);
+    expect(
+      (await call('GET', '/api/stack/declarations/kinds', { display: table })).status,
     ).toBe(200);
     expect((await call('GET', '/api/stack/record/dice', { display: table })).status).toBe(200);
   });

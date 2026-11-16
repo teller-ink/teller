@@ -212,12 +212,15 @@ describe('the doors', () => {
     expect(after.body).toHaveLength(1);
   });
 
-  it('refuses the gallery to player-facing glass, and allows a seat', async () => {
+  // The gallery is every picture the Warden MIGHT show (2026-11-16): a
+  // seat is handed what it is passed, not the shelf it was passed from.
+  it('refuses the gallery to everyone but the DM', async () => {
     await addHandout('Wanted Poster');
     const table = await screen('table');
     const seat = await screen('seat', { entityId: barrett });
     expect((await call('GET', '/api/handouts', { display: table })).status).toBe(401);
-    expect((await call('GET', '/api/handouts', { display: seat })).status).toBe(200);
+    expect((await call('GET', '/api/handouts', { display: seat })).status).toBe(401);
+    expect((await call('GET', '/api/handouts', { key: true })).status).toBe(200);
   });
 
   // -- the frame ------------------------------------------------------

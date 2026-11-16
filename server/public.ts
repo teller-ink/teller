@@ -473,9 +473,111 @@ export function publicTurn(turn: TurnState, hidden: ReadonlySet<string>): TurnSt
   return { ...turn, order, turn: at === -1 ? null : at };
 }
 
-/** The same turn, asked of the session — one call for the two doors. */
-export function publicTurnState(session: Session): TurnState {
-  return publicTurn(session.turnState(), hiddenFromTable(session));
+/**
+ * Every entity the room may not see in the turn order: the ambush, and
+ * the two the roster already leaves out — a DRAFT and anything on side
+ * `none`. The roster dropped them and the turn order still carried
+ * their ids (the audit, 2026-11-16), so the same screen learned there
+ * was a row it couldn't name. One set, both payloads.
+ */
+function offTheTurn(session: Session): Set<string> {
+  const out = hiddenFromTable(session);
+  const trades = tradeNames(session);
+  for (const entry of session.turnState().order) {
+    if (!entry.entityId || out.has(entry.entityId)) continue;
+    const entity = session.campaign.get(entry.entityId);
+    if (!entity) continue;
+    if (sideOf(entity, trades, FURNITURE) === 'none' || isDraft(session.reading(entity))) {
+      out.add(entry.entityId);
+    }
+  }
+  return out;
+}
+
+/**
+ * The same turn, asked of the session — one call for every door.
+ *
+ * `keep` is a seat's own character, put back if the room may not see
+ * it: a player whose character is hidden or still being made can still
+ * answer when initiative is called. Everyone else in the order is what
+ * the room sees.
+ */
+export function publicTurnState(session: Session, keep?: string): TurnState {
+  const hidden = offTheTurn(session);
+  if (keep) hidden.delete(keep);
+  return publicTurn(session.turnState(), hidden);
+}
+
+// -- the file door's half of the snapshot -----------------------------
+//
+// A `/files/` ticket used to open every byte under `art/` and `map/` to
+// any adopted screen (the audit, 2026-11-16): the never-shown handout,
+// the map of next week's scene. A picture is as much a secret as its
+// name, so the door asks the same question the snapshot answers — is
+// this key something the room can see RIGHT NOW — and this is the one
+// place that answer lives, so the snapshot and the door can't disagree.
+//
+// What fog cannot do: fog is a mask the browser draws over the whole
+// map image, so the active board's bytes include the parts still in the
+// dark. Rendering fog into the image on the server is a different
+// feature; until it exists the active map is public whole.
+
+/** Any string inside a value that names a file under the door's roots. */
+export function fileKeysIn(value: unknown, into: Set<string> = new Set()): Set<string> {
+  if (typeof value === 'string') {
+    const key = value.replace(/^\/+/, '');
+    if (key.startsWith('art/') || key.startsWith('map/')) into.add(key);
+  } else if (Array.isArray(value)) {
+    for (const item of value) fileKeysIn(item, into);
+  } else if (value && typeof value === 'object') {
+    for (const item of Object.values(value as Record<string, unknown>)) fileKeysIn(item, into);
+  }
+  return into;
+}
+
+/** The keys the public snapshot itself names: the active board's picture and the handout on show. */
+export function publicFileKeys(session: Session): Set<string> {
+  const out = new Set<string>();
+  // The row and not `activeBoard()`: that one assembles the state too,
+  // and a picture request has no use for the placements.
+  const boardId = session.activeBoardId();
+  const board = boardId ? session.shelf.board(boardId) : undefined;
+  if (board?.key) out.add(board.key.replace(/^\/+/, ''));
+  const handout = activeHandout(session);
+  if (handout?.key) out.add(handout.key.replace(/^\/+/, ''));
+  return out;
+}
+
+/**
+ * Where one screen's legitimate pictures can come from, besides the
+ * snapshot: what it was handed in a passed note, and — for a screen
+ * that reads more than the room — the slots and the sheet it reads.
+ * Gathered lazily: most requests are answered by the snapshot alone.
+ */
+export type FileSources = {
+  /** Handouts passed to this screen (`server/notes.ts`'s own answer). */
+  notes: { handout?: { key?: string } }[];
+  /** Everything else this screen reads, as values to search for keys. */
+  reads: () => unknown[];
+};
+
+/**
+ * May a screen that is not the DM fetch this key? The snapshot's own
+ * keys first, then its notes; a map or a handout picture is public ONLY
+ * that way, because both are a scene or a reveal the Warden decides on.
+ * Everything else under `art/` — pack art, portraits, a trade's face —
+ * is public exactly when something the screen may already read names
+ * it, which is the redaction law applied to pictures: a bestiary
+ * portrait arrives with the bestiary, and the bestiary is prep.
+ */
+export function fileIsPublic(session: Session, key: string, sources: FileSources): boolean {
+  const wanted = key.replace(/^\/+/, '');
+  if (publicFileKeys(session).has(wanted)) return true;
+  for (const note of sources.notes) {
+    if (note.handout?.key && note.handout.key.replace(/^\/+/, '') === wanted) return true;
+  }
+  if (wanted.startsWith('map/') || wanted.startsWith('art/handouts/')) return false;
+  return fileKeysIn(sources.reads()).has(wanted);
 }
 
 /**
