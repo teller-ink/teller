@@ -13,8 +13,8 @@
 class Teller < Formula
   desc "In-person TTRPG companion — the table plays, teller keeps the books"
   homepage "https://teller.ink"
-  url "https://github.com/teller-ink/teller/releases/download/v0.2.0/teller-0.2.0.tar.gz"
-  sha256 "fa457b5c32fe569cf427a74110330aa4833ac31a55463cdad33d44ff15a6e934"
+  url "https://github.com/teller-ink/teller/releases/download/v0.2.1/teller-0.2.1.tar.gz"
+  sha256 "3b0907dcf838724b4fc7cc977d488037dcd1b8312d40ea9c1dd6c64a5dcc38dd"
   license "AGPL-3.0-only"
 
   # Packed on, and so far only for, Apple silicon (scripts/pack.mjs).

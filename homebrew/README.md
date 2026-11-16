@@ -51,7 +51,7 @@ far end (`scripts/pack.mjs` has the argument).
 Then:
 
 ```sh
-gh release create v0.2.0 build/teller-0.2.0.tar.gz --title "teller 0.2.0"
+gh release create v0.2.1 build/teller-0.2.1.tar.gz --title "teller 0.2.1"
 # paste the printed url + sha256 into Formula/teller.rb, commit, push
 ```
 
