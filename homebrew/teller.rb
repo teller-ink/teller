@@ -47,7 +47,7 @@ class Teller < Formula
       Campaigns live in ~/.teller — or point it somewhere you can carry:
         teller host /Volumes/YOUR-CARD
 
-      The warden key is generated on first run and printed at startup.
+      The DM key is generated on first run and printed at startup.
       Show it again with: teller key
     EOS
   end

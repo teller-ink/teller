@@ -71,6 +71,13 @@ scope every selector under a class of your own).
 decides which effects are allowed. An effect nobody declared is refused
 with the plugin's name on it, and nothing runs.
 
+**Enforced at the bridge, not by a sandbox.** That is everything the
+host hands a plugin and everything it will accept back. The plugin's
+own code still runs inside the host process, as you: it could open a
+file or a socket without asking anybody. Enabling one is a human
+deciding to run somebody's code, which is why it is one deliberate
+toggle and why teller ships with none.
+
 The two examples are the two ends of that range: the **assistant** is
 pure proposal, and **the counter** is the store — panes, doors, effects
 and per-table memory, extracted out of teller whole (§15's "the store is

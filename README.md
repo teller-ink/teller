@@ -44,8 +44,10 @@ the console, live.
   ranges, derive defaults — but every result lands somewhere a human
   can type over, and the stored value always wins. It never decides
   something nobody can change.
-- **Every mutation is logged**, and `/undo` walks it back — deploys,
-  deletions, turns, rolls, all of it, coherently.
+- **Every mutation is logged**, and `/undo` walks it back — a deploy,
+  a deletion, a turn, a roll. What it can't step back (a fog stroke, a
+  token nudge) it names before you press, rather than quietly reaching
+  past it.
 - **One secret.** The GM's key, minted on first run. Everything else is
   an assignment the server checks: a seat may edit its one character
   and nothing else; passive screens get a redacted snapshot with
@@ -67,8 +69,9 @@ dropping a folder in:
   and the branded look, layered over the system. What a pack may carry
   is its author's affair; teller's repo carries nobody's book, ever.
 - **A story** — one table's campaign, exportable as a single `.story`
-  file that references systems and packs by id and carries only what
-  *you* wrote.
+  file that references systems and packs by id and carries what's
+  *yours*: the campaign, the pictures you uploaded, its history. Never
+  a publisher's book.
 - **A plugin** — extended function at declared seams, with declared
   needs you approve once: an AI assistant that *proposes* a monster's
   turn (the table decides), a store, whatever you build. teller ships
@@ -90,8 +93,18 @@ teller host        # prints the address every screen opens
 teller key         # the one secret; the GM's device unlocks with it
 ```
 
+Homebrew installs on Apple silicon Macs for now — the release carries
+native binaries. Anywhere else that runs Node 24 or newer, run it from
+a checkout (below).
+
 Data lives in `~/.teller/` by default; `teller host /Volumes/CARD`
-serves a table off a stick.
+serves a table off a stick. Back up the folder, not a single file in
+it.
+
+A fresh install has one small **starter** system, so a table works
+before you add anything. Making your own is three short guides:
+[a system](defaults/systems/starter/README.md),
+[a pack](packs/README.md), [a plugin](examples/plugins/README.md).
 
 ## Hardware, if you're that kind of table
 
@@ -110,6 +123,7 @@ Node ≥ 24, pnpm.
 
 ```bash
 pnpm install
+pnpm client:build  # the host serves the built client; do this first
 pnpm host          # serve a table from this checkout
 pnpm client:dev    # client dev server against a running host
 pnpm typecheck     # two projects: host (core + server), client

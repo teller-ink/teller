@@ -117,9 +117,16 @@ displays, trust, settings), `campaigns/*.db` (one SQLite file per
 campaign — the campaign IS the file, §11), `systems/`, `packs/`,
 `plugins/`, `panels/` (the table's own layer), `books/` (PDFs named
 `bok_` + content hash), `art/` (installed under `art/<id>/…`), `map/`,
-`dm.key`. Folders are swept on boot and on demand (`POST
-/api/shelf/sweep`); the sweep is version-gated — bump the json or it
-won't reinstall — and shelf CODE recompiles on restart.
+`dm.key`, and `host.lock` while a host is running (pid and port — a
+second host on the same folder is refused by name). Folders are swept
+on boot and on demand (`POST /api/shelf/sweep`, or the Shelf tab's
+button). **A FOLDER is re-read on every sweep, so an unbumped edit goes
+live; only a zipped `.pack` archive is version-gated** (a strictly
+higher `version` installs). This file said the whole sweep was gated
+until the 2026-11-16 audit read the code. Shelf CODE recompiles on
+restart. A clean stop checkpoints and closes every database, so a
+campaign really is one file at rest; while the host runs, recent writes
+sit in the `-wal` beside it, and the unit of backup is the folder.
 
 - `pnpm client:dev` — client dev server against a running host.
 - `pnpm typecheck` (two projects: root = core+server, client) /
@@ -245,9 +252,18 @@ payload. Never mutate without logging.
 
 It is already load-bearing: `/undo` walks it backward, writing a
 `revert` event pointing at what it undid, so repeated undos keep
-stepping back instead of fighting each other. What doesn't exist yet is
-a *readable* combat log or history for the DM (TEL-5) — the data is
-there, nothing renders it.
+stepping back instead of fighting each other. The console's Log tool
+renders it, every row in words; per-entry revert is still TEL-5.
+
+**Undo must say what it will do before it does it** (learned
+2026-11-16 — four audit lanes found it reverting something older
+without a word). Peek names who and what; a newer change undo cannot
+take (board writes log no before — a standing decision) is reported as
+stepped OVER, and reaching past one takes a second press. Undoing a
+delete, a deploy or a clear returns only what that step took, merged
+into the board as it is now. And undo has a FLOOR: a campaign's own
+setup, and a `.story` import. A restored campaign begins with nothing
+to undo.
 
 ### 4. The REPO carries no publisher text — a pack may carry anything its author has the right to
 
@@ -417,9 +433,10 @@ no registry, no ids handed out by anyone.
 **The shelf folder IS the authoring copy** (2026-08-15). Edit
 `~/.teller/packs/<name>/bestiary.json` in place, bump `version` in
 `pack.json`, and the sweep installs it (boot, or `POST
-/api/shelf/sweep` from the console — the old ten-second timer is gone;
-the sweep is version-gated, so an unbumped edit won't reinstall) — no
-copy, no upload.
+/api/shelf/sweep` from the console — the old ten-second timer is gone).
+The bump is a courtesy to whoever reads the file, not a gate: a pack
+FOLDER is re-read on every sweep, and only a `.pack` archive waits for
+a higher version. No copy, no upload.
 The repo's `packs/` holds only the format README; everything else under
 it is gitignored (`packs/*`), because whatever a pack carries, it is
 never repo content (rule 4).
@@ -611,6 +628,17 @@ over *its own campaign*; a `seat` screen may edit *its one character*
 and no other; passive screens may only receive the player-safe
 snapshot. Authorization is role-derived — never re-derive it from a
 secret the client holds.
+
+**The READ side is the same law, and it was the half that leaked**
+(learned 2026-11-16: every write gate held, and a blank screen could
+read the Warden's whole prep through one ungated route). A screen reads
+what its role is assigned and nothing behind it: passive glass the
+public snapshot and the files that snapshot is showing; a seat its own
+character in full, everyone else as the room sees them, and only the
+slots its own screens use (`server/auth.ts` holds the lists, and an
+unknown slot is the DM's). The `side`, `hidden` and `draft` marks are
+the DM's facts even on a seat's own character. A new read route is
+closed until a role is named for it.
 
 This replaces seat tokens, which are gone: a seat used to be "whoever
 knows this string", carried in a shareable URL that never expired. It's
