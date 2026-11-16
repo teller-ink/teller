@@ -16,7 +16,8 @@
 //   * A HIDDEN THING IS HIDDEN EVERYWHERE. The same audit found the
 //     ambush's token stripped from the board while its name rode the
 //     roster and the turn order out to the same screen, so both are cut
-//     by `hiddenOnActiveBoard` and the turn's pointer re-aimed after.
+//     by `hiddenFromTable` and the turn's pointer re-aimed after —
+//     whichever board is up, or none (the audit, 2026-11-16).
 //   * A DRAFT IS PREP. A half-made character belongs to the console
 //     until creation clears its mark.
 //   * `notes` never travel, for anyone.
@@ -53,7 +54,7 @@
 
 import type { Entity, Entry } from '../core/entity.ts';
 import { sideOf, type Side } from '../core/side.ts';
-import { isDraft, numberOf } from '../core/entity.ts';
+import { hasEntry, isDraft, numberOf } from '../core/entity.ts';
 import { toFog } from '../core/fog.ts';
 import { kindFor, toKindDef, type KindDef } from '../core/kind.ts';
 import type { Board } from '../core/store.ts';
@@ -333,8 +334,24 @@ export function activeBoard(session: Session): PublicBoard | null {
 }
 
 /**
- * WHO IS LYING IN WAIT — the entities whose only tokens on the active
- * board are hidden ones.
+ * THE DEPLOYED-HIDDEN MARK — an entry called `hidden` in the `meta`
+ * list, beside the draft mark and the side, for the one ambusher that
+ * has no token to be hidden by: a foe the recipe sent in out of sight
+ * on a table with no board up at all (`Session.deployEncounter`). With
+ * a board up, a hidden deploy is a hidden TOKEN instead, because the
+ * token is the thing the Warden already knows how to reveal.
+ *
+ * The mark retires itself: once the entity stands openly on any board
+ * the room has been shown it, and the mark stops counting without
+ * anybody having to find it. Removing it through the entry door is the
+ * other way out.
+ */
+export const HIDDEN_LIST = 'meta';
+export const HIDDEN_MARK = 'hidden';
+
+/**
+ * WHO IS LYING IN WAIT — the entities the Warden hid, whatever the
+ * table happens to be showing.
  *
  * Stripping the token was never enough (the audit, 2026-08-24). The
  * placement came out of the board state and the ambusher's NAME rode
@@ -343,27 +360,63 @@ export function activeBoard(session: Session): PublicBoard | null {
  * see a token in. A hidden thing is hidden in every payload or it is
  * not hidden.
  *
- * "Only" is the load-bearing word: an entity standing openly somewhere
- * on the same board has already been shown to the room, and taking its
- * name away would leave its own visible token nameless. So a placement
- * anyone can see counts as a reveal, and the ambush is the entity whose
- * every placement here is hidden.
+ * And not only while its own board is up (the audit, 2026-11-16). This
+ * used to read the ACTIVE board and nothing else, so blanking the table
+ * mid-fight, or putting a handout scene up, named every ambusher on
+ * every passive screen and took the names back when the fight's map
+ * returned. Hidden-ness is the Warden's act on a token, not a property
+ * of which picture is showing — so a hidden placement on ANY board
+ * veils, and the only thing that lifts it is a reveal.
+ *
+ * A reveal is a placement the room can SEE: an open token on the active
+ * board. An entity standing openly there has already been shown, and
+ * taking its name away would leave its own visible token nameless.
+ * Un-hiding the token, removing it, or clearing the fight all leave no
+ * hidden placement behind, so nothing is stranded veiled.
+ *
+ * The party is spared the off-board half. New tokens start hidden, so a
+ * Warden laying out next session's map would otherwise take the posse
+ * off its own badges and out of its own turn order — and who is in the
+ * party is not a secret from the party. A hidden party token on the
+ * ACTIVE board still veils, as it always has. Everyone else gets the
+ * fail-closed reading: the side is asked of the stored row, and a row
+ * that says nothing about itself is a foe (`sideOf`).
  */
-export function hiddenOnActiveBoard(session: Session): Set<string> {
-  const hidden = new Set<string>();
-  const boardId = session.activeBoardId();
-  if (!boardId) return hidden;
-  const state = session.campaign.boardState(boardId);
-  const placements = (state as { placements?: unknown })?.placements;
-  if (!Array.isArray(placements)) return hidden;
-  const open = new Set<string>();
-  for (const item of placements) {
-    if (!item || typeof item !== 'object') continue;
-    const { entityId, hidden: veiled } = item as { entityId?: unknown; hidden?: unknown };
-    if (typeof entityId !== 'string' || !entityId) continue;
-    (veiled ? hidden : open).add(entityId);
+export function hiddenFromTable(session: Session): Set<string> {
+  const activeId = session.activeBoardId();
+  const trades = tradeNames(session);
+  const hereHidden = new Set<string>();
+  const elsewhereHidden = new Set<string>();
+  const openHere = new Set<string>();
+  const openAnywhere = new Set<string>();
+  for (const { boardId, data } of session.campaign.boardStates()) {
+    const placements = (data as { placements?: unknown })?.placements;
+    if (!Array.isArray(placements)) continue;
+    const here = boardId === activeId;
+    for (const item of placements) {
+      if (!item || typeof item !== 'object') continue;
+      const { entityId, hidden: veiled } = item as { entityId?: unknown; hidden?: unknown };
+      if (typeof entityId !== 'string' || !entityId) continue;
+      if (veiled) (here ? hereHidden : elsewhereHidden).add(entityId);
+      else {
+        openAnywhere.add(entityId);
+        if (here) openHere.add(entityId);
+      }
+    }
   }
-  for (const id of open) hidden.delete(id);
+  const hidden = new Set<string>(hereHidden);
+  for (const id of elsewhereHidden) {
+    const entity = session.campaign.get(id);
+    if (entity && sideOf(entity, trades, FURNITURE) === 'party') continue;
+    hidden.add(id);
+  }
+  // The mark is only read for the roster's own rows — it is a fight
+  // being deployed, and a fight's foes are children of the root.
+  for (const entity of session.campaign.children(session.campaign.root().id)) {
+    if (!hasEntry(entity.lists?.[HIDDEN_LIST] ?? [], HIDDEN_MARK)) continue;
+    if (!openAnywhere.has(entity.id)) hidden.add(entity.id);
+  }
+  for (const id of openHere) hidden.delete(id);
   return hidden;
 }
 
@@ -381,7 +434,7 @@ export function hiddenOnActiveBoard(session: Session): Set<string> {
 export function publicRoster(session: Session): PublicEntity[] {
   const kinds = kindsOf(session);
   const trades = tradeNames(session);
-  const hidden = hiddenOnActiveBoard(session);
+  const hidden = hiddenFromTable(session);
   return session.campaign
     .children(session.campaign.root().id)
     .filter((entity) => sideOf(entity, trades, FURNITURE) !== 'none')
@@ -422,7 +475,7 @@ export function publicTurn(turn: TurnState, hidden: ReadonlySet<string>): TurnSt
 
 /** The same turn, asked of the session — one call for the two doors. */
 export function publicTurnState(session: Session): TurnState {
-  return publicTurn(session.turnState(), hiddenOnActiveBoard(session));
+  return publicTurn(session.turnState(), hiddenFromTable(session));
 }
 
 /**

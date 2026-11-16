@@ -36,6 +36,7 @@ import {
 } from '../core/store.ts';
 import type { Ref } from '../core/entity.ts';
 import { applyTurnOp, toTurnState, type TurnOp, type TurnState } from './turn.ts';
+import { HIDDEN_LIST, HIDDEN_MARK } from './public.ts';
 // The window an undo walks — the same bound the rows of one deploy are
 // collected under, because they are collected for exactly that walk.
 import { UNDO_WINDOW } from './undo.ts';
@@ -638,6 +639,7 @@ export class Session {
     // Where each one starts, when the recipe said — collected as the
     // foes stamp so a token lands on the instance, not the template.
     const standing: Deploying[] = [];
+    let parked = 0;
     for (const foe of enc.foes ?? []) {
       if (!foe.templateId) continue;
       // A foe whose template is missing is REPORTED BY NAME. It used to
@@ -665,6 +667,19 @@ export class Session {
             u: foe.u,
             v: foe.v,
             ...(foe.hidden === true ? { hidden: true } : {}),
+          });
+        } else if (foe.hidden === true) {
+          // Waiting out of sight with nowhere written down to wait. The
+          // hiding lives on a token, so it gets one — a hidden token in a
+          // row across the middle, where the Warden will see it dimmed
+          // and can drag it or reveal it like any other. Without one the
+          // recipe's "hidden" fell on the floor and the ambusher was
+          // named on every passive screen (the audit, 2026-11-16).
+          standing.push({
+            entityId: entity.id,
+            u: Math.min(0.95, 0.5 + 0.04 * parked++),
+            v: 0.5,
+            hidden: true,
           });
         }
       }
@@ -723,6 +738,17 @@ export class Session {
         : boardId
           ? `no board ${boardId} on this host — ${standing.length} foe(s) joined the order with nowhere to stand`
           : `no active board — ${standing.length} foe(s) joined the order with nowhere to stand`;
+      // No board means no token to hide behind, so the hiding falls back
+      // to a mark on the foe itself (`HIDDEN_MARK`) — fail closed, and
+      // said out loud so the Warden knows how it ends: the first open
+      // token on any board reveals it, or remove the mark.
+      const veiled = standing.filter((s) => s.hidden);
+      for (const { entityId } of veiled) {
+        this.writeEntry(entityId, { list: HIDDEN_LIST, name: HIDDEN_MARK }, actor);
+      }
+      if (veiled.length) {
+        out.unplaced += ` — ${veiled.length} of them waiting out of sight, kept off the table's screens until you place their token in the open`;
+      }
     } else if (standing.length && board) {
       const { data, placed } = withDeployed(this.campaign.boardState(board), standing);
       if (placed) this.putBoardState(board, data, actor);

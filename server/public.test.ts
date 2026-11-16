@@ -772,6 +772,230 @@ describe('GET /api/public', () => {
     expect(after.body.turn.turn).toBe(0);
   });
 
+  // -- the ambush, whatever the table is showing (the audit, 2026-11-16) --
+  //
+  // Hidden-ness used to be read off the ACTIVE board alone, so blanking
+  // the table mid-fight, or putting a handout scene up, named every
+  // ambusher on every passive screen. And a recipe that hid a foe it
+  // gave no position lost the hiding entirely.
+
+  describe('a hidden foe stays hidden off its own board', () => {
+    let elsewhere: string;
+    const named = async () => {
+      const { body } = await call('GET', '/api/public', { display: await passiveScreen() });
+      return {
+        roster: body.roster.map((e: any) => e.id) as string[],
+        turn: body.turn.order.map((e: any) => e.entityId) as string[],
+        json: JSON.stringify(body),
+        pointer: body.turn.turn as number | null,
+      };
+    };
+
+    beforeEach(async () => {
+      elsewhere = session.shelf.putBoard({ key: 'maps/saloon.png', name: 'The Saloon' }).id;
+      await call('PUT', '/api/campaign/refs', { key: true, body: { board: boardId } });
+      session.turnOp({ op: 'add', entityId: barrett }, 'console');
+      session.turnOp({ op: 'add', entityId: watcher }, 'console');
+      session.putBoardState(
+        boardId,
+        {
+          placements: [
+            { id: 'plc_a', entityId: barrett, u: 0.1, v: 0.5 },
+            { id: 'plc_b', entityId: watcher, u: 0.8, v: 0.5, hidden: true },
+          ],
+        },
+        'console',
+      );
+    });
+
+    it('with the table blanked', async () => {
+      await call('PUT', '/api/campaign/refs', { key: true, body: { board: null } });
+      const seen = await named();
+      expect(seen.roster).toEqual([barrett]);
+      expect(seen.turn).toEqual([barrett]);
+      expect(seen.json).not.toContain('Watcher');
+      expect(seen.json).not.toContain(watcher);
+    });
+
+    it('with a different board up', async () => {
+      await call('PUT', '/api/campaign/refs', { key: true, body: { board: elsewhere } });
+      const seen = await named();
+      expect(seen.roster).toEqual([barrett]);
+      expect(seen.turn).toEqual([barrett]);
+      expect(seen.json).not.toContain('Watcher');
+    });
+
+    it('and the pointer never lands on it while it acts off-board', async () => {
+      session.turnOp({ op: 'next' }, 'console');
+      session.turnOp({ op: 'next' }, 'console'); // the watcher is acting
+      await call('PUT', '/api/campaign/refs', { key: true, body: { board: null } });
+      const seen = await named();
+      expect(seen.turn).toEqual([barrett]);
+      expect(seen.pointer).toBe(0);
+    });
+
+    it('revealing the token publishes the name, on every board after', async () => {
+      session.putBoardState(
+        boardId,
+        {
+          placements: [
+            { id: 'plc_a', entityId: barrett, u: 0.1, v: 0.5 },
+            { id: 'plc_b', entityId: watcher, u: 0.8, v: 0.5 },
+          ],
+        },
+        'console',
+      );
+      expect((await named()).roster).toContain(watcher);
+      await call('PUT', '/api/campaign/refs', { key: true, body: { board: null } });
+      expect((await named()).roster).toContain(watcher);
+      expect((await named()).turn).toEqual([barrett, watcher]);
+    });
+
+    it('removing the token, or clearing the fight, strands nothing', async () => {
+      session.putBoardState(
+        boardId,
+        { placements: [{ id: 'plc_a', entityId: barrett, u: 0.1, v: 0.5 }] },
+        'console',
+      );
+      await call('PUT', '/api/campaign/refs', { key: true, body: { board: null } });
+      expect((await named()).roster).toContain(watcher);
+
+      // Delete the entity outright: its tokens go with it everywhere.
+      session.putBoardState(
+        boardId,
+        { placements: [{ id: 'plc_b', entityId: watcher, u: 0.8, v: 0.5, hidden: true }] },
+        'console',
+      );
+      session.remove(watcher, 'console');
+      expect((await named()).json).not.toContain(watcher);
+    });
+
+    it('an open token on the board that IS up still reveals', async () => {
+      session.putBoardState(
+        elsewhere,
+        { placements: [{ id: 'plc_c', entityId: watcher, u: 0.5, v: 0.5 }] },
+        'console',
+      );
+      await call('PUT', '/api/campaign/refs', { key: true, body: { board: elsewhere } });
+      expect((await named()).roster).toContain(watcher);
+      // …and only there: back on the fight's board it is lying in wait.
+      await call('PUT', '/api/campaign/refs', { key: true, body: { board: boardId } });
+      expect((await named()).roster).not.toContain(watcher);
+    });
+
+    it('an openly placed foe is untouched by any of it', async () => {
+      const open = session.create({ name: 'Mule Skinner', type: 'npc', lists: {} } as never, 'console').id;
+      session.putBoardState(
+        elsewhere,
+        { placements: [{ id: 'plc_d', entityId: open, u: 0.5, v: 0.5 }] },
+        'console',
+      );
+      for (const board of [boardId, elsewhere, null]) {
+        await call('PUT', '/api/campaign/refs', { key: true, body: { board } });
+        expect((await named()).roster).toContain(open);
+      }
+    });
+
+    it('a party member hidden on a prepped map keeps its seat in the room', async () => {
+      session.putBoardState(
+        elsewhere,
+        { placements: [{ id: 'plc_e', entityId: barrett, u: 0.5, v: 0.5, hidden: true }] },
+        'console',
+      );
+      const seen = await named();
+      expect(seen.roster).toContain(barrett);
+      expect(seen.turn).toContain(barrett);
+    });
+
+    it('the console keeps the truth throughout', async () => {
+      await call('PUT', '/api/campaign/refs', { key: true, body: { board: null } });
+      const roster = await call('GET', '/api/entities', { key: true });
+      expect(roster.body.map((e: any) => e.id)).toContain(watcher);
+      const turn = await call('GET', '/api/turn', { key: true });
+      expect(turn.body.order.map((e: any) => e.entityId)).toEqual([barrett, watcher]);
+    });
+  });
+
+  describe('a foe the recipe hid with nowhere written down to stand', () => {
+    const stage = () =>
+      session.campaign.putTemplate(
+        'encounters',
+        {
+          id: 'enc_reeds',
+          name: 'The Reeds',
+          foes: [
+            { templateId: 'npc_watcher', name: 'Lurker', hidden: true },
+            { templateId: 'npc_watcher', name: 'Sentry' },
+          ],
+        },
+        'console',
+      );
+    const watching = async () =>
+      (await call('GET', '/api/public', { display: await passiveScreen() })).body;
+
+    it('deploys as a hidden token on the board that is up, and the token reveals it', async () => {
+      await call('PUT', '/api/campaign/refs', { key: true, body: { board: boardId } });
+      stage();
+      const out = session.deployEncounter('enc_reeds', 'console')!;
+      const [lurker, sentry] = out.deployed.map((e) => e.id);
+      expect(out.placed).toBe(1);
+
+      let body = await watching();
+      expect(body.roster.map((e: any) => e.id)).not.toContain(lurker);
+      expect(body.turn.order.map((e: any) => e.entityId)).not.toContain(lurker);
+      expect(JSON.stringify(body)).not.toContain('Lurker');
+      // The positionless open foe joins the order the way it always did.
+      expect(body.roster.map((e: any) => e.id)).toContain(sentry);
+
+      // …and stays hidden when the table goes blank.
+      await call('PUT', '/api/campaign/refs', { key: true, body: { board: null } });
+      expect(JSON.stringify(await watching())).not.toContain('Lurker');
+
+      // The Warden reveals it the ordinary way: un-hide the token.
+      const state = session.campaign.boardState(boardId) as { placements: any[] };
+      const token = state.placements.find((p) => p.entityId === lurker);
+      expect(token.hidden).toBe(true);
+      session.putBoardState(
+        boardId,
+        { ...state, placements: state.placements.map((p) => ({ ...p, hidden: false })) },
+        'console',
+      );
+      body = await watching();
+      expect(body.roster.map((e: any) => e.id)).toContain(lurker);
+    });
+
+    it('with no board at all, a mark keeps it off the glass until a token shows it', async () => {
+      stage();
+      const out = session.deployEncounter('enc_reeds', 'console')!;
+      const [lurker] = out.deployed.map((e) => e.id);
+      expect(out.unplaced).toMatch(/out of sight/);
+
+      let body = await watching();
+      expect(body.roster.map((e: any) => e.id)).not.toContain(lurker);
+      expect(body.turn.order.map((e: any) => e.entityId)).not.toContain(lurker);
+      expect(JSON.stringify(body)).not.toContain('Lurker');
+      // The console sees it, mark and all.
+      const dm = await call('GET', '/api/turn', { key: true });
+      expect(dm.body.order.map((e: any) => e.entityId)).toContain(lurker);
+
+      // A token in the open, on any board, is the reveal — and it holds
+      // after that board comes down.
+      session.putBoardState(
+        boardId,
+        { placements: [{ id: 'plc_l', entityId: lurker, u: 0.5, v: 0.5 }] },
+        'console',
+      );
+      body = await watching();
+      expect(body.roster.map((e: any) => e.id)).toContain(lurker);
+
+      // Or the mark comes off through the ordinary entry door.
+      session.putBoardState(boardId, { placements: [] }, 'console');
+      expect((await watching()).roster.map((e: any) => e.id)).not.toContain(lurker);
+      session.writeEntry(lurker, { list: 'meta', name: 'hidden', remove: true }, 'console');
+      expect((await watching()).roster.map((e: any) => e.id)).toContain(lurker);
+    });
+  });
+
   it('a half-made character is prep, and prep is nobody’s but the DM’s', async () => {
     const draft = session.create(
       { name: 'Unnamed', type: 'pc', lists: { meta: [{ name: 'draft' }] } } as never,
