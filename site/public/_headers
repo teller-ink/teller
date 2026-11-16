@@ -1,11 +1,19 @@
 # The brochure loads nothing from anyone else, and the policy says so:
 # no inline script or style, no third-party origin, no framing.
+#
+# `no-transform` is the other half of that promise. The edge in front of
+# this page will add its own analytics script to HTML it is allowed to
+# rewrite — the policy blocks the script from loading, but a page that
+# says "nothing from anyone else" should not be handed out with someone
+# else's tag in it. Fonts opt back out of the short cache below.
 /*
   Content-Security-Policy: default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: no-referrer
   Cross-Origin-Opener-Policy: same-origin
+  Cache-Control: public, max-age=0, must-revalidate, no-transform
 
 /fonts/*
-  Cache-Control: public, max-age=2592000
+  ! Cache-Control
+  Cache-Control: public, max-age=2592000, no-transform
