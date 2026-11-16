@@ -197,6 +197,52 @@ export function api<T = unknown>(path: string, init?: Init): Promise<T> {
   return out;
 }
 
+// ---- a key the host no longer knows ------------------------------------
+//
+// The key in this browser's storage was trusted for as long as it was
+// there: `unlocked` was "is there a key", never "does the host accept
+// it". So after `teller key --reset`, or with a different data folder
+// served on the same port (a campaign on a stick has its own key), the
+// console drew itself over a host that answered 401 to everything —
+// an empty roster that looked like an empty campaign, and after a
+// reload a blank page with no unlock field. The only way out was
+// clearing site data by hand (the 2026-11-16 audit's second pass).
+//
+// A 401 to a request that carried the key is a SUSPICION, not a
+// verdict: before the key is dropped it is asked once, against the same
+// door the unlock form uses. A host that is merely down answers nothing
+// and proves nothing, and a GM is never logged out mid-fight on a
+// hiccup.
+
+const refusedListeners = new Set<() => void>();
+
+/** Hear when the stored key has been refused and dropped. */
+export function onKeyRefused(fn: () => void): () => void {
+  refusedListeners.add(fn);
+  return () => {
+    refusedListeners.delete(fn);
+  };
+}
+
+let probing: Promise<void> | null = null;
+
+function suspectKey(sent: string): void {
+  if (probing || stored.key !== sent) return;
+  probing = fetch('/api/campaign', { headers: { 'x-teller-key': sent } })
+    .then((res) => {
+      if (res.status !== 401 || stored.key !== sent) return;
+      stored.key = null;
+      forgetSlips();
+      for (const fn of refusedListeners) fn();
+    })
+    .catch(() => {
+      // No answer is not a refusal.
+    })
+    .finally(() => {
+      probing = null;
+    });
+}
+
 async function send<T>(path: string, init?: Init): Promise<T> {
   const headers: Record<string, string> = {};
   if (stored.key) headers['x-teller-key'] = stored.key;
@@ -235,6 +281,7 @@ async function send<T>(path: string, init?: Init): Promise<T> {
           ? (body as { error: string }).error
           : res.statusText,
       );
+      if (res.status === 401 && headers['x-teller-key']) suspectKey(headers['x-teller-key']);
       if (told) tellTrouble({ kind: 'failed', message: error.message, at: Date.now() });
       throw error;
     }

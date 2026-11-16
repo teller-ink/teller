@@ -12,6 +12,7 @@ import {
   reportViewport,
   stored,
   forgetSlips,
+  onKeyRefused,
   type DisplayInfo,
   type Pane,
 } from './lib/api.ts';
@@ -70,7 +71,7 @@ function IdentifyFlash({ me }: { me?: DisplayInfo }) {
 
 // ---- key gate ----------------------------------------------------------
 
-function KeyGate({ onUnlock }: { onUnlock: () => void }) {
+function KeyGate({ onUnlock, refused = false }: { onUnlock: () => void; refused?: boolean }) {
   const [value, setValue] = useState('');
   const [bad, setBad] = useState(false);
   return (
@@ -103,6 +104,16 @@ function KeyGate({ onUnlock }: { onUnlock: () => void }) {
           onChange={(e) => setValue(e.target.value)}
           placeholder="DM key"
         />
+        {/* Said once, when a key this browser was holding stopped
+            working — so the gate reads as "the key changed", not as a
+            console that forgot who it was. */}
+        {refused && !bad && (
+          <p className="text-sm text-amber-400">
+            this host doesn&apos;t know the key this browser was holding — it was reset, or this
+            is a different table&apos;s folder. <code className="font-mono">teller key</code> prints
+            the one it wants.
+          </p>
+        )}
         {bad && <p className="text-sm text-red-500">that's not it</p>}
         <button className={btnPrimary} type="submit">
           unlock
@@ -496,6 +507,17 @@ function PairScreen() {
 export default function App() {
   const hash = useHash();
   const [unlocked, setUnlocked] = useState(() => Boolean(stored.key));
+  // A key is believed until the host refuses it (`onKeyRefused`), and
+  // then the gate comes back and says why.
+  const [refused, setRefused] = useState(false);
+  useEffect(
+    () =>
+      onKeyRefused(() => {
+        setRefused(true);
+        setUnlocked(false);
+      }),
+    [],
+  );
   // The pairing screen asks the same question on the same mount; they
   // share one request (`hello()`), so a fresh screen mints ONE display.
   const me = useLive(() => hello(), [], { on: ['displays', 'assign'] });
@@ -529,7 +551,16 @@ export default function App() {
     params.has('board');
 
   let view: React.ReactNode;
-  if (wantsConsole && !unlocked) view = <KeyGate onUnlock={() => setUnlocked(true)} />;
+  if (wantsConsole && !unlocked)
+    view = (
+      <KeyGate
+        refused={refused}
+        onUnlock={() => {
+          setRefused(false);
+          setUnlocked(true);
+        }}
+      />
+    );
   else if (params.has('panel'))
     view = (
       <PanelRoute
