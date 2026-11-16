@@ -886,21 +886,47 @@ export function useLive<T>(
       timer = null;
       load();
     };
-    const off = onNudge((what) => {
-      const want = wantRef.current;
-      if (want && !ALWAYS.includes(what) && !wanted(want, what)) return;
+    // A nudge that lands while somebody is TYPING is owed, not dropped.
+    // It used to be dropped: the refetch was skipped so a re-render
+    // couldn't disturb the field, and nothing ever paid it back. So a
+    // Warden who typed a campaign's name and pressed Enter — focus still
+    // in the field — never heard that the campaign had started, and the
+    // console sat on the picker until a reload (found walking the
+    // stranger's path, 2026-11-16). With numbers typable everywhere it
+    // would also have left whatever screen you were typing on quietly
+    // stale. It waits until the field is left, and the words that change
+    // what the whole screen IS (`ALWAYS`) don't wait at all.
+    let owed = false;
+    const typing = () => {
       const active = document.activeElement;
-      if (
-        active instanceof HTMLInputElement ||
-        active instanceof HTMLTextAreaElement
-      )
-        return;
+      return active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
+    };
+    const soon = () => {
       if (timer) return;
       timer = setTimeout(() => {
         timer = null;
         load();
       }, COALESCE_MS);
+    };
+    const off = onNudge((what) => {
+      const want = wantRef.current;
+      const always = ALWAYS.includes(what);
+      if (want && !always && !wanted(want, what)) return;
+      if (typing() && !always) {
+        owed = true;
+        return;
+      }
+      soon();
     });
+    // `focusout` fires before the focus has moved; ask on the next tick,
+    // when `activeElement` is where it ended up.
+    const settle = () =>
+      setTimeout(() => {
+        if (!owed || typing()) return;
+        owed = false;
+        soon();
+      }, 0);
+    document.addEventListener('focusout', settle);
     // A hidden tab's TIMERS are throttled while its socket is not (the
     // same asymmetry the leader heartbeat above is built around), so a
     // coalescing window can outlast the tab being hidden. Whatever is
@@ -908,6 +934,7 @@ export function useLive<T>(
     document.addEventListener('visibilitychange', flush);
     return () => {
       document.removeEventListener('visibilitychange', flush);
+      document.removeEventListener('focusout', settle);
       if (timer) clearTimeout(timer);
       off();
     };
