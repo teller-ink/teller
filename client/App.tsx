@@ -118,6 +118,13 @@ function KeyGate({ onUnlock, refused = false }: { onUnlock: () => void; refused?
         <button className={btnPrimary} type="submit">
           unlock
         </button>
+        {/* Where the key IS — the gate asked for one and never said. A
+            newcomer has just watched the host print it; this is the
+            line that connects the two. */}
+        <p className="text-[11px] leading-snug text-stone-500">
+          the host printed it when it started. <code className="font-mono">teller key</code> shows
+          it again.
+        </p>
       </form>
     </div>
   );

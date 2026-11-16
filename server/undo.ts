@@ -315,7 +315,14 @@ function whoDid(session: Session, actor: string): string {
     return held.startsWith('ent_') ? 'a seat whose character is gone' : `the seat ${held}`;
   }
   if (actor.startsWith('display:')) return `the ${actor.slice('display:'.length)} screen`;
-  if (actor.startsWith('plugin:')) return `the ${actor.slice('plugin:'.length)} plugin`;
+  if (actor.startsWith('plugin:')) {
+    // By the name on its manifest, when it is still on the shelf — "the
+    // plg_57012c4ab8e3 plugin" is the raw id this function exists not to
+    // print. A plugin that has since gone keeps the only word there is.
+    const id = actor.slice('plugin:'.length);
+    const named = session.plugins.find((p) => p.manifest.id === id)?.manifest.name;
+    return named ? `${named} (a plugin)` : `the ${id} plugin`;
+  }
   // A name the console gave itself in the request body is already words.
   return actor;
 }

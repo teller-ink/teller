@@ -126,7 +126,7 @@ function describe(e: EventRow, names: Map<string, string>): string {
     // secret is no more exposed here than on the screen they typed it
     // on — and its recipients are counted, never listed by id.
     case 'handout.shown':
-      return `showed the table — ${String(p.name ?? p.id ?? 'a handout')}`;
+      return `showed the room — ${String(p.name ?? p.id ?? 'a handout')}`;
     case 'handout.cleared':
       return `the frame was cleared`;
     case 'note.passed': {
