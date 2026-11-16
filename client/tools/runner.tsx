@@ -408,7 +408,10 @@ function RunnerTool() {
     // to the turn that armed it, and carrying one forward is how a
     // creature ends up swinging somebody else's attack.
     if (o.op === 'next' || o.op === 'prev' || o.op === 'end') setArmed(undefined);
-    return api('/api/turn', { body: o }).then(turn.reload);
+    // A failed press is already said out loud at the seam every write
+    // passes through (`api`); swallowing it here only keeps a second,
+    // unhandled copy out of the console.
+    return api('/api/turn', { body: o }).then(turn.reload, () => {});
   };
 
   // The shortcut reaches the latest `op` and order through a ref, so the

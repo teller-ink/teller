@@ -38,6 +38,18 @@ describe('the op machine', () => {
     expect([s.turn, s.round]).toEqual([null, 1]);
   });
 
+  // Audit 2026-11-16: the phase outlived the rolls — the banner read
+  // "taking rolls" all fight, and a seat could still re-sort the order.
+  it('starting the fight is the rolls being over', () => {
+    let s = applyTurnOp(three(), { op: 'rolling', on: true });
+    expect(s.rolling).toBe(true);
+    s = applyTurnOp(s, { op: 'next' });
+    expect([s.turn, s.rolling]).toEqual([0, undefined]);
+    // …and walking on doesn't bring it back.
+    s = applyTurnOp(s, { op: 'next' });
+    expect(s.rolling).toBeUndefined();
+  });
+
   it('scores sort as they arrive; the unrolled sink and keep their order', () => {
     let s = applyTurnOp(three(), { op: 'rolling', on: true });
     expect(s.order.every((e) => e.score === null)).toBe(true);

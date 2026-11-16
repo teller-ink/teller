@@ -99,6 +99,24 @@ function useEntity(id: string) {
   return useOptimistic(entity.data);
 }
 
+/** Does this panel already draw an entity's every list? True when a
+ * `floor` or a `rest` block is anywhere in its arrangement, however
+ * deeply a `columns` block has tucked it. */
+function drawsEverything(panel: PanelDef): boolean {
+  const has = (blocks: unknown): boolean =>
+    Array.isArray(blocks) &&
+    blocks.some((b) =>
+      Array.isArray(b)
+        ? has(b)
+        : !!b &&
+          typeof b === 'object' &&
+          (['floor', 'rest'].includes(String((b as { block?: unknown }).block)) ||
+            has((b as { columns?: unknown }).columns) ||
+            has((b as { blocks?: unknown }).blocks)),
+    );
+  return has(panel.held) || has(panel.mounted);
+}
+
 /** The list a table's counters live in — the same one the tile's bar and
  * the runner's steppers already read. */
 const LEDGER_LIST = 'resources';
@@ -366,8 +384,12 @@ export function EntitySheet({
   // The counters the sheet's own plates leave for other screens — asked
   // with the SAME question the sheet asks (`shaped`), so the two can't
   // drift into both drawing Health or neither drawing Aces.
+  //
+  // …unless the sheet draws everything already. A floor or a `rest`
+  // block IS the whole ledger (Starter's sheet is one), and drawing the
+  // rest of it underneath would show every counter twice.
   const unshaped =
-    e && ctx
+    e && ctx && !drawsEverything(panel)
       ? (e.lists[LEDGER_LIST] ?? []).filter((entry) => !shaped(ctx, e, entry)).map((entry) => entry.name)
       : [];
 

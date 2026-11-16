@@ -314,8 +314,13 @@ function HandoutsTool() {
                   className={btn}
                   disabled={busy || activeId === h.id}
                   onClick={() => guard(showHandout(h.id), reloadActive)}
+                  // "the table" is a ROLE here (rule 6: the ground, and
+                  // nothing else), and this never reached it — a handout
+                  // goes to the frame and the board. The label said a
+                  // thing the button didn't do.
+                  title="puts it on the art frame and the board"
                 >
-                  show the table
+                  show the room
                 </button>
                 <button
                   className={btn}

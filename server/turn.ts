@@ -196,6 +196,14 @@ export function applyTurnOp(state: TurnState, op: TurnOp): TurnState {
       if (s.turn === null) {
         s.turn = 0;
         s.round = 1;
+        // The fight starting is the rolls being over. Left on, the
+        // banner said "taking rolls" all fight, and a seat could still
+        // send a score that re-sorted an order already in play (the
+        // 2026-11-16 audit found both). A late roll is the Warden's to
+        // type in — the DM may always score — so nothing is locked
+        // (rule 1); reopening the phase would wipe every score, which
+        // is not what anybody late wants.
+        delete s.rolling;
       } else if (s.turn + 1 >= s.order.length) {
         s.turn = 0;
         s.round += 1;
