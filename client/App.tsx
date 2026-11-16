@@ -82,7 +82,12 @@ function KeyGate({ onUnlock }: { onUnlock: () => void }) {
           stored.key = value.trim();
           forgetSlips();
           api('/api/campaign')
-            .then(() => onUnlock())
+            .then(() => {
+              // The wire was being refused until now; open it under the
+              // key at once rather than at the end of its backoff.
+              resetStream();
+              onUnlock();
+            })
             .catch(() => {
               stored.key = null;
               setBad(true);
@@ -435,6 +440,24 @@ function PairScreen() {
         <p className="text-sm text-stone-500">
           read this code to the DM — they'll adopt it from the console
         </p>
+        {/* The way in for whoever is RUNNING this table. The address the
+            host prints opens here, and the console's door (`#console`)
+            was mentioned nowhere but the terminal, so the one person who
+            had to find it was the newcomer least likely to (found
+            2026-11-16). One quiet line, under the code and dimmer than
+            it, so a TV across the room still reads as just the code.
+            Not a button, and not a breach of "passive surfaces never
+            grow buttons": that law is about ASSIGNED passive glass, and
+            a screen still showing its code has no role yet. */}
+        <p className="mt-6 text-xs text-stone-600">
+          running this table?{' '}
+          <a
+            href="/#console"
+            className="text-stone-500 underline decoration-stone-700 underline-offset-2 transition-colors hover:text-stone-300"
+          >
+            open the console
+          </a>
+        </p>
       </div>
     );
   const params = (display.params ?? {}) as Record<string, unknown>;
@@ -457,6 +480,10 @@ function PairScreen() {
     return <BadgeView entityId={params.entityId} />;
   return (
     <div className="flex min-h-dvh items-center justify-center">
+      {/* Waiting for a job is still glass in the room, and wears the
+          same wire every other role does — a blank screen that went
+          quiet should say so, and one polling should say that too. */}
+      <ConnectionHint />
       <p className="text-sm text-stone-500">
         adopted as '{display.role ?? 'blank'}' — waiting for a job
       </p>

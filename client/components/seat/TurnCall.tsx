@@ -21,7 +21,7 @@
 // most of the time — the first screen's economy is the design.
 
 import { useState } from 'react';
-import { turnState, type TurnEntry } from '../../lib/api.ts';
+import { turnState, type TurnEntry, type TurnState } from '../../lib/api.ts';
 import { useLive } from '../../lib/use-session.ts';
 // Type-only, so the pair `seams.tsx` ↔ this file makes no runtime cycle:
 // the seam contract is declared beside the other four, and the floor
@@ -38,6 +38,18 @@ export type TurnCall = {
   rolling: boolean;
   reload: () => void;
 };
+
+/**
+ * Is the order still ASKING for rolls? The host's flag says the phase
+ * was opened; it stays set until the DM presses "done", and nothing
+ * presses it for them — so a seat that rolled wore "initiative 14" in
+ * its bar for the whole fight (found 2026-11-16). Opening the phase
+ * clears the turn (`server/turn.ts`), so a fight that has started is
+ * one whose rolls are in, whatever the flag still says.
+ */
+export function rollsOpen(state: Pick<TurnState, 'rolling' | 'turn'> | undefined): boolean {
+  return Boolean(state?.rolling) && (state?.turn ?? null) === null;
+}
 
 /** Where this seat stands in the order. Refetches on every nudge, and
  *  `useLive` holds off while a field has focus — which is what keeps a
@@ -57,7 +69,7 @@ export function useTurnCall(entityId: string): TurnCall {
     // On deck is the quieter half and it only ever means "after this
     // one" — never shown alongside your own turn, which outranks it.
     onDeck: Boolean(!up && entry && next && next.id === entry.id),
-    rolling: Boolean(state?.rolling),
+    rolling: rollsOpen(state),
     reload: turn.reload,
   };
 }

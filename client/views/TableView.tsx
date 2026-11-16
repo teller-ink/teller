@@ -19,7 +19,6 @@
 
 import { useEffect, useId, useState } from 'react';
 import {
-  fileUrl,
   publicSnapshot,
   type PublicBoard,
   type PublicEntity,
@@ -27,7 +26,7 @@ import {
 } from '../lib/api.ts';
 import { Zones } from '../components/board/Zones.tsx';
 import { rasterOf, type Placement, type Zone } from '../components/board/model.ts';
-import { DECLARED, PUBLIC, useLive } from '../lib/use-session.ts';
+import { DECLARED, PUBLIC, useFileUrl, useLive } from '../lib/use-session.ts';
 import { useWakeLock } from '../lib/use-wake-lock.ts';
 import { ConnectionHint } from '../components/ConnectionHint.tsx';
 import { chipsOf, kinds, type KindDef } from './passive.ts';
@@ -184,28 +183,11 @@ function FogLayer({
 
 // ---- the board's bytes -------------------------------------------------
 
-/** A ticketed url for the active board's image, refetched when it
- *  changes. An `<img>` can't send headers, so the proof rides in the
- *  query string (rule 7's second subject). */
-function useBoardImage(key: string | null): string | null {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!key) {
-      setUrl(null);
-      return;
-    }
-    let live = true;
-    fileUrl(key)
-      .then((u) => {
-        if (live) setUrl(u);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [key]);
-  return url;
-}
+// A ticketed url for the active board's image, refetched when it
+// changes. An `<img>` can't send headers, so the proof rides in the
+// query string (rule 7's second subject) — and a table left on for a
+// weekend outlives that proof, which is what `useFileUrl`'s `onError`
+// is for.
 
 // ---- the view ----------------------------------------------------------
 
@@ -231,7 +213,7 @@ export function TableView({
 
   const active: PublicBoard | null = snapshot.data?.board ?? null;
   const mapKey = active?.board.key ?? null;
-  const mapUrl = useBoardImage(mapKey);
+  const { url: mapUrl, onError: mapRefused } = useFileUrl(mapKey);
 
   // Natural dimensions belong to the current image only.
   useEffect(() => setNat(null), [mapKey]);
@@ -323,6 +305,7 @@ export function TableView({
         alt=""
         ref={measure}
         onLoad={(e) => measure(e.currentTarget)}
+        onError={mapRefused}
         className="absolute max-w-none"
         style={
           rect && nat

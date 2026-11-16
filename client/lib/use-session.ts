@@ -48,7 +48,16 @@
 // When a holder closes, the longest-waiting poller takes its place.
 
 import { useEffect, useRef, useState } from 'react';
-import { displaySlot, forgetSlips, getSlips, stored } from './api.ts';
+import {
+  ApiError,
+  displaySlot,
+  fileUrl,
+  forgetSlips,
+  getSlips,
+  heard,
+  refused,
+  stored,
+} from './api.ts';
 import { streamOrPoll, type Claim } from './stream-budget.ts';
 
 type Listener = (what: string) => void;
@@ -110,6 +119,8 @@ let pooling = false;
 let mode: 'idle' | 'stream' | 'poll' = 'idle';
 /** This slot's place in the browser-wide queue. Null when not leading. */
 let claimed: number | null = null;
+/** Closed or frozen (`leave`): stand for nothing, stamp nothing. */
+let gone = false;
 let polling: ReturnType<typeof setTimeout> | null = null;
 let cursor: string | null = null;
 /** Which polling loop is current; an answer from an older one is dropped. */
@@ -159,6 +170,8 @@ function canPool(): boolean {
 const first = () => scope() === 'main' && Boolean(stored.key);
 
 function stamp(): void {
+  // A tab on its way out must not put back the record it just removed.
+  if (gone) return;
   try {
     localStorage.setItem(
       leaderKey(),
@@ -224,6 +237,9 @@ function otherClaims(): Claim[] {
 
 /** Hand one nudge to this tab's subscribers. */
 function deliver(what: string): void {
+  // Whatever the word, a read that left before it may now be stale —
+  // the door must not hand its answer to anyone asking after (`api.ts`).
+  heard();
   if (what === 'identify') {
     for (const fn of identifyListeners) fn();
     return;
@@ -262,7 +278,9 @@ function open(): void {
         `/api/stream?handle=${encodeURIComponent(slips.handle)}&ticket=${encodeURIComponent(slips.ticket)}`,
       );
       source = es;
+      let opened = false;
       es.onopen = () => {
+        opened = true;
         delay = FIRST_MS;
         tellStatus('live');
         // Coming back from a drop, nobody knows what was missed while
@@ -286,6 +304,13 @@ function open(): void {
         deliver(what);
       };
       es.onerror = () => {
+        // Refused before it ever opened is how an EXPIRED ticket looks
+        // from here — an EventSource is never told the status. If the
+        // slips are old enough to be the reason they're dropped, and the
+        // retry below (same backoff as any drop) asks for fresh ones.
+        // A screen left on past the ticket's twelve hours used to retry
+        // last week's ticket forever.
+        if (!opened) refused();
         wasDown = true;
         tellStatus('down');
         es.close();
@@ -294,9 +319,16 @@ function open(): void {
         schedule();
       };
     })
-    .catch(() => {
+    .catch((err: unknown) => {
       opening = false;
-      wasDown = true;
+      // Not allowed to listen YET — a screen still showing its code, a
+      // console before its key. Nothing was missed by not hearing a
+      // stream this screen was never entitled to, so this is no reason
+      // for a `sync` once it is: counting it as a drop is what made
+      // unlocking the console fetch its whole bootstrap twice.
+      if (!(err instanceof ApiError && (err.status === 401 || err.status === 403))) {
+        wasDown = true;
+      }
       tellStatus('down');
       schedule();
     });
@@ -424,6 +456,7 @@ function follow(): void {
  * it with nobody coordinating.
  */
 function elect(): void {
+  if (gone) return;
   const current = readLeader();
   if (current && current.id === TAB) {
     lead();
@@ -439,7 +472,7 @@ function elect(): void {
   stamp();
   setTimeout(
     () => {
-      if (!alive()) return;
+      if (!alive() || gone) return;
       if (readLeader()?.id === TAB) lead();
       else follow();
     },
@@ -448,7 +481,7 @@ function elect(): void {
 }
 
 function ensureStream(): void {
-  if (pooling || role === 'leader' || source || opening || retry) return;
+  if (gone || pooling || role === 'leader' || source || opening || retry) return;
   if (!canPool()) {
     role = 'direct';
     open();
@@ -492,19 +525,78 @@ function teardown(): void {
   hangUp();
 }
 
-// A closing tab abdicates on the way out, so succession takes one
-// election beat instead of waiting out the stale timer.
+/**
+ * This tab is going away, or going to sleep: let go of EVERYTHING now.
+ *
+ * Abdicating used to be all of it, and only the record went — the
+ * socket and the election timer lived on until the page actually died,
+ * and a timer firing in that gap could stamp the record straight back.
+ * A window holding one of the browser's four streams was then counted
+ * as holding it until its stamp went stale, and the slot waiting behind
+ * it polled for most of a minute and a quarter (seen 2026-11-16). Now
+ * the socket closes, the timer stops, the record goes and stays gone,
+ * and the next beat of whoever is waiting promotes them.
+ */
+function leave(): void {
+  gone = true;
+  if (watch) clearInterval(watch);
+  watch = null;
+  if (role === 'leader') abdicate();
+  hangUp();
+  channel?.close();
+  channel = null;
+  pooling = false;
+  role = 'direct';
+  mode = 'idle';
+  claimed = null;
+}
+
+/** Back from the back-forward cache, or thawed: stand for election again. */
+function back(): void {
+  if (!gone) return;
+  gone = false;
+  if (!alive()) return;
+  // Nothing was heard while frozen and nobody can vouch for what was
+  // said. The `sync` is paid now, because which wire this tab ends up
+  // on isn't decided for a beat and a follower opens nothing of its own
+  // to pay it later; and again by a stream or poll this tab ends up
+  // leading, for whatever was said while it was opening.
+  wasDown = true;
+  ensureStream();
+  deliver('sync');
+}
+
+// WHEN to let go, decided for the two kinds of glass that go dark:
+//
+// - A window CLOSED (or navigated away): `pagehide`. The record and the
+//   socket go in the same beat, which is the whole fix.
+// - A tab FROZEN by the browser — a phone pocketed, a background tab
+//   the engine decided to suspend: `freeze`, where the engine offers it
+//   (Chromium). A frozen tab hears nothing and relays nothing, so a
+//   stream it holds is a stream nobody is reading.
+//
+// Merely HIDDEN is deliberately not a moment. A hidden window on a DM's
+// laptop is still hearing every word and its screen is still somebody's
+// (the TV it is mirrored to, the console tab one click away); handing
+// its stream to a poller and taking it back on every tab switch would
+// cost both sides a `sync` each way for nothing. Hidden glass that
+// really goes quiet gets frozen, and frozen is covered above.
 if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', () => {
-    if (role === 'leader') abdicate();
+  window.addEventListener('pagehide', leave);
+  window.addEventListener('pageshow', (ev) => {
+    if (ev.persisted) back();
   });
+  document.addEventListener('freeze', leave);
+  document.addEventListener('resume', back);
 }
 
 /**
- * Tear the stream down and come back with fresh slips. The moment that
- * needs this is ADOPTION on a key-holding machine: before adoption the
- * slips bind the stream to the DM handle, and an identify aimed at the
- * screen's own handle would land nowhere until a reload.
+ * Tear the stream down and come back with fresh slips. The moments that
+ * need this are the two where a screen's identity changes under it:
+ * ADOPTION on a key-holding machine (before adoption the slips bind the
+ * stream to the DM handle, and an identify aimed at the screen's own
+ * handle would land nowhere until a reload), and UNLOCKING the console,
+ * whose stream until then was being refused for want of the key.
  *
  * The identity that changed is the whole screen's, so a follower can't
  * just fix itself — it asks the leader, whose socket carries the stale
@@ -516,7 +608,11 @@ export function resetStream(): void {
     return;
   }
   hangUp();
-  if (!alive()) return;
+  // Whatever backoff the refused identity had climbed to is not the new
+  // one's to wait out: a console unlocked after a minute at the key gate
+  // would otherwise sit up to thirty seconds without a stream.
+  delay = FIRST_MS;
+  if (!alive() || gone) return;
   // A polling slot asks under the new identity from a fresh cursor;
   // `hangUp` already dropped the old one, so the first answer is a gap.
   if (mode === 'poll') poll();
@@ -738,4 +834,45 @@ export function useLive<T>(
   }, deps);
 
   return { data, error, reload: load };
+}
+
+/**
+ * A ticketed url for bytes in the data dir, and what to do when the
+ * picture is refused.
+ *
+ * An <img> can't send headers, so its proof rides in the url — and that
+ * proof expires (`getSlips`). The url is minted fresh whenever the path
+ * changes; `onError` is for the one the browser couldn't load: if the
+ * slips could be to blame they're forgotten and the url is minted again,
+ * once. A picture that fails on brand-new slips is genuinely not there,
+ * and stays a broken picture rather than a loop of ticket requests.
+ */
+export function useFileUrl(path: string | null | undefined): {
+  url: string | undefined;
+  onError: () => void;
+} {
+  const [url, setUrl] = useState<string | undefined>(undefined);
+  const [again, setAgain] = useState(0);
+  useEffect(() => {
+    if (!path) {
+      setUrl(undefined);
+      return;
+    }
+    let live = true;
+    fileUrl(path).then(
+      (u) => {
+        if (live) setUrl(u);
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [path, again]);
+  return {
+    url,
+    onError: () => {
+      if (refused()) setAgain((n) => n + 1);
+    },
+  };
 }

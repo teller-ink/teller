@@ -23,9 +23,8 @@
 //
 // Passive throughout: no controls, and nothing here writes.
 
-import { useEffect, useState } from 'react';
-import { fileUrl, publicSnapshot, type PublicSnapshot } from '../lib/api.ts';
-import { PUBLIC, useLive } from '../lib/use-session.ts';
+import { publicSnapshot, type PublicSnapshot } from '../lib/api.ts';
+import { PUBLIC, useFileUrl, useLive } from '../lib/use-session.ts';
 import { useWakeLock } from '../lib/use-wake-lock.ts';
 import { ConnectionHint } from '../components/ConnectionHint.tsx';
 
@@ -39,26 +38,9 @@ export function ArtView() {
   // picture rather than beside it — the frame is full-bleed and a line
   // nobody can see is a line nobody was told.
   const notice = snapshot.data?.notice ?? null;
-  const [src, setSrc] = useState<string | undefined>(undefined);
-
   // Keyed by the KEY, not the row: renaming a handout must not make the
   // frame blink, and swapping which one is showing must.
-  const key = handout?.key;
-  useEffect(() => {
-    if (!key) {
-      setSrc(undefined);
-      return;
-    }
-    let cancelled = false;
-    fileUrl(key)
-      .then((url) => {
-        if (!cancelled) setSrc(url);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [key]);
+  const { url: src, onError } = useFileUrl(handout?.key);
 
   const banner = notice && (
     <p className="pointer-events-none absolute inset-x-6 top-6 z-10 animate-pulse rounded-2xl bg-amber-700 px-8 py-3 text-center font-serif text-4xl text-stone-950 shadow-lg shadow-amber-900/50">
@@ -73,6 +55,7 @@ export function ArtView() {
         {banner}
         <img
           src={src}
+          onError={onError}
           alt={handout.name}
           className="max-h-full max-w-full object-contain"
         />

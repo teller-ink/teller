@@ -36,6 +36,7 @@ import { presentationOf, useSystemFaces } from '../../lib/presentations.ts';
 import { entryNamed } from '../../panels/blocks.tsx';
 import type { Glass } from '../../panels/render.tsx';
 import { Glyph } from '../sheet/glyphs.tsx';
+import { TypeOver } from '../TypeOver.tsx';
 import { PassedNoteFloor } from './PassedNote.tsx';
 import { TurnCallFloor } from './TurnCall.tsx';
 
@@ -155,12 +156,14 @@ function CostChip({
   face,
   accent,
   onSet,
+  typable = false,
 }: {
   name: string;
   value: number;
   face?: string;
   accent: string;
   onSet: (next: number) => void;
+  typable?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -200,7 +203,12 @@ function CostChip({
           >
             −
           </button>
-          <span className="min-w-[2rem] text-center font-mono text-sm text-stone-100">{value}</span>
+          {/* Typable where a person can type (rule 1) — the same door
+              every other number on the seat has; the strip keeps its
+              readout and its steppers (`TypeOver`). */}
+          <span className="min-w-[2rem] text-center font-mono text-sm text-stone-100">
+            <TypeOver value={value} label={name} onSet={typable ? onSet : undefined} />
+          </span>
           <button
             type="button"
             aria-label={`increase ${name}`}
@@ -253,6 +261,7 @@ export function HeaderFloor({ entity, seatName, records, glass, write, turn }: S
         face={dials?.[n]}
         accent={accent}
         onSet={(v) => write?.({ list: 'resources', name: n, value: v })}
+        typable={!mounted}
       />,
     ];
   });
@@ -273,15 +282,28 @@ export function HeaderFloor({ entity, seatName, records, glass, write, turn }: S
           <Plate name={entity?.name} trade={entity?.type} accent={accent} mounted={mounted} />
           <span className="h-px flex-1" style={{ background: `${accent}55` }} />
         </div>
-        {(player || chips.length > 0 || turn) && (
-          <div className="flex items-center justify-between gap-3">
+        {/* The run WRAPS on held glass, and the call gets a line of its
+            own. One unbreakable row of "your initiative [__] set" beside
+            the wallet was 449px on a 390px phone — the page panned and
+            Aces went off the edge (found 2026-11-16). Held glass is
+            elastic downward and never sideways (rule 6), so a long call
+            takes another line at its designed size rather than a
+            smaller type or a scrollbar. */}
+        {(player || chips.length > 0) && (
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
             <span className="min-w-0 truncate text-[0.7rem] uppercase tracking-[0.18em] text-stone-500">
               {player}
             </span>
-            <div className="flex shrink-0 items-center gap-3">
-              {turn}
+            <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-1.5">
               {chips}
             </div>
+          </div>
+        )}
+        {/* `empty:hidden`: the call is handed over already drawn and is
+            usually drawing nothing — no line, and no gap for one. */}
+        {turn && (
+          <div className="flex min-w-0 flex-wrap items-center justify-center gap-x-3 gap-y-1.5 empty:hidden">
+            {turn}
           </div>
         )}
       </div>
@@ -321,13 +343,21 @@ export function HeaderFloor({ entity, seatName, records, glass, write, turn }: S
  * from the old app's `Screens`: each tab wears the glyph its declaration
  * named (sixgun/star/satchel/…), same glyph set.
  */
-export function ScreenBarFloor({ tabs, current, onGo }: ScreenBarProps) {
+export function ScreenBarFloor({ tabs, current, onGo, glass }: ScreenBarProps) {
   if (tabs.length <= 1) return null;
   // `@container` + the label's `@[30rem]:inline`: on glass too narrow for
-  // five worded tabs the words go and the glyphs stay, because the PAGE
+  // five worded tabs the words go BESIDE the glyphs, because the PAGE
   // never pans sideways (rule 6) and a wrapping tab bar is worse than an
   // iconic one. A tab with no glyph keeps its word — a row of blank
   // buttons isn't a bar, it's a mystery.
+  //
+  // Where the words went, they now go UNDER — on held glass only. A
+  // phone has height to spare and nothing else, and five unlabelled
+  // pictograms were a guessing game nobody could even ask a screen
+  // reader about (found 2026-11-16). The strip keeps its single row: on
+  // mounted glass height is the scarce thing, and at its width the words
+  // were always beside the glyphs anyway. Every tab is NAMED either way.
+  const held = glass === 'held';
   return (
     <nav
       aria-label="screens"
@@ -339,7 +369,13 @@ export function ScreenBarFloor({ tabs, current, onGo }: ScreenBarProps) {
           type="button"
           onClick={() => onGo(t.name)}
           aria-current={t.name === current}
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[0.7rem] uppercase tracking-[0.18em] transition-colors ${
+          aria-label={t.label}
+          title={t.label}
+          className={`flex min-w-0 flex-1 items-center justify-center rounded-md py-1.5 text-[0.7rem] uppercase tracking-[0.18em] transition-colors ${
+            held && t.icon
+              ? 'flex-col gap-0.5 px-1 @[30rem]:flex-row @[30rem]:gap-1.5 @[30rem]:px-2'
+              : 'gap-1.5 px-2'
+          } ${
             t.name === current
               ? 'text-stone-950'
               : 'text-stone-400 hover:bg-stone-800 hover:text-stone-100'
@@ -347,9 +383,21 @@ export function ScreenBarFloor({ tabs, current, onGo }: ScreenBarProps) {
           style={t.name === current ? { background: 'var(--sheet-accent, #f59e0b)' } : undefined}
         >
           {t.icon && <Glyph name={t.icon} className="h-[1.15rem] w-[1.15rem] shrink-0" />}
-          <span className={`min-w-0 break-words ${t.icon ? 'hidden @[30rem]:inline' : ''}`}>
-            {t.label}
-          </span>
+          {held && t.icon ? (
+            // Under the glyph the word drops the bar's wide tracking and
+            // capitals (a column a fifth of a phone wide can't carry
+            // "INVENTORY" spaced out) and keeps its designed size.
+            <>
+              <span className="max-w-full truncate text-[0.7rem] normal-case leading-tight tracking-normal @[30rem]:hidden">
+                {t.label}
+              </span>
+              <span className="hidden min-w-0 break-words @[30rem]:inline">{t.label}</span>
+            </>
+          ) : (
+            <span className={`min-w-0 break-words ${t.icon ? 'hidden @[30rem]:inline' : ''}`}>
+              {t.label}
+            </span>
+          )}
         </button>
       ))}
     </nav>

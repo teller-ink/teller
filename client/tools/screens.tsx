@@ -25,7 +25,7 @@
 import { useState } from 'react';
 import { DRAFT_LIST, DRAFT_MARK } from '../../core/entity.ts';
 import { SIDE_MARK, type Side } from '../../core/side.ts';
-import { api, panes as fetchPanes } from '../lib/api.ts';
+import { api, panes as fetchPanes, stored } from '../lib/api.ts';
 import { CalibrationWizard } from '../components/board/CalibrationWizard.tsx';
 import { surfaces } from '../lib/panes.ts';
 import { useLive } from '../lib/use-session.ts';
@@ -128,7 +128,12 @@ function ScreensTool() {
         (a.position ?? Number.MAX_SAFE_INTEGER) -
           (b.position ?? Number.MAX_SAFE_INTEGER) || a.id.localeCompare(b.id),
     );
-  const waiting = all.length - list.length;
+  // …and never THIS one. The console's own browser says hello like any
+  // screen and so holds a code nobody will ever see, which made the
+  // count read one more than the room on every console (found
+  // 2026-11-16). Its id is the one in this device's own storage
+  // (rule 7), so it is the one row this console can rule out.
+  const waiting = all.filter((d) => d.code && d.id !== stored.display).length;
 
   /**
    * Move a row and REINDEX the whole room, 1..n. Swapping raw values

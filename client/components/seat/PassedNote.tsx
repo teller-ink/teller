@@ -22,9 +22,9 @@
 // who had read what would be a feature about surveillance, and the DM
 // is sitting at the same table and can just look up.
 
-import { useEffect, useState } from 'react';
-import { fileUrl, myNotes, type PassedNote } from '../../lib/api.ts';
-import { useLive } from '../../lib/use-session.ts';
+import { useState } from 'react';
+import { myNotes, type PassedNote } from '../../lib/api.ts';
+import { useFileUrl, useLive } from '../../lib/use-session.ts';
 import type { NoteBannerProps } from './seams.tsx';
 
 /** Everything passed to this screen, newest first, minus what it has seen. */
@@ -40,22 +40,12 @@ export function usePassedNotes(): {
 
 /** The handout riding along, drawn at whatever size the card can spare. */
 function Attachment({ path, alt }: { path: string; alt: string }) {
-  const [src, setSrc] = useState<string | undefined>(undefined);
-  useEffect(() => {
-    let cancelled = false;
-    fileUrl(path)
-      .then((url) => {
-        if (!cancelled) setSrc(url);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [path]);
+  const { url: src, onError } = useFileUrl(path);
   if (!src) return null;
   return (
     <img
       src={src}
+      onError={onError}
       alt={alt}
       className="mx-auto max-h-[45vh] min-h-0 w-auto max-w-full rounded-md object-contain"
     />

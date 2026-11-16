@@ -1,9 +1,11 @@
 // The client's one door to the server. Adds the auth headers (rule 7:
 // the key or the display id — never both required), memoizes the
-// permission slips, and keeps localStorage keys identical to the
+// permission slips, shares reads asked at the same moment, and keeps
+// localStorage keys identical to the
 // vanilla client's so already-paired screens survive the swap.
 
 import type { BoardFacts } from '../../core/registry.ts';
+import { Shared, slipsDue, slipsSuspect } from './door.ts';
 
 export type { BoardFacts };
 
@@ -124,25 +126,84 @@ function rewatch(): void {
   waitTimer = setTimeout(rewatch, due);
 }
 
-export async function api<T = unknown>(
-  path: string,
-  init?: {
-    method?: string;
-    body?: unknown;
-    /**
-     * Not the table's business when it fails — a screen's own hello or
-     * viewport report, which retry on their own and are not a change
-     * anybody pressed for.
-     */
-    quiet?: boolean;
-  },
-): Promise<T> {
+type Init = {
+  method?: string;
+  body?: unknown;
+  /**
+   * Not the table's business when it fails — a screen's own hello or
+   * viewport report, which retry on their own and are not a change
+   * anybody pressed for.
+   */
+  quiet?: boolean;
+};
+
+const methodOf = (init?: Init) => init?.method ?? (init?.body !== undefined ? 'POST' : 'GET');
+const toldOf = (method: string, init?: Init) =>
+  method !== 'GET' && method !== 'HEAD' && !init?.quiet;
+
+// ---- reads asked at the same moment ------------------------------------
+//
+// Measured 2026-11-16: opening one character sheet cost thirteen
+// requests, because three blocks on it each asked for the same notes
+// record and two for the same rule sections, in the same tick. Every one
+// of them is right to ask — a block can't know its neighbour already
+// did — so the sharing lives here, where every read passes, and no block
+// learns it exists (`door.ts` has the law and its races).
+
+const reads = new Shared<unknown>();
+/** Bumped on every word off the wire (`use-session.ts`). */
+let generation = 0;
+
+/**
+ * The wire said something changed. A read asked from here on must not
+ * join one that left before — it may have been answered before the
+ * change, and the joiner would be left holding the old number.
+ */
+export function heard(): void {
+  generation++;
+}
+
+/** A shared answer, handed to one more reader as its own copy: on the
+ *  far side it is somebody's React state, and two components holding
+ *  one object is one mutation from a number nobody touched moving. */
+const copy = <T,>(body: T): T =>
+  typeof structuredClone === 'function'
+    ? structuredClone(body)
+    : (JSON.parse(JSON.stringify(body)) as T);
+
+export function api<T = unknown>(path: string, init?: Init): Promise<T> {
+  const method = methodOf(init);
+  if (method === 'GET' && init?.body === undefined) {
+    // Same question means same asker too: a read sent before a key was
+    // typed is not the answer to one sent after. (Held in memory only,
+    // as the headers below already are.)
+    const asker = `${stored.key ?? ''}\n${stored.display ?? ''}\n${path}`;
+    const { answer, joined } = reads.run(asker, generation, () => send(path, init));
+    return (joined ? answer.then(copy) : answer) as Promise<T>;
+  }
+  const out = send<T>(path, init);
+  // Two things every write owes, attached once, here.
+  //
+  // It is a change this screen knows about before the wire says so: a
+  // read that left before it answered must not be joined after it.
+  //
+  // And its failure is HANDLED. A press that didn't land has already
+  // been told (`WriteNotice` wears it; a quiet write is a screen's own
+  // chore and retries itself), so the rejection is not news — but every
+  // stepper that fires a press and forgets it used to log an "Uncaught
+  // (in promise)" with the host down. The promise handed back is the
+  // same one, so a caller that awaits it still gets the error.
+  out.then(heard, heard);
+  return out;
+}
+
+async function send<T>(path: string, init?: Init): Promise<T> {
   const headers: Record<string, string> = {};
   if (stored.key) headers['x-teller-key'] = stored.key;
   if (stored.display) headers['x-teller-display'] = stored.display;
   if (init?.body !== undefined) headers['Content-Type'] = 'application/json';
-  const method = init?.method ?? (init?.body !== undefined ? 'POST' : 'GET');
-  const told = method !== 'GET' && method !== 'HEAD' && !init?.quiet;
+  const method = methodOf(init);
+  const told = toldOf(method, init);
   const me = ++writeSeq;
   if (told) {
     inFlight.set(me, Date.now());
@@ -382,18 +443,49 @@ export function reportViewport(): Promise<unknown> {
 export type Slips = { handle: string; ticket: string; files: string };
 
 let slipsPromise: Promise<Slips> | null = null;
+/** When this screen asked for the slips it holds — its own clock (`door.ts`). */
+let slipsAskedAt = 0;
 
-/** Memoized: one ticket fetch per session; forget on auth change. */
+/**
+ * Memoized: one ticket fetch per half-life, not per session. They used
+ * to be held for the life of the page, and the host refuses them after
+ * twelve hours — so a kiosk left on from last week came back to every
+ * reconnect with last week's ticket, and said "reconnecting…" until
+ * somebody walked over and reloaded it (found 2026-11-16). Forgotten
+ * outright on an auth change, and on a refusal they could be to blame
+ * for (`refused`).
+ */
 export function getSlips(): Promise<Slips> {
-  slipsPromise ??= api<Slips>('/api/ticket').catch((err) => {
-    slipsPromise = null;
-    throw err;
-  });
+  if (slipsPromise && slipsDue(slipsAskedAt, Date.now())) slipsPromise = null;
+  if (!slipsPromise) {
+    slipsAskedAt = Date.now();
+    slipsPromise = api<Slips>('/api/ticket').catch((err) => {
+      slipsPromise = null;
+      throw err;
+    });
+  }
   return slipsPromise;
 }
 
 export function forgetSlips(): void {
   slipsPromise = null;
+}
+
+/**
+ * Something ticketed was refused — a stream that never opened, a
+ * picture that never loaded. Neither can read the status (an
+ * EventSource and an <img> are both told only "error"), so the slips
+ * are forgotten whenever they're old enough to be the reason, and the
+ * caller's ordinary retry asks again with fresh ones. Answers whether it
+ * forgot: a refusal of brand-new slips is somebody else's problem, and
+ * retrying it would only spin.
+ */
+export function refused(): boolean {
+  // Already forgotten (the stream got there first): the next ask is fresh.
+  if (!slipsPromise) return true;
+  if (!slipsSuspect(slipsAskedAt, Date.now())) return false;
+  slipsPromise = null;
+  return true;
 }
 
 /**

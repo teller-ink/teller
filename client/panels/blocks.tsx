@@ -10,7 +10,8 @@ import { carryIn } from '../../core/carry.ts';
 import type { Entity, Entry } from '../../core/entity.ts';
 import type { Amendment } from '../../core/effects.ts';
 import type { PanelBlock } from '../../core/panels.ts';
-import { api, fileUrl } from '../lib/api.ts';
+import { api } from '../lib/api.ts';
+import { useFileUrl } from '../lib/use-session.ts';
 import { card, sectionLabel } from '../lib/ui.ts';
 import type { DiceRecord } from '../lib/dice.ts';
 import { useRuleLookup, usePanelNote, type RuleHit } from '../lib/rules.ts';
@@ -255,25 +256,6 @@ function filterEntries(entries: Entry[], filter: unknown, names?: unknown): Entr
   return entries;
 }
 
-/** A path from a records slot, resolved to a fetchable url — or nothing. */
-function useArt(path: string | undefined): string | undefined {
-  const [url, setUrl] = useState<string | undefined>(undefined);
-  useEffect(() => {
-    if (!path) {
-      setUrl(undefined);
-      return;
-    }
-    let cancelled = false;
-    fileUrl(path).then((u) => {
-      if (!cancelled) setUrl(u);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [path]);
-  return url;
-}
-
 // ---- header --------------------------------------------------------------
 // Old sheet header grammar: a serif name, the type as an accent-coloured
 // caption, and the pack's own portrait for that type (ported plate shape
@@ -286,7 +268,7 @@ function HeaderBlock({ ctx }: { ctx: BlockCtx }) {
   const portraitPath = e?.type
     ? (ctx.records.portraits?.[e.type] as string | undefined)
     : undefined;
-  const portraitUrl = useArt(portraitPath);
+  const { url: portraitUrl, onError: portraitRefused } = useFileUrl(portraitPath);
 
   if (!e) return <Refusal>no entity to head</Refusal>;
   return (
@@ -305,6 +287,7 @@ function HeaderBlock({ ctx }: { ctx: BlockCtx }) {
       {portraitUrl && (
         <img
           src={portraitUrl}
+          onError={portraitRefused}
           alt=""
           className="h-[4.2rem] w-[4.2rem] shrink-0 rounded-full border-2 object-cover"
           style={{ borderColor: accent ? `${accent}88` : '#57534e' }}
@@ -322,9 +305,9 @@ registerBlock('header', (_block, ctx) => <HeaderBlock ctx={ctx} />);
 
 function BrandBlock({ ctx }: { ctx: BlockCtx }) {
   const logoPath = ctx.records.brand?.logo as string | undefined;
-  const url = useArt(logoPath);
+  const { url, onError } = useFileUrl(logoPath);
   if (!url) return null;
-  return <img src={url} alt="" className="mx-auto block max-h-[4.5rem] max-w-[60%]" />;
+  return <img src={url} onError={onError} alt="" className="mx-auto block max-h-[4.5rem] max-w-[60%]" />;
 }
 
 registerBlock('brand', (_block, ctx) => <BrandBlock ctx={ctx} />);
@@ -715,6 +698,10 @@ function StatusesBlock({ ctx, title = 'Statuses' }: { ctx: BlockCtx; title?: str
             key={entry.name}
             entry={entry}
             onWrite={(edit) => ctx.write?.({ list: 'conditions', name: entry.name, ...edit })}
+            // A COUNT is a number like any other (rule 1): Trapped 3 is
+            // typed as 3, not three presses. A plain on/off status has no
+            // number and stays the chip `AutoEntry` draws for it.
+            typing={typable(ctx)}
           />
         ))}
       </section>
@@ -920,7 +907,11 @@ function FloorBlock({ ctx }: { ctx: BlockCtx }) {
   if (!id || !stored) return <Refusal>no entity to show</Refusal>;
 
   const write = (list: string, entryName: string, edit: Record<string, unknown>) => {
-    ctx.write?.({ list, name: entryName, ...edit })?.then(() => setTick((t) => t + 1));
+    // Refetched either way: a refusal is the stored value winning, and
+    // the floor should show what won. (Handled on both arms, so a press
+    // with the host down is the door's notice, not an uncaught error.)
+    const again = () => setTick((t) => t + 1);
+    ctx.write?.({ list, name: entryName, ...edit })?.then(again, again);
   };
 
   const addEntry = (list: string, name: string, value: number | string | undefined, max: number | undefined) =>
@@ -959,6 +950,7 @@ function FloorBlock({ ctx }: { ctx: BlockCtx }) {
               key={entry.name}
               entry={entry}
               onWrite={(edit) => write(listName, entry.name, edit)}
+              typing={typable(ctx)}
             />
           ))}
         </section>
