@@ -131,23 +131,30 @@ export async function main(argv: string[]) {
         );
       }
       mkdirSync(data, { recursive: true });
-      console.log('\n  teller\n');
-      console.log(`  data      ${data}`);
-      console.log(`  key file  ${join(data, 'dm.key')}\n`);
       const campaign = flag(opts, 'campaign');
-      await boot({
-        data,
-        port: String(port),
-        ...(campaign ? { campaign } : {}),
-      });
+      // The heading waits until the port is really ours: a host that
+      // can't bind, or whose folder another host holds, says one
+      // sentence and nothing that looks like it started.
+      const { port: bound } = await boot(
+        {
+          data,
+          port: String(port),
+          ...(campaign ? { campaign } : {}),
+        },
+        () => {
+          console.log('\n  teller\n');
+          console.log(`  data      ${data}`);
+          console.log(`  key file  ${join(data, 'dm.key')}\n`);
+        },
+      );
       console.log('');
       console.log('  open on this machine:');
-      console.log(`    http://localhost:${port}`);
+      console.log(`    http://localhost:${bound}`);
       const nics = addresses();
       if (nics.length) {
         console.log('  other screens in the room:');
         for (const { name, address } of nics) {
-          console.log(`    http://${address}:${port}   (${name})`);
+          console.log(`    http://${address}:${bound}   (${name})`);
         }
       }
       console.log('\n  ctrl-c to stop\n');

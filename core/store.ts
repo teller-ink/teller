@@ -28,7 +28,15 @@
 
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync, mkdirSync, readdirSync, renameSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { newId } from './id.ts';
 import { refIn, toEntity, type Entity, type Ref } from './entity.ts';
@@ -59,6 +67,30 @@ function open(path: string): DatabaseSync {
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
   return db;
+}
+
+/**
+ * Close a database so that its FILE is the whole of it.
+ *
+ * WAL keeps recent writes in `<name>.db-wal` until a thousand pages pile
+ * up, which is fine while the host runs and a lie the moment someone
+ * copies "the campaign" — the 2026-11-16 audit found a `.db` ten weeks
+ * behind its own `-wal`, and a fresh campaign's `.db` holding no tables
+ * at all. Folding the log back in (TRUNCATE leaves it empty) and then
+ * closing the last connection, which deletes the companions, is what
+ * makes "the campaign is one file" true after a clean stop.
+ *
+ * Idempotent: shutdown can reach the same handle by more than one road.
+ */
+function shut(db: DatabaseSync): void {
+  if (!db.isOpen) return;
+  try {
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  } catch {
+    // A reader mid-statement can refuse the checkpoint; closing the
+    // last connection checkpoints anyway, so this is belt, not braces.
+  }
+  db.close();
 }
 
 // ---------------------------------------------------------------------
@@ -249,6 +281,21 @@ export class Campaign {
   }
 
   /**
+   * Is this the manifest? The one row that may never be deleted or
+   * moved: deleting it took every entity with it and answered 200, and
+   * giving it a parent left a file with no root that would not open
+   * again (audit 2026-11-16). The campaign is gone by trashing its
+   * FILE, never by deleting its top row.
+   */
+  isRoot(id: string): boolean {
+    return Boolean(
+      this.#db
+        .prepare('SELECT 1 FROM entities WHERE id = ? AND parent_id IS NULL')
+        .get(id),
+    );
+  }
+
+  /**
    * Delete an entity and everything promoted under it — containment
    * means the nested things go with their owner. One event per row, so
    * the log can put every one of them back.
@@ -261,6 +308,7 @@ export class Campaign {
    * restored without its place in the fight is half a restore.
    */
   remove(id: string, actor: string, extra?: Record<string, unknown>): void {
+    if (this.isRoot(id)) throw new Error('the campaign itself cannot be deleted from inside it');
     for (const child of this.children(id)) this.remove(child.id, actor);
     const before = this.get(id);
     if (!before) return;
@@ -278,6 +326,7 @@ export class Campaign {
    * id that didn't change.
    */
   move(id: string, parentId: string, actor: string): void {
+    if (this.isRoot(id)) throw new Error('the campaign itself cannot be moved under anything');
     const before = this.parentOf(id);
     if (before === undefined && this.get(id) === undefined) {
       throw new Error(`no entity ${id} to move`);
@@ -499,8 +548,9 @@ export class Campaign {
     this.append(null, actor, 'turn.updated', payload || undefined);
   }
 
+  /** Checkpointed and closed — after this the file alone is the whole of it. */
   close(): void {
-    this.#db.close();
+    shut(this.#db);
   }
 }
 
@@ -1468,8 +1518,9 @@ export class Shelf {
     this.#db.prepare('UPDATE displays SET vw = ?, vh = ? WHERE id = ?').run(w, h, id);
   }
 
+  /** Checkpointed and closed — after this the file alone is the whole of it. */
   close(): void {
-    this.#db.close();
+    shut(this.#db);
   }
 }
 
@@ -1501,4 +1552,92 @@ export function openShelf(dataDir: string): Shelf {
     // already there
   }
   return new Shelf(db);
+}
+
+// ---------------------------------------------------------------------
+// One host per data folder.
+//
+// Two hosts on the same folder both boot happily — a manual host and a
+// preview host, say — and both read fine, right up until they write at
+// the same moment and one of them dies with `database is locked` (audit
+// 2026-11-16). SQLite's own locking keeps the FILE whole; it can't keep
+// two tables from each thinking they own it. So the host claims the
+// folder at boot and a second one is refused with a sentence.
+//
+// A plain file rather than a socket or an flock: it has to work on a
+// stick formatted for a camera, and it has to SAY something to the
+// human who finds it — which process, on which port.
+
+/** The claim, in the data dir. Present only while a host is serving it. */
+export const HOST_LOCK = 'host.lock';
+
+type LockBody = { pid: number; port: number; at: string };
+
+function readLock(path: string): LockBody | undefined {
+  try {
+    const body = JSON.parse(readFileSync(path, 'utf8')) as Partial<LockBody>;
+    return Number.isInteger(body.pid) ? (body as LockBody) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Is that process still there? EPERM means alive and somebody else's. */
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as { code?: string }).code === 'EPERM';
+  }
+}
+
+export type HostClaim = {
+  /** Say which port we actually got (port 0 is a request, not an answer). */
+  port(port: number): void;
+  /** Give the folder back — only if the claim on disk is still ours. */
+  release(): void;
+};
+
+/**
+ * Claim a data folder for this process, or refuse in a sentence naming
+ * who has it. A claim left by a pid that no longer exists — a host that
+ * was `kill -9`'d, a laptop that died mid-session — is taken over
+ * without a word: refusing over a dead process is a lock only a human
+ * with `rm` can open, and that human is trying to start a game.
+ *
+ * Only `teller host` claims. `key`, `where`, `plugins` and `version`
+ * read the shelf beside a running host on purpose.
+ */
+export function claimDataDir(dataDir: string, port: number): HostClaim {
+  mkdirSync(dataDir, { recursive: true });
+  const path = join(dataDir, HOST_LOCK);
+  const write = (p: number, flag: 'wx' | 'w') =>
+    writeFileSync(path, JSON.stringify({ pid: process.pid, port: p, at: now() }) + '\n', { flag });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      write(port, 'wx');
+      return {
+        port(actual) {
+          if (readLock(path)?.pid === process.pid) write(actual, 'w');
+        },
+        release() {
+          if (readLock(path)?.pid === process.pid) rmSync(path, { force: true });
+        },
+      };
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'EEXIST') throw err;
+    }
+    const held = readLock(path);
+    if (held && held.pid !== process.pid && alive(held.pid)) {
+      throw new Error(
+        `another teller is already serving ${dataDir} — pid ${held.pid}, ` +
+          `on http://localhost:${held.port}. Stop that one first (ctrl-c in its ` +
+          `terminal, or \`kill ${held.pid}\`), or point --data somewhere else.`,
+      );
+    }
+    // Stale: whoever wrote it is gone. Take it over and say nothing.
+    rmSync(path, { force: true });
+  }
+  throw new Error(`could not claim ${path} — another host is starting on this folder right now`);
 }

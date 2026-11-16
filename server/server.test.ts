@@ -127,6 +127,28 @@ describe('entities over HTTP', () => {
     expect((await api('GET', `/api/entities/${id}`)).status).toBe(404);
   });
 
+  // Audit 2026-11-16: deleting the manifest answered 200 and emptied
+  // the file; moving it under a child left a campaign that never opened
+  // again. Both are refused, and nothing else about the tree moves.
+  it('the campaign root cannot be deleted or moved', async () => {
+    const root = (await api('GET', '/api/campaign')).body.manifest.id;
+    const made = await api('POST', '/api/entities', { draft: { name: 'Barrett' } });
+    const child = made.body.id;
+
+    const gone = await api('DELETE', `/api/entities/${root}`);
+    expect(gone.status).toBe(400);
+    expect(gone.body.error).toMatch(/campaign itself/);
+
+    const moved = await api('POST', `/api/entities/${root}/move`, { parentId: child });
+    expect(moved.status).toBe(400);
+    expect(moved.body.error).toMatch(/campaign itself/);
+
+    expect((await api('GET', '/api/campaign')).body.manifest.id).toBe(root);
+    expect((await api('GET', '/api/entities')).body.map((e: any) => e.id)).toEqual([child]);
+    // An ordinary entity still deletes exactly as before.
+    expect((await api('DELETE', `/api/entities/${child}`)).status).toBe(200);
+  });
+
   it('a nameless draft is a 400, not a row', async () => {
     const { status } = await api('POST', '/api/entities', { draft: {} });
     expect(status).toBe(400);

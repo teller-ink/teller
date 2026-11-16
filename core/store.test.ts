@@ -1,9 +1,11 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  claimDataDir,
   createCampaign,
+  HOST_LOCK,
   listCampaigns,
   openCampaign,
   openShelf,
@@ -53,6 +55,19 @@ describe('the campaign file', () => {
     expect(listCampaigns(dir)).toEqual(['alpha', 'bravo']);
   });
 
+  it('the manifest refuses to be deleted or moved, and keeps its tree', () => {
+    const campaign = createCampaign(dir, 'rooted', 'Rooted');
+    const root = campaign.root();
+    const child = campaign.create({ name: 'Barrett', lists: {} }, 'dm');
+    expect(campaign.isRoot(root.id)).toBe(true);
+    expect(campaign.isRoot(child.id)).toBe(false);
+    expect(() => campaign.remove(root.id, 'dm')).toThrow(/campaign itself/);
+    expect(() => campaign.move(root.id, child.id, 'dm')).toThrow(/campaign itself/);
+    expect(campaign.root().id).toBe(root.id);
+    expect(campaign.children(root.id).map((e) => e.id)).toEqual([child.id]);
+    campaign.close();
+  });
+
   it('survives a close and reopen — the file is the campaign', () => {
     const first = createCampaign(dir, 'keeps', 'Keeps');
     const rootId = first.root().id;
@@ -61,6 +76,54 @@ describe('the campaign file', () => {
     const again = openCampaign(dir, 'keeps');
     expect(again.root().id).toBe(rootId);
     expect(again.children(rootId).map((e) => e.name)).toEqual(['Barrett']);
+    again.close();
+  });
+});
+
+describe('one host per data folder', () => {
+  const lock = () => join(dir, HOST_LOCK);
+  const hold = (pid: number, port: number) =>
+    writeFileSync(lock(), JSON.stringify({ pid, port, at: 'then' }));
+
+  it('a live claim refuses, naming its pid and port', () => {
+    // The test runner's parent is certainly alive and certainly not us.
+    hold(process.ppid, 4711);
+    expect(() => claimDataDir(dir, 4712)).toThrow(
+      new RegExp(`pid ${process.ppid}, on http://localhost:4711.*kill ${process.ppid}`),
+    );
+    expect(JSON.parse(readFileSync(lock(), 'utf8')).pid).toBe(process.ppid);
+  });
+
+  it('a dead claim is taken over, and releasing gives the folder back', () => {
+    hold(999_999, 4711);
+    const claim = claimDataDir(dir, 0);
+    expect(JSON.parse(readFileSync(lock(), 'utf8'))).toMatchObject({ pid: process.pid, port: 0 });
+    claim.port(4713);
+    expect(JSON.parse(readFileSync(lock(), 'utf8')).port).toBe(4713);
+    claim.release();
+    expect(existsSync(lock())).toBe(false);
+  });
+
+  it('never releases a claim that is no longer its own', () => {
+    const claim = claimDataDir(dir, 4711);
+    hold(process.ppid, 4714);
+    claim.release();
+    expect(JSON.parse(readFileSync(lock(), 'utf8')).pid).toBe(process.ppid);
+  });
+});
+
+describe('closing leaves one whole file', () => {
+  it('no -wal or -shm survives a close, and the file alone has every write', () => {
+    const campaign = createCampaign(dir, 'whole', 'Whole');
+    for (let i = 0; i < 10; i++) campaign.create({ name: `E${i}`, lists: {} }, 'dm');
+    const path = join(dir, 'campaigns', 'whole.db');
+    expect(existsSync(`${path}-wal`)).toBe(true);
+    campaign.close();
+    campaign.close(); // shutdown may reach the same handle twice
+    expect(existsSync(`${path}-wal`)).toBe(false);
+    expect(existsSync(`${path}-shm`)).toBe(false);
+    const again = openCampaign(dir, 'whole');
+    expect(again.events().filter((e) => e.kind === 'entity.created')).toHaveLength(10);
     again.close();
   });
 });

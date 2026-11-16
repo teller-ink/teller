@@ -14,7 +14,8 @@
 // `/api/stream` nudges and the page refetches. Serializers stay at the
 // store boundary, so a route never sees a raw row.
 
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { createReadStream, readFileSync, existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, normalize, resolve as resolvePath } from 'node:path';
@@ -23,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { toEntity, type Ref } from '../core/entity.ts';
 import { toExchangeRecord, toRollRecord } from '../core/exchange.ts';
 import {
+  claimDataDir,
   createCampaign,
   isDisplayRole,
   listCampaigns,
@@ -286,9 +288,40 @@ function forNeeds(full: Record<string, unknown>, needs: Need[]): Record<string, 
 const noCampaign = () =>
   reply(503, { error: 'no campaign is active — pick one from the campaign screen' });
 
+/**
+ * A refusal a helper can THROW from deep inside a route, carrying the
+ * status it should answer with. The listener's boundary (`serve`) is
+ * what turns it into a reply — so a body that is too big is a 413 no
+ * matter which of the forty JSON doors it arrived at.
+ */
+class Refused extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/**
+ * How big a JSON body may be. Every JSON door takes a tap's worth — an
+ * entry, a whole entity, a board's fog — and the fattest honest one is
+ * a few hundred kilobytes of painted areas. Bytes (maps, handouts,
+ * stories) never come through here; they have `rawBody` and their own
+ * ceilings. Before this, an unauthenticated 600 MB POST was buffered
+ * whole and took the host from 131 MB to 1.8 GB.
+ */
+const JSON_MAX_BYTES = 4 * 1024 * 1024;
+
 async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > JSON_MAX_BYTES) {
+      throw new Refused(413, `a request may be ${JSON_MAX_BYTES} bytes at most`);
+    }
+    chunks.push(chunk as Buffer);
+  }
   if (!chunks.length) return {};
   try {
     const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -1535,7 +1568,14 @@ export async function handleApi(
     }
     if (method === 'DELETE') {
       if (!canDm(auth)) return denied();
-      session.remove(a, actorOf(auth, url.searchParams.get('actor') ?? ''));
+      // Asked BEFORE the session starts lifting tokens off boards for
+      // it — the store refuses too, but halfway through is too late.
+      if (session.campaign.isRoot(a)) {
+        return reply(400, {
+          error: 'that is the campaign itself — delete the campaign from the campaign screen instead',
+        });
+      }
+      session.remove(a,actorOf(auth, url.searchParams.get('actor') ?? ''));
       return reply(200, { ok: true });
     }
   }
@@ -1563,6 +1603,9 @@ export async function handleApi(
     const body = await bodyOf(req);
     const parentId = String(body.parentId ?? '');
     if (!parentId) return reply(400, { error: 'move needs a parentId' });
+    if (session.campaign.isRoot(a)) {
+      return reply(400, { error: 'that is the campaign itself — it has no parent to move under' });
+    }
     try {
       session.move(a, parentId, actorOf(auth, String(body.actor ?? '')));
       return reply(200, { ok: true });
@@ -2555,7 +2598,7 @@ export function serve(what: Session | Host, port: number, key: string) {
   // tests, mostly) — it gets wrapped in a host whose room is the one it
   // already handed out, so nothing reconnects.
   const host = what instanceof Host ? what : Host.around(what);
-  const server = createServer(async (req, res) => {
+  const route = async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
 
     // A `.panel`'s compiled code (§E UN-DEFERRED) — served PLAIN, no
@@ -2860,9 +2903,64 @@ export function serve(what: Session | Host, port: number, key: string) {
 
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('not here');
+  };
+  // The one error boundary. Before it, ANY throw in a route was an
+  // unhandled rejection and Node exited — a `%` typed into an address,
+  // a doubled slash, a phone that dropped mid-upload, and every screen
+  // in the room went to "reconnecting" until somebody noticed the
+  // terminal. Thirteen of eighty-five bad inputs did it, and none of
+  // them ever produced a 5xx: there was no failure mode between
+  // "handled" and "dead". Now there is, and it's the only one.
+  const server = createServer((req, res) => {
+    route(req, res).catch((err: unknown) => failed(req, res, err));
   });
   server.listen(port);
   return server;
+}
+
+/**
+ * What one request that threw gets back, and what the terminal hears.
+ *
+ * Malformed input is the client's fault and answers 400 quietly; a
+ * Refused carries its own status; anything else is ours, answers 500
+ * and logs ONE line — method, path, message. Never the query string
+ * (tickets ride there), never a body, never the key.
+ *
+ * A client that vanished mid-body (`Error: aborted` — an iPad locked
+ * during an upload) is not an error at all: there is nobody to answer
+ * and nothing to fix, so it gets neither a reply nor a stack trace.
+ */
+function failed(req: IncomingMessage, res: ServerResponse, err: unknown): void {
+  const e = err as { code?: unknown; message?: unknown } | undefined;
+  const gone = e?.code === 'ECONNRESET' || e?.message === 'aborted' || res.destroyed;
+  if (gone) {
+    res.destroy();
+    return;
+  }
+  const malformed = err instanceof URIError || e?.code === 'ERR_INVALID_URL';
+  const status = err instanceof Refused ? err.status : malformed ? 400 : 500;
+  const reason =
+    err instanceof Refused
+      ? err.message
+      : malformed
+        ? 'that address is not well-formed'
+        : 'the host could not finish that request — it is still running';
+  if (status === 500) {
+    const path = (req.url ?? '').split('?')[0].slice(0, 200);
+    const message = String(e?.message ?? err).split('\n')[0];
+    console.error(`  ${req.method ?? 'GET'} ${path} failed: ${message}`);
+  }
+  if (res.headersSent) {
+    res.destroy();
+    return;
+  }
+  // A 413 is said while the client may still be sending; closing the
+  // connection after it is what stops the rest from being read at all.
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    ...(status === 413 ? { Connection: 'close' } : {}),
+  });
+  res.end(JSON.stringify({ error: reason }));
 }
 
 // ---------------------------------------------------------------------
@@ -2882,12 +2980,81 @@ export function parseArgs(argv: string[]): Record<string, string> {
   return out;
 }
 
-export async function boot(args: Record<string, string>) {
+/**
+ * The last line of defence, behind the listener's own boundary: an
+ * error that escapes everything — a timer, a plugin's stray promise —
+ * is said LOUDLY and the host keeps serving.
+ *
+ * Node's default is to exit, which is the right call for a program
+ * whose state might be torn. This one's state is SQLite, and SQLite is
+ * crash-safe (forty `kill -9`s in the 2026-11-16 audit lost nothing),
+ * so the only thing exiting buys is a dark room mid-fight. A table is
+ * better served by a host that stays up and says something went wrong.
+ */
+function stayUp(): void {
+  process.on('uncaughtException', (err) => {
+    console.error(`\n  teller hit an error nothing caught, and is still serving:\n${err?.stack ?? err}\n`);
+  });
+  process.on('unhandledRejection', (why) => {
+    const said = why instanceof Error ? (why.stack ?? why.message) : String(why);
+    console.error(`\n  teller hit a rejection nothing caught, and is still serving:\n${said}\n`);
+  });
+}
+
+/** The port actually bound, or the reason it couldn't be — before anyone is told an address. */
+function listening(server: Server): Promise<number> {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.once('listening', () => {
+      server.off('error', reject);
+      resolve((server.address() as AddressInfo).port);
+    });
+  });
+}
+
+/**
+ * ctrl-c, a `kill`, a closed terminal: stop taking connections, end
+ * the streams (they never end on their own — a screen holds one open
+ * forever, and `server.close()` alone would wait on it forever too),
+ * fold every database back into its file, give the folder back, exit.
+ *
+ * All of that is synchronous, so in practice the first signal is the
+ * last. A second one exits on the spot regardless, because a stop that
+ * can be talked out of stopping is worse than one that can't.
+ */
+function stopOnSignal(server: Server, close: () => void): void {
+  let stopping = false;
+  const stop = () => {
+    if (stopping) process.exit(130);
+    stopping = true;
+    console.log('\n  stopping — writing every campaign back into its file');
+    server.close();
+    server.closeAllConnections();
+    close();
+    process.exit(0);
+  };
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, stop);
+}
+
+/**
+ * `ready` runs once the port is really ours and before anything is
+ * printed — it's how `teller host` puts its own heading on top without
+ * printing a banner for a host that then fails to bind.
+ */
+export async function boot(args: Record<string, string>, ready?: () => void) {
   const dataDir = resolvePath(
     (args.data ?? join(homedir(), '.teller')).replace(/^~/, homedir()),
   );
   const port = Number(args.port ?? 4526);
   const slug = args.campaign;
+
+  // Serving claims the folder; managing plugins only reads and writes a
+  // row and exits, so it runs fine beside a live host and claims nothing.
+  // Claimed BEFORE anything opens: a second host refused after it had
+  // already opened (and written) the first one's databases is refused
+  // too late.
+  const managing = 'plugins' in args || Boolean(args.enable || args.disable || args.configure);
+  const claim = managing ? undefined : claimDataDir(dataDir, port);
 
   // Opened once, up front — seeding a default's trust row (below) and
   // every mode after it shares this one connection.
@@ -2901,7 +3068,7 @@ export async function boot(args: Record<string, string>) {
   // Plugin management — the CLI is where a HUMAN enables (§15). These
   // are commands, not server modes: they act on the shelf and exit,
   // campaign or no campaign.
-  if ('plugins' in args || args.enable || args.disable || args.configure) {
+  if (managing) {
     if ('plugins' in args) {
       const { found, problems } = discoverPlugins(dataDir, shelf);
       if (!found.length && !problems.length) {
@@ -2940,8 +3107,24 @@ export async function boot(args: Record<string, string>) {
     process.exit(0);
   }
 
+  stayUp();
   const key = loadDmKey(dataDir);
   const host = new Host(shelf, dataDir);
+
+  // However this process ends from here — a signal, a refusal below, a
+  // `process.exit` anywhere — the campaign and the shelf are left as
+  // single whole files and the folder is given back. A campaign switch
+  // already closes the one it leaves (`Host.#adopt`).
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    host.session?.campaign.close();
+    shelf.close();
+    claim?.release();
+  };
+  process.on('exit', close);
+
   const plugins = await loadPlugins(dataDir, shelf);
   host.setPlugins(plugins.loaded, plugins.problems);
 
@@ -2970,7 +3153,25 @@ export async function boot(args: Record<string, string>) {
     }
   }
 
-  serve(host, port, key);
+  const server = serve(host, port, key);
+  let bound: number;
+  try {
+    bound = await listening(server);
+  } catch (err) {
+    close();
+    // The banner used to print first and a raw stack after it, by which
+    // point this process had already opened the other host's files.
+    if ((err as { code?: string }).code === 'EADDRINUSE') {
+      throw new Error(
+        `port ${port} is already in use — another teller, or something else, is listening there. ` +
+          `Stop it, or pick another port with --port.`,
+      );
+    }
+    throw err;
+  }
+  claim?.port(bound);
+  stopOnSignal(server, close);
+  ready?.();
 
   // The books folder, swept exactly like the packs one — drop a PDF in
   // and it is installed (rule 4a). NOT awaited: reading a rulebook that
@@ -2997,7 +3198,7 @@ export async function boot(args: Record<string, string>) {
 
   const session = host.session;
   console.log(
-    `teller · ${session?.campaign.slug ?? '(no campaign)'} · http://localhost:${port}`,
+    `teller · ${session?.campaign.slug ?? '(no campaign)'} · http://localhost:${bound}`,
   );
   if (!session) {
     const have = listCampaigns(dataDir);
@@ -3034,6 +3235,7 @@ export async function boot(args: Record<string, string>) {
   // Last, so it's the thing still on screen when the addresses print.
   const stale = staleClientWarning();
   if (stale) console.log(stale);
+  return { port: bound };
 }
 
 if (import.meta.main) await boot(parseArgs(process.argv.slice(2)));
