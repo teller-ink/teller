@@ -20,7 +20,7 @@ keeps the books, and no declaration presumes what a number means.
 and teller reads it where it lies — the same treatment `defaults/panels/`
 gets, and for the same reason (§M-6): defaults that are *seeded* into a
 data dir go stale and resurrect, so nothing is ever written into
-`~/.teller-next/systems/`. Starter is the LAST place the loader looks for
+`~/.teller/systems/`. Starter is the LAST place the loader looks for
 a system id — behind `systems/<name>/`, behind a pack-embedded
 `system.json`, behind a `shelf.db` row — so a folder on your shelf
 restating `sys_starter` wins outright, and deleting that folder falls
@@ -34,7 +34,7 @@ point of it — or:
 
 ```
 curl -X POST http://localhost:4526/api/campaigns \
-  -H "x-dm-key: $(cat ~/.teller-next/dm.key)" \
+  -H "x-teller-key: $(cat ~/.teller/dm.key)" \
   -H 'content-type: application/json' \
   -d '{"name":"My Table","system":"sys_starter"}'
 ```
@@ -87,7 +87,7 @@ to say so in your own panel, not to make this one guess.
 This folder is meant to be copied and renamed — it's the smallest legal
 system, so it's the shortest path to your own:
 
-1. `cp -R defaults/systems/starter ~/.teller-next/systems/mygame`, and
+1. `cp -R defaults/systems/starter ~/.teller/systems/mygame`, and
    change `id` and `name` in `system.json`. (Two systems may not share
    a `sys_` id; the folder name is not the identity.)
 2. Add records to `system.json` — `sheets` (what a new entity starts

@@ -1,6 +1,6 @@
 // The host — the first server on the new core, now with the one key.
 //
-// One runtime (§16): `node server/index.ts --data ~/.teller-next
+// One runtime (§16): `node server/index.ts --data ~/.teller
 // --campaign <slug>` and nothing else. No build, no bundler, no
 // Cloudflare shape anywhere — routes call the Session, the Session
 // calls the store, and the store is a file.
@@ -2866,7 +2866,7 @@ export function serve(what: Session | Host, port: number, key: string) {
 }
 
 // ---------------------------------------------------------------------
-// `node server/index.ts --data ~/.teller-next --campaign <slug>`
+// `node server/index.ts --data ~/.teller --campaign <slug>`
 //
 // Booting is a function so `teller host` and a bare `node
 // server/index.ts` are the SAME code path (`server/cli.ts` parses the
@@ -2884,7 +2884,7 @@ export function parseArgs(argv: string[]): Record<string, string> {
 
 export async function boot(args: Record<string, string>) {
   const dataDir = resolvePath(
-    (args.data ?? join(homedir(), '.teller-next')).replace(/^~/, homedir()),
+    (args.data ?? join(homedir(), '.teller')).replace(/^~/, homedir()),
   );
   const port = Number(args.port ?? 4526);
   const slug = args.campaign;
@@ -2997,7 +2997,7 @@ export async function boot(args: Record<string, string>) {
 
   const session = host.session;
   console.log(
-    `teller-next · ${session?.campaign.slug ?? '(no campaign)'} · http://localhost:${port}`,
+    `teller · ${session?.campaign.slug ?? '(no campaign)'} · http://localhost:${port}`,
   );
   if (!session) {
     const have = listCampaigns(dataDir);

@@ -124,13 +124,17 @@ won't reinstall — and shelf CODE recompiles on restart.
 - `pnpm client:dev` — client dev server against a running host.
 - `pnpm typecheck` (two projects: root = core+server, client) /
   `pnpm test` (vitest; core/server/scripts/examples — client wiring is
-  deliberately untested, §L) / `pnpm pack` (release tarball via
+  deliberately untested, §L) / `pnpm run pack` (release tarball via
   `scripts/pack.mjs` — prints the url + sha256 the tap's formula
-  needs).
-- Releasing: bump `package.json` version → `pnpm pack` → `gh release
+  needs; bare `pnpm pack` is pnpm's own packer, not this).
+- Releasing: bump `package.json` version → `pnpm run pack` → `gh release
   create vX.Y.Z build/teller-X.Y.Z.tar.gz` → paste the printed fields
   into `Formula/teller.rb` in `teller-ink/homebrew-tap`. Users install
-  with `brew install teller-ink/tap/teller`.
+  with `brew install teller-ink/tap/teller`. **The tarball carries
+  native binaries, so it runs on the platform it was packed on** —
+  Apple silicon so far, and the formula refuses everything else
+  (`homebrew/README.md`); the landing page's install note says the
+  same and must move with it.
 - Secrets: exactly one — `~/.teller/dm.key`, minted on first run
   (rule 7). The assistant is a plugin with its own config on the
   shelf; absent means no assistant and no button — never a nag.

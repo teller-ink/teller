@@ -8,8 +8,9 @@ teller host
 ```
 
 That needs a **tap** — a second GitHub repo named `homebrew-tap` — and
-a release tarball for the formula to point at. Neither exists yet; this
-is the recipe.
+a release tarball for the formula to point at. Both exist
+(`teller-ink/homebrew-tap`, and the releases on `teller-ink/teller`);
+this is the recipe that keeps them current.
 
 ## One-time: create the tap
 
@@ -31,20 +32,26 @@ nothing else does.
 ## Every release
 
 ```sh
-pnpm pack
+pnpm run pack
 ```
 
-Builds the app and writes `build/teller-<version>.tar.gz`, then prints the
-`url` and `sha256` lines to paste into the formula. What's inside is only
-the built app, the migrations, the host and a stripped `package.json` —
-**no `node_modules`**, because the host imports nothing but node builtins.
-That's why the formula is fifteen lines and why a Node upgrade can't break
-an installed copy.
+(`pnpm run pack`, not `pnpm pack` — the bare form is pnpm's own packer
+and writes a tarball of the whole repo.)
+
+Builds the client and writes `build/teller-<version>.tar.gz`, then prints
+the `url` and `sha256` lines to paste into the formula. What's inside is
+the server and core as source, the built client, `defaults/`, a stripped
+`package.json` — and a production `node_modules` holding the two packages
+the server reaches for (`esbuild`, `pdfjs-dist`). Those bring native
+binaries, so **the tarball runs on the platform it was packed on**. The
+formula says so with `depends_on arch:` / `depends_on :macos`; widening
+that means one tarball per platform, or a formula that installs at the
+far end (`scripts/pack.mjs` has the argument).
 
 Then:
 
 ```sh
-gh release create v0.1.0 build/teller-0.1.0.tar.gz --title "teller 0.1.0"
+gh release create v0.2.0 build/teller-0.2.0.tar.gz --title "teller 0.2.0"
 # paste the printed url + sha256 into Formula/teller.rb, commit, push
 ```
 
@@ -62,13 +69,14 @@ wrong. Run it before publishing, not after.
 
 ## Notes
 
-- **Node 22 is the floor.** teller keeps its database in node's own
-  SQLite (`node:sqlite`), which doesn't exist before that. The CLI checks
-  at startup and says so in a sentence rather than a stack trace.
+- **Node 24 is the floor.** teller keeps its database in node's own
+  SQLite (`node:sqlite`) and runs its TypeScript unbundled. The CLI
+  checks at startup and says so in a sentence rather than a stack trace.
 - **The shim runs Homebrew's node explicitly**, not whatever `node` is
   first on `PATH`. On a developer's machine that's frequently an nvm
   shim pointing at something ancient.
 - **Homebrew core is not the goal yet.** Core requires notability, and a
   tap is the normal home for a project this age. `brew install
   teller-ink/tap/teller` is one line either way.
-- Linux works the same; nothing here is macOS-specific.
+- Linux and Intel Macs run teller from a checkout today. Nothing in the
+  code is macOS-specific; the tarball is.

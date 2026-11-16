@@ -1,21 +1,27 @@
 # teller — Homebrew formula.
 #
-# Copy this into a tap repo (teller-ink/homebrew-tap) as
-# Formula/teller.rb, and update `url` and `sha256` from `pnpm pack` on
+# The copy that ships lives in teller-ink/homebrew-tap as
+# Formula/teller.rb; update `url` and `sha256` from `pnpm run pack` on
 # each release. See homebrew/README.md.
 #
-# It's short because the host has no dependencies: every import is a node
-# builtin, so there is nothing to npm-install, nothing to compile, and no
-# native module to break when Node updates. Keep it that way.
+# It's short because nothing is built at the far end: the tarball carries
+# the server as source, the client already built, and the two packages
+# the server reaches for (esbuild, pdfjs-dist) already installed. Those
+# two bring native binaries, so a tarball runs on the platform it was
+# packed on. The two platform lines below say that out loud, so every
+# other machine gets a clear refusal instead of a broken install.
 class Teller < Formula
   desc "In-person TTRPG companion — the table plays, teller keeps the books"
   homepage "https://teller.ink"
-  url "https://github.com/teller-ink/teller/releases/download/v0.1.0/teller-0.1.0.tar.gz"
-  sha256 "ffa5b1fe0e1132cd4ec80a7f6d44050241838ca809cd0de7d637ebb9cf3e18a2"
+  url "https://github.com/teller-ink/teller/releases/download/v0.2.0/teller-0.2.0.tar.gz"
+  sha256 "fa457b5c32fe569cf427a74110330aa4833ac31a55463cdad33d44ff15a6e934"
   license "AGPL-3.0-only"
 
-  # Node 22 is the floor: teller keeps its database in node's own SQLite
-  # (`node:sqlite`), which doesn't exist before that.
+  # Packed on, and so far only for, Apple silicon (scripts/pack.mjs).
+  depends_on arch: :arm64
+  depends_on :macos
+  # Node 24 is the floor: teller keeps its database in node's own SQLite
+  # (`node:sqlite`) and runs its TypeScript unbundled.
   depends_on "node"
 
   def install
