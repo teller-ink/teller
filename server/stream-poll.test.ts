@@ -2,8 +2,10 @@
 // every word the room says, the handle's own mail and nobody else's,
 // and an honest `gap` whenever it can't vouch for what was missed.
 
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
-import { pollWords } from './stream-poll.ts';
+import { BEAT, holdStream, pollWords } from './stream-poll.ts';
 import { Room } from './session.ts';
 
 describe('pollWords', () => {
@@ -46,5 +48,64 @@ describe('pollWords', () => {
     const late = pollWords(room, 'dm', a.cursor);
     expect(late.gap).toBe(true);
     expect(late.words).toEqual(['turn']);
+  });
+});
+
+describe('holdStream', () => {
+  // A quiet room must still prove the host is there: a host that vanished
+  // closes nothing, and the client calls three missed beats "down".
+  it('beats on an open stream, as a named event and never as a word', async () => {
+    const room = new Room();
+    const server = createServer((_req, res) => {
+      const end = holdStream(room, 'dm', res, { beatMs: 20 });
+      res.on('close', end);
+    });
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    const { port } = server.address() as AddressInfo;
+    const stop = new AbortController();
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/`, { signal: stop.signal });
+      expect(res.headers.get('content-type')).toBe('text/event-stream');
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let got = '';
+      room.changed('turn');
+      while (got.split(BEAT).length < 3) {
+        const { value } = await reader.read();
+        got += decoder.decode(value);
+      }
+      expect(got).toContain('data: turn\n\n');
+      expect(BEAT).toBe('event: beat\ndata: 1\n\n');
+      // Never a bare `data:` — that would land in onmessage as a word.
+      expect(got.replaceAll(BEAT, '')).not.toContain('beat');
+      expect(room.size).toBe(1);
+      stop.abort();
+      // Hanging up lets go of the room.
+      for (let i = 0; i < 50 && room.size > 0; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(room.size).toBe(0);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((done) => server.close(() => done()));
+    }
+  });
+
+  it('ends the stream when the screen is no longer what it was', async () => {
+    const room = new Room();
+    let still = true;
+    const server = createServer((_req, res) => {
+      holdStream(room, 'dm', res, { beatMs: 20, stillSo: () => still });
+    });
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      still = false;
+      // The body finishes on its own once the next beat finds it changed.
+      await res.text();
+      expect(room.size).toBe(0);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((done) => server.close(() => done()));
+    }
   });
 });

@@ -59,6 +59,7 @@ import {
   stored,
 } from './api.ts';
 import { streamOrPoll, type Claim } from './stream-budget.ts';
+import { LOOK_MS, POLL_MISSES, POLL_TIMEOUT_MS, sniff, type Watch } from './watchdog.ts';
 
 type Listener = (what: string) => void;
 /**
@@ -84,7 +85,7 @@ const identifyListeners = new Set<() => void>();
 const statusListeners = new Set<Status>();
 
 const CHECK_MS = 2_500;
-/** Longer than the server's 25s ping, so a leader whose socket is
+/** Longer than two of the host's 15s beats, so a leader whose socket is
  *  demonstrably alive is never deposed for a throttled timer. */
 const STALE_MS = 35_000;
 const FIRST_MS = 1_000;
@@ -125,6 +126,13 @@ let polling: ReturnType<typeof setTimeout> | null = null;
 let cursor: string | null = null;
 /** Which polling loop is current; an answer from an older one is dropped. */
 let loops = 0;
+/** The ask in flight, so a hang-up frees its connection now. */
+let asking: AbortController | null = null;
+/** Polls in a row that got no answer (`watchdog.ts`). */
+let misses = 0;
+/** The stream's watchdog: when the host last proved it was there. */
+let watched: Watch = { heard: 0, looked: 0 };
+let dog: ReturnType<typeof setInterval> | null = null;
 
 /** This tab, for as long as it lives. Never rendered, never stored.
  *  `crypto.randomUUID` is absent on a LAN origin (rule 6). */
@@ -257,6 +265,19 @@ function schedule(): void {
   delay = Math.min(delay * 2, MAX_MS);
 }
 
+/**
+ * The same promise, given up on when `signal` fires. A request to a host
+ * that vanished never settles, and a reconnect loop waiting on one is a
+ * loop that has quietly stopped.
+ */
+function inTime<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    if (signal.aborted) return reject(new Error('timed out'));
+    signal.addEventListener('abort', () => reject(new Error('timed out')), { once: true });
+    p.then(resolve, reject);
+  });
+}
+
 function open(): void {
   if (source || opening || role === 'follower') return;
   if (role === 'leader' && mode !== 'stream') return;
@@ -264,7 +285,10 @@ function open(): void {
   // Listening needs a ticket: EventSource can't send headers, so the
   // proof rides in the URL. It expires, and the browser's own retry
   // would hammer a 401 forever — so reconnection is ours.
-  getSlips()
+  const late = new AbortController();
+  const deadline = setTimeout(() => late.abort(), POLL_TIMEOUT_MS);
+  inTime(getSlips(), late.signal)
+    .finally(() => clearTimeout(deadline))
     .then((slips) => {
       opening = false;
       // An election can depose this tab while the slips are in flight,
@@ -279,8 +303,42 @@ function open(): void {
       );
       source = es;
       let opened = false;
+      const drop = () => {
+        // The dog belongs to whichever socket is current; a late error
+        // off a replaced one must not call off the new one's.
+        if (source === es) {
+          unleash();
+          source = null;
+        }
+        wasDown = true;
+        tellStatus('down');
+        es.close();
+        opening = false;
+        schedule();
+      };
+      // Watched from the moment it's asked for, not from when it opens:
+      // a host that vanished can take the connection and never answer
+      // it, and a socket stuck CONNECTING is as silent as one stuck open.
+      unleash();
+      watched = { heard: Date.now(), looked: Date.now() };
+      dog = setInterval(() => {
+        const look = sniff(watched, Date.now());
+        watched = { heard: look.heard, looked: look.looked };
+        if (look.down && source === es) drop();
+      }, LOOK_MS);
+      // The host's beat (`server/stream-poll.ts`). A NAMED event, so
+      // `onmessage` never sees it: it proves the host is there and
+      // nothing else — no subscriber hears it, nothing refetches.
+      es.addEventListener('beat', () => {
+        watched.heard = Date.now();
+        // A beat is as good a proof of life as a word, and the only one
+        // a quiet room gives — the leader's record stays fresh through
+        // it even while this tab's timers are throttled.
+        if (role === 'leader') stamp();
+      });
       es.onopen = () => {
         opened = true;
+        watched.heard = Date.now();
         delay = FIRST_MS;
         tellStatus('live');
         // Coming back from a drop, nobody knows what was missed while
@@ -296,6 +354,7 @@ function open(): void {
       };
       es.onmessage = (ev) => {
         const what = String(ev.data ?? '');
+        watched.heard = Date.now();
         if (role === 'leader') {
           // Every message proves the socket lives — worth a heartbeat.
           stamp();
@@ -311,12 +370,7 @@ function open(): void {
         // A screen left on past the ticket's twelve hours used to retry
         // last week's ticket forever.
         if (!opened) refused();
-        wasDown = true;
-        tellStatus('down');
-        es.close();
-        if (source === es) source = null;
-        opening = false;
-        schedule();
+        drop();
       };
     })
     .catch((err: unknown) => {
@@ -347,10 +401,18 @@ function poll(): void {
   // Stamped per loop, so `hangUp` (a reset, a promotion) orphans this
   // ask even when it lands with the same cursor a fresh loop starts on.
   const loop = ++loops;
-  getSlips()
+  // A host that vanished takes the request and never answers it, and an
+  // ask that never settles is a loop that never asks again — glass
+  // wearing "live · every few seconds" over a room that went away. So
+  // every ask has a deadline, and missing it is a failure like any other.
+  const ask = new AbortController();
+  asking = ask;
+  const deadline = setTimeout(() => ask.abort(), POLL_TIMEOUT_MS);
+  inTime(getSlips(), ask.signal)
     .then((slips) =>
       fetch(
         `/api/stream/poll?handle=${encodeURIComponent(slips.handle)}&ticket=${encodeURIComponent(slips.ticket)}${asked ? `&cursor=${encodeURIComponent(asked)}` : ''}`,
+        { signal: ask.signal },
       ),
     )
     .then(async (res) => {
@@ -366,6 +428,7 @@ function poll(): void {
       // answer belongs to a loop that no longer exists.
       if (loop !== loops || role !== 'leader' || mode !== 'poll') return;
       cursor = answer.cursor;
+      misses = 0;
       tellStatus('polling');
       const words = answer.gap || wasDown || !asked ? ['sync', ...answer.words] : answer.words;
       wasDown = false;
@@ -377,23 +440,40 @@ function poll(): void {
     })
     .catch(() => {
       if (loop !== loops || role !== 'leader' || mode !== 'poll') return;
+      // Whatever was said during a miss went unheard, so the next answer
+      // pays a `sync` either way. The PILL waits for a second miss in a
+      // row: one dropped request on a busy LAN is not a room gone dark.
       wasDown = true;
-      tellStatus('down');
+      misses += 1;
+      if (misses >= POLL_MISSES) tellStatus('down');
     })
     .finally(() => {
+      clearTimeout(deadline);
+      if (asking === ask) asking = null;
       if (loop !== loops || role !== 'leader' || mode !== 'poll' || !alive()) return;
       polling = setTimeout(poll, POLL_MS);
     });
 }
 
+/** Call off the stream's watchdog. */
+function unleash(): void {
+  if (dog) clearInterval(dog);
+  dog = null;
+}
+
 function hangUp(): void {
   if (retry) clearTimeout(retry);
   retry = null;
+  unleash();
   source?.close();
   source = null;
   opening = false;
   if (polling) clearTimeout(polling);
   polling = null;
+  // An ask still hanging holds one of the origin's six connections.
+  asking?.abort();
+  asking = null;
+  misses = 0;
   cursor = null;
   loops++;
 }
@@ -716,6 +796,7 @@ const VOCABULARY = [
   'sync',
   'templates',
   'turn',
+  'waiting',
 ];
 
 /** The interest that means "any word a plugin said". */

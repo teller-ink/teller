@@ -22,7 +22,7 @@
 // So the console's job shrank to two ordinary writes a human can undo:
 // make an entity wearing the mark, and point the screen at it.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { DRAFT_LIST, DRAFT_MARK } from '../../core/entity.ts';
 import { SIDE_MARK, type Side } from '../../core/side.ts';
 import { api, panes as fetchPanes, stored } from '../lib/api.ts';
@@ -51,7 +51,18 @@ type Display = {
   ppiY?: number;
   /** What it last reported about itself; the wizard sizes its strip by it. */
   viewport?: { w: number; h: number };
+  /** How long since the host heard from it, by the HOST's clock, at listing. */
+  quietMs?: number | null;
 };
+
+/**
+ * A screen showing a code is only waiting while it keeps asking — it
+ * says hello every three seconds. Mirrors `SHOWING_MS` on the host,
+ * which announces (`waiting`) a screen that arrives or comes back.
+ */
+const SHOWING_MS = 15_000;
+/** How often the count re-reads the clock while anything is waiting. */
+const RECOUNT_MS = 3_000;
 
 type PanelDecl = { name: string; label?: string; subject?: 'entity' | 'none' };
 type RosterEntry = { id: string; name: string; type: string | null; side: Side };
@@ -96,9 +107,14 @@ function isLive(display: Display): boolean {
 }
 
 function ScreensTool() {
-  const displays = useLive(() => api<Display[]>('/api/displays'), [], {
-    on: ['displays', 'assign'],
-  });
+  // Stamped with THIS screen's clock when it landed, so a row's age is
+  // the host's measurement plus time elapsed here — never a comparison of
+  // two clocks that need not agree.
+  const displays = useLive(
+    () => api<Display[]>('/api/displays').then((list) => ({ list, at: Date.now() })),
+    [],
+    { on: ['displays', 'assign', 'waiting'] },
+  );
   const panels = useLive(() => api<PanelDecl[]>('/api/stack/declarations/panels'), [], {
     on: ['plugins'],
   });
@@ -117,7 +133,7 @@ function ScreensTool() {
   // (rule 6: the screen shows the code, the DM types it) — listing the
   // waiting ones just mirrors every open tab back at the console. A dim
   // count keeps them discoverable without giving them furniture.
-  const all = displays.data ?? [];
+  const all = displays.data?.list ?? [];
   // The DM's own order (position, assigned at adoption, moved by the
   // arrows) — never by who spoke last: a row must not leap out from
   // under the hand about to touch it. Id breaks ties for stability.
@@ -133,7 +149,23 @@ function ScreensTool() {
   // count read one more than the room on every console (found
   // 2026-11-16). Its id is the one in this device's own storage
   // (rule 7), so it is the one row this console can rule out.
-  const waiting = all.filter((d) => d.code && d.id !== stored.display).length;
+  //
+  // And only the ones showing a code NOW. Arrivals come live (the host
+  // says `waiting`); departures are read off the clock, because a tab
+  // that closed says nothing on its way out — its row ages out of the
+  // count here without anybody asking the host again. Counting every row
+  // with a code read "2" with none on the glass.
+  const coded = all.filter((d) => d.code && d.id !== stored.display);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!coded.length) return;
+    const t = setInterval(() => setNow(Date.now()), RECOUNT_MS);
+    return () => clearInterval(t);
+  }, [coded.length]);
+  const since = Math.max(0, now - (displays.data?.at ?? now));
+  const waiting = coded.filter(
+    (d) => typeof d.quietMs === 'number' && d.quietMs + since < SHOWING_MS,
+  ).length;
 
   /**
    * Move a row and REINDEX the whole room, 1..n. Swapping raw values

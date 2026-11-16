@@ -83,7 +83,7 @@ import {
   providersOf,
 } from '../core/plugins.ts';
 import { callDoor, whoOf } from './plugin-bridge.ts';
-import { pollStream } from './stream-poll.ts';
+import { holdStream, pollStream } from './stream-poll.ts';
 import { grants, isPoint, POINTS, type Need, type Point } from '../core/registry.ts';
 import { bandsIn, fightGeometry, measureMove, type MoveRecord } from './geometry.ts';
 import {
@@ -876,6 +876,27 @@ function makeRoomForScreen(shelf: Host['shelf']): void {
   }
 }
 
+// WHO IS SHOWING A CODE RIGHT NOW — the Screens tool's count. A row with
+// a code is only a screen waiting to be adopted while it keeps asking:
+// a closed tab leaves its row behind for ten minutes (the sweep above),
+// and counting those told the DM "4 showing a code" with two on the
+// glass. Five missed three-second hellos is a screen that went away;
+// the tool mirrors this (`client/tools/screens.tsx`).
+//
+// Its arrival is SAID, as `waiting` — a word only that tool listens for.
+// Not `displays`: every screen re-asks its own hello on that one, and a
+// screen appearing is not news to the other screens in the room. Said
+// on the transition only (a new row, or one back from quiet), never on
+// every hello, or each pairing screen would nudge the room every three
+// seconds.
+const SHOWING_MS = 15_000;
+
+/** How long since the host heard from this screen, by the host's own clock. */
+function quietMs(display: Display, now = Date.now()): number | null {
+  const seen = display.lastSeenAt ? Date.parse(display.lastSeenAt) : NaN;
+  return Number.isFinite(seen) ? Math.max(0, now - seen) : null;
+}
+
 /**
  * The API, as one function — testable without a socket, servable with
  * one. Returns undefined for paths that aren't the API's.
@@ -925,8 +946,11 @@ export async function handleApi(
       let display =
         typeof body.id === 'string' ? shelf.display(body.id) : undefined;
       if (display) {
+        const quiet = quietMs(display);
+        const back = Boolean(display.code) && (quiet === null || quiet > SHOWING_MS);
         shelf.touchDisplay(display.id);
         display = shelf.refreshCodeIfExpired(display);
+        if (back) host.room.changed('waiting');
       } else {
         if (!mayMintScreen(shelf)) {
           return reply(429, { error: 'too many new screens at once — try again in a moment' });
@@ -936,6 +960,7 @@ export async function handleApi(
         // Seen at birth, so the oldest silence is a row that stopped
         // asking — never the screen whose code is on the glass right now.
         shelf.touchDisplay(display.id);
+        host.room.changed('waiting');
       }
       // The handle is told, not derived: a LAN origin is not a secure
       // context, so the client couldn't compute its own sha-256.
@@ -977,7 +1002,14 @@ export async function handleApi(
     if (method === 'GET' && !a) {
       // Listing is the moment truth matters — sweep the ghosts first.
       shelf.expireUnclaimedDisplays();
-      return reply(200, shelf.displays());
+      // Each row says how long it has been quiet, measured HERE: the
+      // console's clock (an iPad over Tailscale) need not agree with the
+      // host's about anything but elapsed time.
+      const now = Date.now();
+      return reply(
+        200,
+        shelf.displays().map((d) => ({ ...d, quietMs: quietMs(d, now) })),
+      );
     }
 
     // Adopt a waiting screen by the code it's showing.
@@ -3361,12 +3393,6 @@ export function serve(what: Session | Host, port: number, key: string) {
         res.end('ticket required');
         return;
       }
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      });
-      res.write('retry: 2000\n\n');
       // The assignment is asked again on every word, not only at the
       // door: a screen the DM deleted or pointed somewhere else used to
       // keep its open stream for as long as the socket lived (the audit,
@@ -3380,26 +3406,9 @@ export function serve(what: Session | Host, port: number, key: string) {
         const now = host.shelf.display(opened.id);
         return adopted(now) && canon({ role: now.role, params: now.params }) === assigned;
       };
-      let ended = false;
-      const end = () => {
-        if (ended) return;
-        ended = true;
-        clearInterval(ping);
-        unsubscribe();
-        res.end();
-      };
-      const unsubscribe = host.room.subscribe(
-        (what) => {
-          if (ended) return;
-          res.write(`data: ${what}\n\n`);
-          if (!stillSo()) end();
-        },
-        handle === 'dm' ? undefined : handle,
-      );
-      const ping = setInterval(() => {
-        if (!stillSo()) return end();
-        res.write(': ping\n\n');
-      }, 25_000);
+      // Every word, and a beat between them, so a screen can tell a quiet
+      // room from a host that went away (`holdStream`).
+      const end = holdStream(host.room, handle, res, { stillSo });
       req.on('close', end);
       return;
     }

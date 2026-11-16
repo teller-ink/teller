@@ -18,8 +18,7 @@ import {
   type PublicEntry,
   type PublicSnapshot,
 } from '../lib/api.ts';
-import { DECLARED, PUBLIC, useLive } from '../lib/use-session.ts';
-import { useArtMap } from '../lib/art.ts';
+import { DECLARED, PUBLIC, useFileUrl, useLive } from '../lib/use-session.ts';
 import { useWakeLock } from '../lib/use-wake-lock.ts';
 import { sectionLabel } from '../lib/ui.ts';
 import { ConnectionHint } from '../components/ConnectionHint.tsx';
@@ -88,7 +87,11 @@ export function BoardView() {
   // without a dedicated art frame is the ordinary table, and losing the
   // WANTED poster because nobody owns a spare tablet is not a policy.
   const handout = snapshot.data?.handout ?? null;
-  const art = useArtMap(handout ? { it: handout.key } : undefined).it;
+  // The same ticketed door the table and the art frame draw through, and
+  // the same recovery: a picture refused for an expired ticket fetches
+  // fresh slips and tries once more, instead of staying broken until
+  // somebody walks over and reloads the board.
+  const { url: art, onError: artRefused } = useFileUrl(handout?.key);
 
   if (!snapshot.data) {
     return (
@@ -138,6 +141,7 @@ export function BoardView() {
           <img
             src={art}
             alt={handout.name}
+            onError={artRefused}
             className="max-h-[75vh] max-w-full rounded-xl object-contain shadow-2xl"
           />
           <p className="font-serif text-3xl text-stone-200">{handout.name}</p>

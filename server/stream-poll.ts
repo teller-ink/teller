@@ -95,6 +95,65 @@ export function pollWords(room: Room, handle: string, cursor: string | null): Po
 }
 
 /**
+ * How often an open stream beats. A host that vanishes — lid shut, power
+ * pulled, off the Wi-Fi — closes nothing, so the browser's socket sits
+ * "open" over a room that went away; the client calls three missed beats
+ * a host that isn't there (`client/lib/watchdog.ts`, which mirrors this).
+ */
+export const BEAT_MS = 15_000;
+
+/**
+ * The beat itself: a NAMED event, because an SSE comment line (the old
+ * `: ping`) never reaches script at all and so proves nothing to the
+ * page. Named rather than plain `data:` so it never lands in
+ * `onmessage` — it is a liveness signal, not a word, and must not wake
+ * a subscriber or cost a refetch. The data is a byte because an event
+ * with empty data is never dispatched.
+ */
+export const BEAT = 'event: beat\ndata: 1\n\n';
+
+/**
+ * Hold `res` open as a handle's stream: every word the room says to it,
+ * and the beat between them. `stillSo` is asked on every word and every
+ * beat, and a false answer ends the stream (the route says why).
+ * Returns the hang-up.
+ */
+export function holdStream(
+  room: Room,
+  handle: string,
+  res: ServerResponse,
+  { stillSo = () => true, beatMs = BEAT_MS }: { stillSo?: () => boolean; beatMs?: number } = {},
+): () => void {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+  res.write('retry: 2000\n\n');
+  let ended = false;
+  const end = () => {
+    if (ended) return;
+    ended = true;
+    clearInterval(beat);
+    unsubscribe();
+    res.end();
+  };
+  const unsubscribe = room.subscribe(
+    (what) => {
+      if (ended) return;
+      res.write(`data: ${what}\n\n`);
+      if (!stillSo()) end();
+    },
+    handle === 'dm' ? undefined : handle,
+  );
+  const beat = setInterval(() => {
+    if (!stillSo()) return end();
+    res.write(BEAT);
+  }, beatMs);
+  return end;
+}
+
+/**
  * `GET /api/stream/poll?handle=&ticket=&cursor=` — the same ticket law
  * as `/api/stream`, because it IS the stream, asked for in pieces.
  */
