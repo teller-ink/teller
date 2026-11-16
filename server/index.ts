@@ -2521,6 +2521,19 @@ export async function handleApi(
     if (!canDm(auth)) return denied();
     if (method === 'POST') {
       const body = await bodyOf(req);
+      // `expect` is the event the button was SHOWING. Undo is
+      // table-global, so a seat's write can land between the peek and
+      // the press and make the next step something the Warden never
+      // read. Then nothing is written and the fresh peek comes back
+      // instead — the next press goes ahead, so it is a re-read, never
+      // a refusal (rule 1). A caller that sends no `expect` gets the
+      // plain walk, as before.
+      if (typeof body.expect === 'number') {
+        const now = peekUndo(session);
+        if (now?.event !== body.expect) {
+          return reply(200, { undone: null, stale: true, undoable: now });
+        }
+      }
       return reply(200, { undone: undo(session, actorOf(auth, String(body.actor ?? ''))) });
     }
   }

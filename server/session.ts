@@ -284,11 +284,15 @@ export class Session {
 
     const events: number[] = [];
     const lastEvent = () => this.campaign.events({ limit: 1 })[0]?.id;
+    // `entities` names who went, so an undo can put back exactly their
+    // tokens into the board as it stands then, rather than the whole
+    // board as it stood now (`server/undo.ts`, the targeted restore).
     const cascade: {
       events: number[];
+      entities: string[];
       turn?: TurnState;
       boards?: { boardId: string; data: unknown }[];
-    } = { events };
+    } = { events, entities: [...gone] };
 
     // The order. Row by row through the ordinary `remove` op, so whose
     // turn it is falls back exactly the way it does when the DM lifts a

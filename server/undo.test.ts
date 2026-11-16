@@ -278,6 +278,210 @@ describe('the walk', () => {
   });
 });
 
+// Audit 2026-11-16, item 7: undo stepped over a fog change in silence
+// and reverted an edit eleven days old; its label was ids; and undoing a
+// delete rewound every token on the board. These pin the three answers.
+describe('saying what it will do before it does it', () => {
+  const lake = () => session.shelf.putBoard({ key: 'map/lake.png', name: 'The Lake' }).id;
+  const tokens = (boardId: string) =>
+    ((session.campaign.boardState(boardId) as any)?.placements ?? []) as any[];
+
+  it('names who did it and what, in words — a seat by its character', async () => {
+    const beau = session.create(
+      { name: 'Beau Tillman', lists: { resources: [{ name: 'Health', value: 9, max: 10 }] } },
+      'console',
+    );
+    const seat = await screen('seat', { entityId: beau.id });
+    await call('POST', `/api/entities/${beau.id}/entry`, {
+      display: seat,
+      body: { list: 'resources', name: 'Health', value: 10 },
+    });
+
+    const peek = (await call('GET', '/api/undo/peek', { key: true })).body.undoable;
+    expect(peek.who).toBe("Beau Tillman's seat");
+    expect(peek.what).toBe('Beau Tillman — Health 9 → 10');
+    expect(peek.ago).toBe('just now');
+    expect(peek.skipped).toBeUndefined();
+    expect(JSON.stringify([peek.who, peek.what])).not.toContain('ent_');
+  });
+
+  it('names a deletion by the thing, not the id', async () => {
+    const watcher = session.create({ name: 'Bark Watcher 2', lists: {} }, 'console');
+    session.remove(watcher.id, 'console');
+    const peek = (await call('GET', '/api/undo/peek', { key: true })).body.undoable;
+    expect(peek.who).toBe('the console');
+    expect(peek.what).toBe('deleted Bark Watcher 2');
+  });
+
+  it('reports a newer board write it cannot undo, rather than passing it in silence', async () => {
+    const board = lake();
+    const beau = session.create(
+      { name: 'Beau Tillman', lists: { resources: [{ name: 'Health', value: 9 }] } },
+      'console',
+    );
+    await call('POST', `/api/entities/${beau.id}/entry`, {
+      key: true,
+      body: { list: 'resources', name: 'Health', value: 6 },
+    });
+    // A token down, then moved, then fog — three board writes, newest last.
+    await call('PUT', `/api/board-state/${board}`, {
+      key: true,
+      body: { data: { placements: [{ id: 'plc_b', entityId: beau.id, u: 1, v: 1 }] } },
+    });
+    await call('PUT', `/api/board-state/${board}`, {
+      key: true,
+      body: { data: { placements: [{ id: 'plc_b', entityId: beau.id, u: 3, v: 1 }] } },
+    });
+    await call('PUT', `/api/board-state/${board}`, {
+      key: true,
+      body: {
+        data: { placements: [{ id: 'plc_b', entityId: beau.id, u: 3, v: 1 }], fog: { dark: [1] } },
+      },
+    });
+
+    const peek = (await call('GET', '/api/undo/peek', { key: true })).body.undoable;
+    // The thing undo would take is still the Health edit — board writes
+    // stay un-undoable — but it says, by name, what it reaches past.
+    expect(peek.what).toBe('Beau Tillman — Health 9 → 6');
+    expect(peek.skipped.count).toBe(3);
+    expect(peek.skipped.what).toEqual([
+      'fog, tokens or zones on The Lake ×2',
+      'moved Beau Tillman on The Lake',
+    ]);
+
+    // The press says the same, and the board is exactly where it was.
+    const done = await call('POST', '/api/undo', { key: true, body: { expect: peek.event } });
+    expect(done.body.undone.skipped.count).toBe(3);
+    expect(tokens(board)[0].u).toBe(3);
+    expect((session.campaign.boardState(board) as any).fog).toEqual({ dark: [1] });
+  });
+
+  it('re-reads instead of undoing something the button was not showing', async () => {
+    const beau = session.create(
+      { name: 'Beau Tillman', lists: { resources: [{ name: 'Health', value: 9 }] } },
+      'console',
+    );
+    await call('POST', `/api/entities/${beau.id}/entry`, {
+      key: true,
+      body: { list: 'resources', name: 'Health', value: 8 },
+    });
+    const shown = (await call('GET', '/api/undo/peek', { key: true })).body.undoable;
+    // A seat writes between the peek and the press.
+    const seat = await screen('seat', { entityId: beau.id });
+    await call('POST', `/api/entities/${beau.id}/entry`, {
+      display: seat,
+      body: { list: 'resources', name: 'Health', value: 7 },
+    });
+
+    const stale = await call('POST', '/api/undo', { key: true, body: { expect: shown.event } });
+    expect(stale.status).toBe(200);
+    expect(stale.body.stale).toBe(true);
+    expect(stale.body.undoable.who).toBe("Beau Tillman's seat");
+    expect(session.campaign.get(beau.id)!.lists.resources[0].value).toBe(7);
+
+    // And the next press, now reading the fresh step, goes ahead.
+    const done = await call('POST', '/api/undo', {
+      key: true,
+      body: { expect: stale.body.undoable.event },
+    });
+    expect(done.body.undone.who).toBe("Beau Tillman's seat");
+    expect(session.campaign.get(beau.id)!.lists.resources[0].value).toBe(8);
+  });
+
+  it('undoing a delete puts its token back and leaves later moves and fog alone', async () => {
+    const board = lake();
+    const foeA = session.create({ name: 'Foe A', lists: {} }, 'console');
+    const foeB = session.create({ name: 'Foe B', lists: {} }, 'console');
+    const beau = session.create({ name: 'Beau Tillman', lists: {} }, 'console');
+    session.putBoardState(
+      board,
+      {
+        placements: [
+          { id: 'plc_a', entityId: foeA.id, u: 1, v: 1 },
+          { id: 'plc_b', entityId: foeB.id, u: 2, v: 2 },
+          { id: 'plc_beau', entityId: beau.id, u: 3, v: 3 },
+        ],
+        fog: { dark: [1, 2, 3] },
+      },
+      'console',
+    );
+    session.turnOp({ op: 'add', entityId: foeA.id }, 'console');
+    session.turnOp({ op: 'add', entityId: foeB.id }, 'console');
+    session.turnOp({ op: 'add', entityId: beau.id }, 'console');
+    session.turnOp({ op: 'next' }, 'console');
+
+    session.remove(foeA.id, 'console');
+    // The fight goes on: Foe B and Beau move, the fog lifts, a turn passes.
+    session.putBoardState(
+      board,
+      {
+        placements: [
+          { id: 'plc_b', entityId: foeB.id, u: 5, v: 5 },
+          { id: 'plc_beau', entityId: beau.id, u: 6, v: 6 },
+        ],
+        fog: { dark: [] },
+      },
+      'console',
+    );
+    // A turn passes too, written the way an older build wrote it — a
+    // bare op with no before, so it is stepped over like the board and
+    // the order undo finds is NOT the one the delete left behind.
+    const passed = session.turnState();
+    session.campaign.putTurnState({ ...passed, turn: 1 }, 'console', 'next');
+    expect(session.turnState().order[1].entityId).toBe(beau.id);
+
+    const peek = (await call('GET', '/api/undo/peek', { key: true })).body.undoable;
+    expect(peek.what).toBe('deleted Foe A');
+    expect(peek.skipped.what).toEqual([
+      'a turn order change',
+      'moved Foe B, Beau Tillman on The Lake',
+    ]);
+    expect(peek.also).toBeUndefined();
+    await call('POST', '/api/undo', { key: true, body: { expect: peek.event } });
+
+    expect(session.campaign.get(foeA.id)?.name).toBe('Foe A');
+    const at = Object.fromEntries(tokens(board).map((p) => [p.entityId, [p.u, p.v]]));
+    expect(at).toEqual({ [foeA.id]: [1, 1], [foeB.id]: [5, 5], [beau.id]: [6, 6] });
+    expect((session.campaign.boardState(board) as any).fog).toEqual({ dark: [] });
+    // Foe A is back in its old slot, and it is still Beau's turn.
+    const turn = session.turnState();
+    expect(turn.order.map((e) => e.entityId)).toEqual([foeA.id, foeB.id, beau.id]);
+    expect(turn.order[turn.turn!].entityId).toBe(beau.id);
+  });
+
+  it('undoing a sweep brings the fight back without rewinding the board since', async () => {
+    const board = lake();
+    const root = session.campaign.root();
+    session.save({ ...root, refs: { ...root.refs, board: { id: board, name: 'The Lake' } } }, 'host');
+    const foe = session.create({ name: 'Coyote', lists: {} }, 'console');
+    const pc = session.create({ name: 'Hattie', type: 'pc', lists: {} } as any, 'console');
+    session.putBoardState(
+      board,
+      {
+        placements: [
+          { id: 'plc_c', entityId: foe.id, u: 1, v: 1 },
+          { id: 'plc_h', entityId: pc.id, u: 2, v: 2 },
+        ],
+      },
+      'console',
+    );
+    session.clearTable('console');
+    expect(session.campaign.get(foe.id)).toBeUndefined();
+    expect(session.campaign.get(pc.id)).toBeDefined();
+    session.putBoardState(
+      board,
+      { placements: [{ id: 'plc_h', entityId: pc.id, u: 9, v: 9 }], fog: { dark: [4] } },
+      'console',
+    );
+
+    await call('POST', '/api/undo', { key: true, body: {} });
+    const at = Object.fromEntries(tokens(board).map((p) => [p.entityId, [p.u, p.v]]));
+    expect(at[foe.id]).toEqual([1, 1]);
+    expect(at[pc.id]).toEqual([9, 9]);
+    expect((session.campaign.boardState(board) as any).fog).toEqual({ dark: [4] });
+  });
+});
+
 describe('prep is the Warden\'s, and a seat shops', () => {
   it('lets the DM and a seat read templates, and refuses passive glass', async () => {
     await call('POST', '/api/templates/encounters', {

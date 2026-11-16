@@ -72,8 +72,8 @@ function onEach(t: TargetLine): string {
 /**
  * What one kind of row DID, in a word — for the rows whose payload
  * carries no entry to name (a delete, a move, a turn shuffle) and for
- * the undo button, which has to say what it is about to step back
- * before it steps back it.
+ * the row an undo files. The undo BUTTON's sentence is worded by the
+ * server (`server/undo.ts`), so it can name things rather than kinds.
  */
 const VERB: Record<string, string> = {
   'entity.created': 'created',
@@ -187,31 +187,17 @@ function when(createdAt: string): string {
 type Undoable = {
   event: number;
   kind: string;
-  actor: string;
-  at: string;
-  entityId: string | null;
-  name?: string;
-  changes?: { list: string; name: string; from?: number | string; to?: number | string }[];
+  /** Who did it, by name — the server words it, so no screen shows an id. */
+  who: string;
+  /** What it was, by name — 'Beau Tillman — Health 9 → 10'. */
+  what: string;
+  /** Roughly when — 'just now', '4 min ago'. */
+  ago: string;
+  /** Newer changes the press walks PAST, because nothing can step them back. */
+  skipped?: { count: number; what: string[] };
+  /** Anything else the press does that nobody would guess. */
+  also?: string[];
 };
-
-/**
- * The button's own sentence — 'Hattie Vargas — resources/Grit 3→4'.
- *
- * The peek carries every entry that moved; the label names the FIRST
- * and counts the rest, because a button has one line and a row that
- * touched four entries still has to be recognisable before you press
- * it. Anything with no entries to name falls back to what the row did.
- */
-function undoLabel(u: Undoable): string {
-  const changes = u.changes ?? [];
-  const first = changes[0];
-  const rest = changes.length > 1 ? ` +${changes.length - 1}` : '';
-  const at = (v: number | string | undefined) => (v === undefined ? '—' : String(v));
-  const what = first
-    ? `${first.list}/${first.name} ${at(first.from)}→${at(first.to)}${rest}`
-    : (VERB[u.kind] ?? u.kind);
-  return u.name ? `${u.name} — ${what}` : what;
-}
 
 /**
  * Step the table back one mutation, from the screen that shows what
@@ -219,6 +205,18 @@ function undoLabel(u: Undoable): string {
  * does — an undo you can't read before pressing is one you have to
  * press to find out about — and nothing to undo is a plain disabled
  * button, not an error: a fresh campaign has nothing behind it.
+ *
+ * When the latest change is one undo CAN'T take (a fog stroke, a token
+ * move, a notice), the press reaches past it to something older, and
+ * that is exactly where a Warden gets surprised. So then it takes TWO
+ * presses: the first only arms it, and the button says what it reaches
+ * past. Saying so loudly was the other choice and it loses mid-fight —
+ * the hand that misclicked the fog is on its way to undo before the
+ * eyes read any warning. A second press costs a second; a silent revert
+ * of some older edit costs whatever that edit was. Nothing is refused
+ * (rule 1): the second press always goes. And the press names the step
+ * it showed, so a seat's write landing in between gets a re-read rather
+ * than an undo nobody read.
  */
 function UndoButton({ onUndone }: { onUndone: () => void }) {
   const { data, reload } = useLive(
@@ -227,13 +225,34 @@ function UndoButton({ onUndone }: { onUndone: () => void }) {
   );
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState('');
+  // Armed for ONE step, by its event: if the table moves under the
+  // button, the arming doesn't carry over to a different thing.
+  const [armed, setArmed] = useState<number | null>(null);
   const undoable = data?.undoable ?? null;
+  const surprising = !!undoable && !!(undoable.skipped || undoable.also?.length);
+  const ready = !surprising || armed === undoable?.event;
 
   const step = async () => {
+    if (!undoable) return;
+    if (!ready) {
+      setArmed(undoable.event);
+      window.setTimeout(() => setArmed(null), 6_000);
+      return;
+    }
     setBusy(true);
+    setArmed(null);
     try {
-      const { undone } = await api<{ undone: Undoable | null }>('/api/undo', { method: 'POST' });
-      setSaid(undone ? `put back ${undoLabel(undone)}` : 'nothing left to undo');
+      const res = await api<{ undone: Undoable | null; stale?: boolean }>('/api/undo', {
+        method: 'POST',
+        body: { expect: undoable.event },
+      });
+      setSaid(
+        res.stale
+          ? 'the table changed — read it again'
+          : res.undone
+            ? `put back: ${res.undone.what}`
+            : 'nothing left to undo',
+      );
       window.setTimeout(() => setSaid(''), 6_000);
       reload();
       onUndone();
@@ -244,18 +263,41 @@ function UndoButton({ onUndone }: { onUndone: () => void }) {
     }
   };
 
+  const past = undoable?.skipped;
   return (
-    <>
-      <button
-        className={btnGhost}
-        disabled={busy || !undoable}
-        title={undoable ? 'step the table back one mutation' : 'nothing behind this table yet'}
-        onClick={step}
-      >
-        {undoable ? `undo: ${undoLabel(undoable)}` : 'nothing to undo'}
-      </button>
-      {said && <span className="text-[11px] text-stone-500">{said}</span>}
-    </>
+    <div className="flex min-w-0 flex-col gap-1">
+      {past && (
+        <span className="text-[11px] text-amber-400">
+          latest can&apos;t be undone — this reaches past {past.count} newer change
+          {past.count === 1 ? '' : 's'}: {past.what.join(' · ')}
+        </span>
+      )}
+      {undoable?.also?.map((line) => (
+        <span key={line} className="text-[11px] text-amber-400">
+          {line}
+        </span>
+      ))}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          className={`${btnGhost} ${surprising ? 'border-amber-500/70 text-amber-300' : ''}`}
+          disabled={busy || !undoable}
+          title={undoable ? 'step the table back one mutation' : 'nothing behind this table yet'}
+          onClick={step}
+        >
+          {!undoable
+            ? 'nothing to undo'
+            : surprising && ready
+              ? `press again — undo: ${undoable.what}`
+              : `undo: ${undoable.what}`}
+        </button>
+        {undoable && (
+          <span className="text-[11px] text-stone-500">
+            {undoable.who} · {undoable.ago}
+          </span>
+        )}
+        {said && <span className="text-[11px] text-stone-500">{said}</span>}
+      </div>
+    </div>
   );
 }
 
