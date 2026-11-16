@@ -783,6 +783,10 @@ rendezvous infrastructure, not teller-the-program.
 
 > **teller.ink may carry bytes; it never runs the game.**
 
+*(Built 2026-11-15: `site/` — a static page under its own worker name,
+so publishing it moves the domain and leaves the pre-fold hosted
+worker and its data alone. Retiring those is a separate decision.)*
+
 ---
 
 ## Open — with what would settle each

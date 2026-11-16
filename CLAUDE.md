@@ -135,9 +135,15 @@ won't reinstall — and shelf CODE recompiles on restart.
   (rule 7). The assistant is a plugin with its own config on the
   shelf; absent means no assistant and no button — never a nag.
 
-The Cloudflare deployment still exists and is where the landing page
-will live (§16 — a brochure). It is not where play happens, and no
-play-path code may depend on it.
+**`site/`** is teller.ink — the brochure (§16): one static page with
+zero teller code, its own stylesheet, script and fonts, published as
+its own worker (`wrangler deploy --config site/wrangler.jsonc`). It is
+not where play happens, and no play-path code may depend on it. Its
+drawing rule is teller's visual identity (Brian, 2026-11-15):
+**anything you can touch at the table is pale line; anything teller
+does is lit brass** — `site/README.md` has the rest. The page quotes
+the product (screen roles, what `teller host` prints, the install
+line), so a change to any of those is a change to the page.
 
 ## Design docs — read before touching their subject
 

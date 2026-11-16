@@ -1,0 +1,9 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- teller — the ledger. The table plays; teller keeps the books. -->
+  <rect width="512" height="512" rx="112" fill="#0c0a09"/>
+  <rect x="140" y="92" width="232" height="328" rx="22" fill="#d97706"/>
+  <path d="M140 114 a22 22 0 0 1 22-22 h30 v328 h-30 a22 22 0 0 1-22-22 Z" fill="#92400e"/>
+  <rect x="192" y="150" width="150" height="14" rx="7" fill="#78350f" opacity="0.85"/>
+  <rect x="192" y="184" width="110" height="14" rx="7" fill="#78350f" opacity="0.55"/>
+  <path d="M306 92 h44 v128 l-22 -20 l-22 20 Z" fill="#fde68a"/>
+</svg>

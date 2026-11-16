@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <!-- teller.ink's social card. Source for public/og.png:
+         rsvg-convert site/og.svg -o site/public/og.png
+       (with Newsreader 72pt and IBM Plex Mono installed as desktop fonts). -->
+  <defs>
+    <radialGradient id="room" cx="0.78" cy="1.05" r="0.9"><stop offset="0" stop-color="#d97706" stop-opacity="0.2"/><stop offset="0.6" stop-color="#d97706" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="#0c0a09"/>
+  <rect width="1200" height="630" fill="url(#room)"/>
+  <g transform="translate(64 56) scale(0.125)">
+    <rect width="512" height="512" rx="112" fill="#0c0a09"/>
+    <rect x="140" y="92" width="232" height="328" rx="22" fill="#d97706"/>
+    <path d="M140 114 a22 22 0 0 1 22-22 h30 v328 h-30 a22 22 0 0 1-22-22 Z" fill="#92400e"/>
+    <rect x="192" y="150" width="150" height="14" rx="7" fill="#78350f" opacity="0.85"/>
+    <rect x="192" y="184" width="110" height="14" rx="7" fill="#78350f" opacity="0.55"/>
+    <path d="M306 92 h44 v128 l-22 -20 l-22 20 Z" fill="#fde68a"/>
+  </g>
+  <text x="140" y="103" font-family="Newsreader 72pt, Newsreader, Georgia, serif" font-weight="500" font-size="40" fill="#f5f5f4" letter-spacing="-0.4">teller</text>
+  <text x="64" y="232" font-family="Newsreader 72pt, Newsreader, Georgia, serif" font-size="92" fill="#f5f5f4" letter-spacing="-2.4">The table plays.</text>
+  <text x="64" y="328" font-family="Newsreader 72pt, Newsreader, Georgia, serif" font-style="italic" font-size="92" fill="#e7e5e4" letter-spacing="-2.4"><tspan fill="#fbbf24" font-weight="500">teller</tspan> keeps the books.</text>
+  <text x="66" y="568" font-family="IBM Plex Mono, Menlo, monospace" font-size="24" fill="#a8a29e" letter-spacing="1">teller.ink</text>
+  <g transform="translate(404 304) scale(0.74)">
+<defs>
+            <pattern id="grid" x="330" y="200" width="30" height="30" patternUnits="userSpaceOnUse"><path d="M30 0H0V30" fill="none" stroke="#f59e0b" stroke-opacity="0.22" stroke-width="1"/></pattern>
+            <linearGradient id="mapfill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3d2808"/><stop offset="1" stop-color="#221604"/></linearGradient>
+            <filter id="glow" x="-40%" y="-120%" width="180%" height="340%"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <filter id="halo" x="-30%" y="-40%" width="160%" height="180%"><feGaussianBlur stdDeviation="26"/></filter>
+            <clipPath id="mapclip"><rect x="330" y="200" width="540" height="240" rx="6"/></clipPath>
+          </defs>
+
+          <!-- the table and its rail -->
+          <rect x="150" y="90" width="900" height="460" rx="46" fill="#17130f" stroke="#3b332b" stroke-width="2"/>
+          <rect x="196" y="136" width="808" height="368" rx="16" fill="#100d0b" stroke="#2a2420" stroke-width="1.5"/>
+
+          <!-- glass: the map under the minis -->
+          <rect x="330" y="200" width="540" height="240" rx="6" fill="#d97706" opacity="0.4" filter="url(#halo)"/>
+          <rect x="330" y="200" width="540" height="240" rx="6" fill="url(#mapfill)"/>
+          <g clip-path="url(#mapclip)">
+            <path d="M320 396 C 400 372, 452 424, 524 406 S 640 446, 720 452" fill="none" stroke="#f59e0b" stroke-opacity="0.3" stroke-width="20" stroke-linecap="round"/>
+            <rect x="540" y="224" width="80" height="50" fill="#f59e0b" fill-opacity="0.1" stroke="#f59e0b" stroke-opacity="0.55" stroke-width="1.5"/>
+            <rect x="606" y="300" width="46" height="38" fill="#f59e0b" fill-opacity="0.1" stroke="#f59e0b" stroke-opacity="0.55" stroke-width="1.5"/>
+            <path d="M360 236 L 500 262 L 540 250" fill="none" stroke="#f59e0b" stroke-opacity="0.45" stroke-width="1.5" stroke-dasharray="5 6"/>
+            <rect x="330" y="200" width="540" height="240" fill="url(#grid)"/>
+            <path d="M746 196 C 730 236, 764 268, 746 310 S 732 384, 754 444 L 874 444 L 874 196 Z" fill="#0c0a09" fill-opacity="0.92"/>
+          </g>
+          <rect x="330" y="200" width="540" height="240" rx="6" fill="none" stroke="#d97706" stroke-width="2"/>
+
+          <!-- glass: seats on the rail, lighting up in turn order -->
+          <g filter="url(#glow)">
+            <rect x="380" y="101" width="180" height="24" rx="5" fill="#fcd34d"/>
+            <rect x="390" y="109" width="46" height="8" rx="2" fill="#0c0a09" fill-opacity="0.5"/>
+            <rect x="446" y="110" width="74" height="6" rx="3" fill="#0c0a09" fill-opacity="0.35"/>
+            <circle cx="534" cy="113" r="3" fill="#0c0a09" fill-opacity="0.5"/><circle cx="546" cy="113" r="3" fill="#0c0a09" fill-opacity="0.5"/>
+          </g>
+          <g filter="url(#glow)">
+            <rect x="640" y="101" width="180" height="24" rx="5" fill="#b45309"/>
+            <rect x="650" y="109" width="56" height="8" rx="2" fill="#0c0a09" fill-opacity="0.5"/>
+            <rect x="716" y="110" width="64" height="6" rx="3" fill="#0c0a09" fill-opacity="0.35"/>
+            <circle cx="794" cy="113" r="3" fill="#0c0a09" fill-opacity="0.5"/><circle cx="806" cy="113" r="3" fill="#0c0a09" fill-opacity="0.5"/>
+          </g>
+          <g filter="url(#glow)">
+            <rect x="250" y="515" width="180" height="24" rx="5" fill="#b45309"/>
+            <rect x="260" y="523" width="50" height="8" rx="2" fill="#0c0a09" fill-opacity="0.5"/>
+            <rect x="320" y="524" width="70" height="6" rx="3" fill="#0c0a09" fill-opacity="0.35"/>
+            <circle cx="404" cy="527" r="3" fill="#0c0a09" fill-opacity="0.5"/><circle cx="416" cy="527" r="3" fill="#0c0a09" fill-opacity="0.5"/>
+          </g>
+          <g filter="url(#glow)" transform="translate(820 470) rotate(-10)">
+            <rect x="-15" y="-25" width="30" height="50" rx="6" fill="#b45309"/>
+            <rect x="-9" y="-17" width="18" height="5" rx="2" fill="#0c0a09" fill-opacity="0.5"/>
+            <rect x="-9" y="-8" width="18" height="4" rx="2" fill="#0c0a09" fill-opacity="0.35"/>
+            <rect x="-9" y="0" width="12" height="4" rx="2" fill="#0c0a09" fill-opacity="0.35"/>
+          </g>
+
+          <!-- glass: the GM's end, and the far end -->
+          <g filter="url(#glow)">
+            <rect x="214" y="286" width="84" height="68" rx="6" fill="#92400e" stroke="#d97706" stroke-width="1.5"/>
+            <path d="M242 286 V354 M242 318 H298" stroke="#0c0a09" stroke-opacity="0.45" stroke-width="2"/>
+            <rect x="312" y="262" width="7" height="116" rx="3.5" fill="#f59e0b"/>
+            <rect x="900" y="290" width="82" height="60" rx="5" fill="#92400e" stroke="#d97706" stroke-width="1.5"/>
+            <rect x="910" y="300" width="62" height="40" rx="2" fill="#fbbf24" fill-opacity="0.45"/>
+          </g>
+
+          <!-- real: minis -->
+          <g fill="#0c0a09" stroke="#e7e5e4" stroke-width="2.5">
+            <circle cx="428" cy="292" r="13"/><circle cx="452" cy="332" r="13"/><circle cx="404" cy="350" r="13"/><circle cx="470" cy="374" r="13"/>
+            <circle cx="696" cy="330" r="21"/><circle cx="668" cy="388" r="13"/><circle cx="700" cy="262" r="13"/>
+          </g>
+          <g fill="none" stroke="#e7e5e4" stroke-width="1.5" stroke-opacity="0.7">
+            <circle cx="428" cy="292" r="5"/><circle cx="452" cy="332" r="5"/><circle cx="404" cy="350" r="5"/><circle cx="470" cy="374" r="5"/>
+            <circle cx="696" cy="330" r="9"/><circle cx="668" cy="388" r="5"/><circle cx="700" cy="262" r="5"/>
+          </g>
+
+          <!-- real: dice -->
+          <g fill="#0c0a09" stroke="#e7e5e4" stroke-width="2">
+            <g transform="translate(588 468) rotate(14)"><rect x="-10" y="-10" width="20" height="20" rx="4"/></g>
+            <g transform="translate(618 480) rotate(-22)"><rect x="-10" y="-10" width="20" height="20" rx="4"/></g>
+            <g transform="translate(455 170) rotate(-9)"><rect x="-10" y="-10" width="20" height="20" rx="4"/></g>
+            <g transform="translate(704 168)"><polygon points="0,-14 12.1,-7 12.1,7 0,14 -12.1,7 -12.1,-7"/><path d="M0 -14 L-8 5 L8 5 Z M-8 5 L0 14 L8 5 M-12.1 -7 L-8 5 M12.1 -7 L8 5" fill="none" stroke-width="1.2"/></g>
+          </g>
+          <g fill="#e7e5e4">
+            <g transform="translate(588 468) rotate(14)"><circle r="1.8"/><circle cx="-5" cy="-5" r="1.8"/><circle cx="5" cy="5" r="1.8"/></g>
+            <g transform="translate(618 480) rotate(-22)"><circle cx="-5" cy="-5" r="1.8"/><circle cx="5" cy="5" r="1.8"/><circle cx="-5" cy="5" r="1.8"/><circle cx="5" cy="-5" r="1.8"/></g>
+            <g transform="translate(455 170) rotate(-9)"><circle cx="-4" cy="-4" r="1.8"/><circle cx="4" cy="4" r="1.8"/></g>
+          </g>
+
+            </g>
+</svg>

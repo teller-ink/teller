@@ -31,6 +31,20 @@
         "4528"
       ],
       "port": 4528
+    },
+    {
+      "name": "site",
+      "runtimeExecutable": "wrangler",
+      "runtimeArgs": [
+        "dev",
+        "--config",
+        "site/wrangler.jsonc",
+        "--port",
+        "4540",
+        "--ip",
+        "127.0.0.1"
+      ],
+      "port": 4540
     }
   ]
 }

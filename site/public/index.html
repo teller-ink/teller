@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>teller — the table plays; teller keeps the books</title>
+<meta name="description" content="A companion for in-person tabletop RPGs. Dice, minis and rulings stay on the table. Initiative, hit points, conditions and fog go on the screens around it. Runs on your own machine.">
+<link rel="canonical" href="https://teller.ink/">
+<meta name="theme-color" content="#0c0a09">
+<meta name="color-scheme" content="dark">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="teller">
+<meta property="og:title" content="The table plays. teller keeps the books.">
+<meta property="og:description" content="A companion for in-person tabletop RPGs. Not a virtual tabletop — the opposite of one.">
+<meta property="og:url" content="https://teller.ink/">
+<meta property="og:image" content="https://teller.ink/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preload" href="/fonts/newsreader.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/newsreader-italic.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/hanken-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/site.css">
+<script src="/site.js" defer></script>
+</head>
+<body>
+<!--
+  teller.ink — the brochure (docs/CORE-NEXT.md §16). Static, and it knows
+  nothing about teller as a program: no api, no build step, no framework.
+  One rule draws every picture on this page — anything you can touch at
+  the table is PALE LINE, anything teller does is LIT BRASS.
+-->
+<a class="skip" href="#main">Skip to content</a>
+
+<svg class="defs" aria-hidden="true">
+  <symbol id="mark" viewBox="0 0 512 512">
+    <rect width="512" height="512" rx="112" fill="#0c0a09"/>
+    <rect x="140" y="92" width="232" height="328" rx="22" fill="#d97706"/>
+    <path d="M140 114 a22 22 0 0 1 22-22 h30 v328 h-30 a22 22 0 0 1-22-22 Z" fill="#92400e"/>
+    <rect x="192" y="150" width="150" height="14" rx="7" fill="#78350f" opacity="0.85"/>
+    <rect x="192" y="184" width="110" height="14" rx="7" fill="#78350f" opacity="0.55"/>
+    <path d="M306 92 h44 v128 l-22 -20 l-22 20 Z" fill="#fde68a"/>
+  </symbol>
+</svg>
+
+<header class="top">
+  <div class="wrap top-in">
+    <a class="brand" href="/" aria-label="teller, home"><svg class="mark" aria-hidden="true"><use href="#mark"/></svg>teller</a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#screens">Screens</a>
+      <a href="#empty">Ships empty</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/teller-ink/teller">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ================= hero ================= -->
+  <section class="hero">
+    <div class="wrap">
+      <h1 class="hero-h"><span class="ln">The table plays.</span><em class="ln"><b>teller</b> keeps the books.</em></h1>
+      <div class="hero-side">
+        <p class="lede">A companion for in-person tabletop RPGs. Not a virtual tabletop — the opposite of one. Dice, minis and rulings stay on the table. Initiative, hit points, conditions and fog go on the screens around it.</p>
+        <div class="hero-get">
+          <div class="cmd">
+            <code id="cmd-hero"><span class="p" aria-hidden="true">$</span>brew install teller-ink/tap/teller</code>
+            <button type="button" class="copy" aria-live="polite" data-copy="brew install teller-ink/tap/teller" data-select="cmd-hero">Copy</button>
+          </div>
+          <p class="fine">Free and open source. Runs on your own machine.</p>
+        </div>
+      </div>
+
+      <figure class="hero-fig">
+        <div class="tbl-crop">
+        <svg class="tbl" viewBox="0 0 1200 640" role="img" aria-labelledby="tblT tblD">
+          <title id="tblT">A game table seen from above</title>
+          <desc id="tblD">Dice, minis and terrain are drawn in pale line. Every screen is lit brass: the map under the minis, a touch bar at each seat, a phone, the GM's console, the board and the art frame.</desc>
+          <defs>
+            <pattern id="grid" x="330" y="200" width="30" height="30" patternUnits="userSpaceOnUse"><path d="M30 0H0V30" fill="none" stroke="#f59e0b" stroke-opacity="0.22" stroke-width="1"/></pattern>
+            <linearGradient id="mapfill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3d2808"/><stop offset="1" stop-color="#221604"/></linearGradient>
+            <filter id="glow" x="-40%" y="-120%" width="180%" height="340%"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <filter id="halo" x="-30%" y="-40%" width="160%" height="180%"><feGaussianBlur stdDeviation="26"/></filter>
+            <clipPath id="mapclip"><rect x="330" y="200" width="540" height="240" rx="6"/></clipPath>
+          </defs>
+
+          <!-- the table and its rail -->
+          <rect x="150" y="90" width="900" height="460" rx="46" fill="#17130f" stroke="#3b332b" stroke-width="2"/>
+          <rect x="196" y="136" width="808" height="368" rx="16" fill="#100d0b" stroke="#2a2420" stroke-width="1.5"/>
+
+          <!-- glass: the map under the minis -->
+          <rect x="330" y="200" width="540" height="240" rx="6" fill="#d97706" opacity="0.4" filter="url(#halo)"/>
+          <rect x="330" y="200" width="540" height="240" rx="6" fill="url(#mapfill)"/>
+          <g clip-path="url(#mapclip)">
+            <path d="M320 396 C 400 372, 452 424, 524 406 S 640 446, 720 452" fill="none" stroke="#f59e0b" stroke-opacity="0.3" stroke-width="20" stroke-linecap="round"/>
+            <rect x="540" y="224" width="80" height="50" fill="#f59e0b" fill-opacity="0.1" stroke="#f59e0b" stroke-opacity="0.55" stroke-width="1.5"/>
+            <rect x="606" y="300" width="46" height="38" fill="#f59e0b" fill-opacity="0.1" stroke="#f59e0b" stroke-opacity="0.55" stroke-width="1.5"/>
+            <path d="M360 236 L 500 262 L 540 250" fill="none" stroke="#f59e0b" stroke-opacity="0.45" stroke-width="1.5" stroke-dasharray="5 6"/>
+            <rect x="330" y="200" width="540" height="240" fill="url(#grid)"/>
+            <path d="M746 196 C 730 236, 764 268, 746 310 S 732 384, 754 444 L 874 444 L 874 196 Z" fill="#0c0a09" fill-opacity="0.92"/>
+          </g>
+          <rect x="330" y="200" width="540" height="240" rx="6" fill="none" stroke="#d97706" stroke-width="2"/>
+
+          <!-- glass: seats on the rail, lighting up in turn order -->
+          <g class="seat s1" filter="url(#glow)">
+            <rect x="380" y="101" width="180" height="24" rx="5" fill="#b45309"/>
+            <rect class="hot" x="380" y="101" width="180" height="24" rx="5" fill="#fcd34d"/>
+            <rect x="390" y="109" width="46" height="8" rx="2" fill="#0c0a09" fill-opacity="0.5"/>
+            <rect x="446" y="110" width="74" height="6" rx="3" fill="#0c0a09" fill-opacity="0.35"/>
+            <circle cx="534" cy="113" r="3" fill="#0c0a09" fill-opacity="0.5"/><circle cx="546" cy="113" r="3" fill="#0c0a09" fill-opacity="0.5"/>
+          </g>
+          <g class="seat s2" filter="url(#glow)">
+            <rect x="640" y="101" width="180" height="24" rx="5" fill="#b45309"/>
+            <rect class="hot" x="640" y="101" width="180" height="24" rx="5" fill="#fcd34d"/>
+            <rect x="650" y="109" width="56" height="8" rx="2" fill="#0c0a09" fill-opacity="0.5"/>
+            <rect x="716" y="110" width="64" height="6" rx="3" fill="#0c0a09" fill-opacity="0.35"/>
+            <circle cx="794" cy="113" r="3" fill="#0c0a09" fill-opacity="0.5"/><circle cx="806" cy="113" r="3" fill="#0c0a09" fill-opacity="0.5"/>
+          </g>
+          <g class="seat s3" filter="url(#glow)">
+            <rect x="250" y="515" width="180" height="24" rx="5" fill="#b45309"/>
+            <rect class="hot" x="250" y="515" width="180" height="24" rx="5" fill="#fcd34d"/>
+            <rect x="260" y="523" width="50" height="8" rx="2" fill="#0c0a09" fill-opacity="0.5"/>
+            <rect x="320" y="524" width="70" height="6" rx="3" fill="#0c0a09" fill-opacity="0.35"/>
+            <circle cx="404" cy="527" r="3" fill="#0c0a09" fill-opacity="0.5"/><circle cx="416" cy="527" r="3" fill="#0c0a09" fill-opacity="0.5"/>
+          </g>
+          <g class="seat s4" filter="url(#glow)" transform="translate(820 470) rotate(-10)">
+            <rect x="-15" y="-25" width="30" height="50" rx="6" fill="#b45309"/>
+            <rect class="hot" x="-15" y="-25" width="30" height="50" rx="6" fill="#fcd34d"/>
+            <rect x="-9" y="-17" width="18" height="5" rx="2" fill="#0c0a09" fill-opacity="0.5"/>
+            <rect x="-9" y="-8" width="18" height="4" rx="2" fill="#0c0a09" fill-opacity="0.35"/>
+            <rect x="-9" y="0" width="12" height="4" rx="2" fill="#0c0a09" fill-opacity="0.35"/>
+          </g>
+
+          <!-- glass: the GM's end, and the far end -->
+          <g filter="url(#glow)">
+            <rect x="214" y="286" width="84" height="68" rx="6" fill="#92400e" stroke="#d97706" stroke-width="1.5"/>
+            <path d="M242 286 V354 M242 318 H298" stroke="#0c0a09" stroke-opacity="0.45" stroke-width="2"/>
+            <rect x="312" y="262" width="7" height="116" rx="3.5" fill="#f59e0b"/>
+            <rect x="900" y="290" width="82" height="60" rx="5" fill="#92400e" stroke="#d97706" stroke-width="1.5"/>
+            <rect x="910" y="300" width="62" height="40" rx="2" fill="#fbbf24" fill-opacity="0.45"/>
+          </g>
+
+          <!-- real: minis -->
+          <g fill="#0c0a09" stroke="#e7e5e4" stroke-width="2.5">
+            <circle cx="428" cy="292" r="13"/><circle cx="452" cy="332" r="13"/><circle cx="404" cy="350" r="13"/><circle cx="470" cy="374" r="13"/>
+            <circle cx="696" cy="330" r="21"/><circle cx="668" cy="388" r="13"/><circle cx="700" cy="262" r="13"/>
+          </g>
+          <g fill="none" stroke="#e7e5e4" stroke-width="1.5" stroke-opacity="0.7">
+            <circle cx="428" cy="292" r="5"/><circle cx="452" cy="332" r="5"/><circle cx="404" cy="350" r="5"/><circle cx="470" cy="374" r="5"/>
+            <circle cx="696" cy="330" r="9"/><circle cx="668" cy="388" r="5"/><circle cx="700" cy="262" r="5"/>
+          </g>
+
+          <!-- real: dice -->
+          <g fill="#0c0a09" stroke="#e7e5e4" stroke-width="2">
+            <g transform="translate(588 468) rotate(14)"><rect x="-10" y="-10" width="20" height="20" rx="4"/></g>
+            <g transform="translate(618 480) rotate(-22)"><rect x="-10" y="-10" width="20" height="20" rx="4"/></g>
+            <g transform="translate(455 170) rotate(-9)"><rect x="-10" y="-10" width="20" height="20" rx="4"/></g>
+            <g transform="translate(704 168)"><polygon points="0,-14 12.1,-7 12.1,7 0,14 -12.1,7 -12.1,-7"/><path d="M0 -14 L-8 5 L8 5 Z M-8 5 L0 14 L8 5 M-12.1 -7 L-8 5 M12.1 -7 L8 5" fill="none" stroke-width="1.2"/></g>
+          </g>
+          <g fill="#e7e5e4">
+            <g transform="translate(588 468) rotate(14)"><circle r="1.8"/><circle cx="-5" cy="-5" r="1.8"/><circle cx="5" cy="5" r="1.8"/></g>
+            <g transform="translate(618 480) rotate(-22)"><circle cx="-5" cy="-5" r="1.8"/><circle cx="5" cy="5" r="1.8"/><circle cx="-5" cy="5" r="1.8"/><circle cx="5" cy="-5" r="1.8"/></g>
+            <g transform="translate(455 170) rotate(-9)"><circle cx="-4" cy="-4" r="1.8"/><circle cx="4" cy="4" r="1.8"/></g>
+          </g>
+
+          <!-- labels: pale for what is real, brass for what is glass -->
+          <g class="lbl" aria-hidden="true">
+            <line x1="316" y1="66" x2="316" y2="258"/><text class="glass" x="316" y="56" text-anchor="middle">board</text>
+            <line x1="470" y1="66" x2="470" y2="97"/><text class="glass" x="470" y="56" text-anchor="middle">seat</text>
+            <line x1="846" y1="66" x2="846" y2="196"/><text class="glass" x="846" y="56" text-anchor="middle">table</text>
+            <line x1="134" y1="320" x2="210" y2="320"/><text class="glass" x="126" y="325" text-anchor="end">console</text>
+            <line x1="986" y1="320" x2="1066" y2="320"/><text class="glass" x="1074" y="325" text-anchor="start">art</text>
+            <line x1="820" y1="588" x2="820" y2="502"/><text class="glass" x="820" y="608" text-anchor="middle">a seat, on a phone</text>
+            <line x1="603" y1="588" x2="603" y2="496"/><text class="real" x="603" y="608" text-anchor="middle">dice</text>
+            <line x1="470" y1="588" x2="470" y2="391"/><text class="real" x="470" y="608" text-anchor="middle">minis</text>
+          </g>
+        </svg>
+        </div>
+        <figcaption class="key">
+          <span><i class="k-real"></i>Pale line is real: dice, minis, terrain.</span>
+          <span><i class="k-glass"></i>Brass is glass: every screen, one address.</span>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ================= the split ================= -->
+  <section class="band" id="split">
+    <div class="wrap">
+      <p class="eyebrow">The thesis</p>
+      <h2>Anything you touch stays physical. Anything that's bookkeeping goes on glass.</h2>
+      <div class="split">
+        <div class="col col-real">
+          <h3><i class="k-real"></i>Stays on the table</h3>
+          <ul>
+            <li><b>Dice</b><span>rolled by hand and read aloud</span></li>
+            <li><b>Minis</b><span>moved by whoever's turn it is</span></li>
+            <li><b>Terrain</b><span>built, not rendered</span></li>
+            <li><b>Rulings</b><span>made by the humans in the room</span></li>
+          </ul>
+        </div>
+        <div class="col col-glass">
+          <h3><i class="k-glass"></i>Goes on glass</h3>
+          <ul>
+            <li><b>Initiative</b><span>who's up and who's on deck</span></li>
+            <li><b>Hit points</b><span>and anything else your game counts: ammo, slots, luck</span></li>
+            <li><b>Conditions</b><span>on, off, and how bad</span></li>
+            <li><b>Maps and fog</b><span>at true scale, where one drawn inch is one real inch</span></li>
+            <li><b>Handouts</b><span>fullscreen, when the GM says</span></li>
+            <li><b>Rulebooks</b><span>your own PDFs, searchable mid-game</span></li>
+          </ul>
+        </div>
+      </div>
+      <blockquote class="pull">
+        <p>The humans at the table are the rules engine.</p>
+        <footer>teller may roll dice, measure a range or work out a default. Every result lands somewhere a human can type over, and the stored value always wins.</footer>
+      </blockquote>
+    </div>
+  </section>
+
+  <!-- ================= how a table works ================= -->
+  <section class="band" id="how">
+    <div class="wrap">
+      <p class="eyebrow">How a table works</p>
+      <h2>One address. Every screen in the room opens it.</h2>
+      <div class="how">
+        <ol class="steps">
+          <li>
+            <h3>One machine hosts</h3>
+            <p>A laptop, a Pi, anything that runs Node. Type <code>teller host</code> and it prints an address.</p>
+          </li>
+          <li>
+            <h3>Every screen opens that address</h3>
+            <p>Phones, tablets, the TV under the minis. Each one shows a short pairing code. Nothing is installed on any of them.</p>
+          </li>
+          <li>
+            <h3>The GM adopts them</h3>
+            <p>Type a screen's code into the console and say what that screen is. Change your mind whenever you like.</p>
+          </li>
+        </ol>
+        <div class="panel" role="img" aria-label="What teller host prints: the address to open on this machine, and the address every other screen in the room opens.">
+          <div class="panel-bar"><i class="led"></i><span>teller host</span></div>
+<pre class="panel-out" aria-hidden="true">  teller
+
+  data      ~/.teller
+  key file  ~/.teller/dm.key
+
+  open on this machine:
+    http://localhost:4526
+
+  other screens in the room:
+    <b>http://192.168.1.20:4526</b>
+
+  ctrl-c to stop</pre>
+        </div>
+      </div>
+      <ul class="nos">
+        <li>No accounts.</li>
+        <li>No installs on anyone's device.</li>
+        <li>No cloud in the play path.</li>
+        <li>A table with no internet works completely.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ================= screens ================= -->
+  <section class="band" id="screens">
+    <div class="wrap">
+      <p class="eyebrow">Screens</p>
+      <h2>Six things a screen can be.</h2>
+      <p class="sub">What a screen is, is an assignment the GM makes and can change at will.</p>
+      <ul class="roles">
+        <li>
+          <svg class="glyph" viewBox="0 0 80 52" aria-hidden="true"><rect x="16" y="8" width="48" height="36" rx="4" fill="#92400e" stroke="#d97706" stroke-width="1.5"/><path d="M32 8 V44 M32 26 H64" stroke="#0c0a09" stroke-opacity="0.5" stroke-width="1.5"/></svg>
+          <h3>console</h3>
+          <p>The GM's seat of power: roster, encounter runner, boards, books. Split it one pane per screen and it becomes a digital GM screen.</p>
+        </li>
+        <li>
+          <svg class="glyph" viewBox="0 0 80 52" aria-hidden="true"><rect x="6" y="8" width="68" height="36" rx="3" fill="#3d2808" stroke="#d97706" stroke-width="1.5"/><path d="M23 8V44M40 8V44M57 8V44M6 26H74" stroke="#f59e0b" stroke-opacity="0.3" stroke-width="1"/><circle cx="30" cy="20" r="4.5" fill="#0c0a09" stroke="#e7e5e4" stroke-width="1.5"/><circle cx="50" cy="33" r="4.5" fill="#0c0a09" stroke="#e7e5e4" stroke-width="1.5"/></svg>
+          <h3>table</h3>
+          <p>The shared display under the minis. The active map, full bleed, at true physical scale on a calibrated screen. Nothing else.</p>
+        </li>
+        <li>
+          <svg class="glyph" viewBox="0 0 80 52" aria-hidden="true"><rect x="4" y="17" width="72" height="19" rx="4" fill="#b45309" stroke="#f59e0b" stroke-width="1.5"/><rect x="10" y="23" width="18" height="7" rx="2" fill="#0c0a09" fill-opacity="0.5"/><rect x="33" y="24.5" width="26" height="4" rx="2" fill="#0c0a09" fill-opacity="0.35"/><circle cx="66" cy="26.5" r="2.5" fill="#0c0a09" fill-opacity="0.5"/></svg>
+          <h3>seat</h3>
+          <p>One player's own card: sheet, gear, dice and self-serve counters. Runs on a phone, a tablet, or a mounted touch bar.</p>
+        </li>
+        <li>
+          <svg class="glyph" viewBox="0 0 80 52" aria-hidden="true"><rect x="27" y="4" width="26" height="44" rx="3" fill="#92400e" stroke="#d97706" stroke-width="1.5"/><path d="M32 13H48M32 21H48M32 29H44M32 37H46" stroke="#0c0a09" stroke-opacity="0.5" stroke-width="2.5" stroke-linecap="round"/></svg>
+          <h3>board</h3>
+          <p>A player-facing companion: turn order, public state, the GM's notices. Player-safe by construction.</p>
+        </li>
+        <li>
+          <svg class="glyph" viewBox="0 0 80 52" aria-hidden="true"><rect x="14" y="7" width="52" height="38" rx="3" fill="#92400e" stroke="#d97706" stroke-width="1.5"/><rect x="20" y="13" width="40" height="26" rx="1.5" fill="#fbbf24" fill-opacity="0.5"/></svg>
+          <h3>art</h3>
+          <p>A fullscreen frame for the current handout.</p>
+        </li>
+        <li>
+          <svg class="glyph" viewBox="0 0 80 52" aria-hidden="true"><rect x="10" y="18" width="60" height="16" rx="4" fill="#92400e" stroke="#d97706" stroke-width="1.5"/><rect x="26" y="23.5" width="28" height="5" rx="2.5" fill="#fde68a" fill-opacity="0.8"/></svg>
+          <h3>badge</h3>
+          <p>An outward-facing nameplate for each player.</p>
+        </li>
+      </ul>
+      <p class="aside">Passive screens never grow buttons. Everything they show arrives from the console, live.</p>
+    </div>
+  </section>
+
+  <!-- ================= house rules ================= -->
+  <section class="band" id="rules">
+    <div class="wrap">
+      <p class="eyebrow">The house rules</p>
+      <h2>What teller will always do, and what it never will.</h2>
+      <div class="rules">
+        <article>
+          <h3>Override is the architecture</h3>
+          <p>teller may roll dice, measure ranges and derive defaults. Every result lands somewhere a human can type over. It never decides something nobody can change.</p>
+        </article>
+        <article>
+          <h3>Every change is logged</h3>
+          <p>And undo walks it back: a deployed encounter, a deletion, a turn, a roll. All of it, coherently.</p>
+        </article>
+        <article>
+          <h3>One secret</h3>
+          <p>The GM's key, minted on first run. Everything else is an assignment the host checks. A seat may edit its one character and nothing else. Passive screens get a redacted snapshot, with hidden things actually stripped.</p>
+        </article>
+        <article>
+          <h3>Your data is a folder</h3>
+          <p>A campaign is one SQLite file. Back up <code>~/.teller</code>, or carry it on a stick.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ships empty ================= -->
+  <section class="band" id="empty">
+    <div class="wrap">
+      <p class="eyebrow">Ships empty</p>
+      <h2>No game, no vocabulary, nobody's book.</h2>
+      <p class="sub">A character is named lists of named entries. What a list means is a declaration a system ships. Content is files on your shelf, installed by dropping a folder in.</p>
+      <div class="empty">
+        <dl class="kinds">
+          <div><dt>A system</dt><dd>How one game works: its dice, its distance bands, its conditions, its screens. Pure mechanics, freely shareable.</dd></div>
+          <div><dt>A pack</dt><dd>What exists in a world: bestiary, items, prose, art and the branded look, layered over the system.</dd></div>
+          <div><dt>A story</dt><dd>One table's campaign, exported as a single <code>.story</code> file that carries only what you wrote.</dd></div>
+          <div><dt>A plugin</dt><dd>Extra function at declared seams, with needs you approve once. An assistant that proposes a monster's turn, a store, whatever you build. teller ships with zero.</dd></div>
+        </dl>
+        <div class="stack-wrap">
+          <ol class="stack" aria-label="Layers, from the floor up. Later wins.">
+            <li>teller's floor</li>
+            <li>the system</li>
+            <li>packs</li>
+            <li>the campaign</li>
+            <li>the table's own files</li>
+          </ol>
+          <p class="stack-cap">Every layer merges, and later wins. Restate one name in a file and it's yours.</p>
+        </div>
+      </div>
+      <p class="aside">Rulebook PDFs attach by content hash and get full-text search. Your book, on your host, one download.</p>
+    </div>
+  </section>
+
+  <!-- ================= hardware ================= -->
+  <section class="band" id="hardware">
+    <div class="wrap">
+      <p class="eyebrow">Hardware</p>
+      <h2>If you're that kind of table.</h2>
+      <p class="sub">Nothing needs special hardware. Phones and a TV do everything. But teller is built to be worth hardware: a TV under a sheet of acrylic becomes a calibrated battlemat, and a touch bar at each seat becomes a player's console.</p>
+      <figure class="strip-fig">
+        <svg class="strip" viewBox="0 0 960 258" role="img" aria-label="A seat bar drawn at its real proportions, 1920 by 515. It shows a character's name, two counters with plus and minus buttons, and one condition.">
+          <rect x="1.5" y="1.5" width="957" height="255" rx="14" fill="#14100d" stroke="#d97706" stroke-width="3"/>
+          <text class="st-turn" x="44" y="66">UP NEXT</text>
+          <text class="st-name" x="42" y="146">Hattie</text>
+          <text class="st-sub" x="44" y="196">seat 2</text>
+          <line x1="300" y1="40" x2="300" y2="218" stroke="#44403c" stroke-width="1.5"/>
+          <text class="st-k" x="340" y="78">HEALTH</text><text class="st-v" x="640" y="78" text-anchor="end">7 / 10</text>
+          <rect x="340" y="94" width="300" height="16" rx="8" fill="#292524"/><rect x="340" y="94" width="210" height="16" rx="8" fill="#f59e0b"/>
+          <text class="st-k" x="340" y="164">AMMO</text><text class="st-v" x="640" y="164" text-anchor="end">4 / 6</text>
+          <g fill="#f59e0b"><circle cx="352" cy="192" r="11"/><circle cx="388" cy="192" r="11"/><circle cx="424" cy="192" r="11"/><circle cx="460" cy="192" r="11"/></g>
+          <g fill="none" stroke="#57534e" stroke-width="2.5"><circle cx="496" cy="192" r="10"/><circle cx="532" cy="192" r="10"/></g>
+          <g fill="#292524"><rect x="676" y="56" width="64" height="64" rx="12"/><rect x="752" y="56" width="64" height="64" rx="12"/></g>
+          <g stroke="#e7e5e4" stroke-width="4" stroke-linecap="round"><path d="M696 88H720"/><path d="M772 88H796M784 76V100"/></g>
+          <rect x="676" y="150" width="140" height="46" rx="23" fill="none" stroke="#d97706" stroke-width="2"/>
+          <text class="st-chip" x="746" y="180" text-anchor="middle">Poisoned</text>
+          <g fill="#57534e"><circle cx="886" cy="110" r="7" fill="#f59e0b"/><circle cx="886" cy="134" r="7"/><circle cx="886" cy="158" r="7"/></g>
+        </svg>
+        <figcaption>A seat bar at its real proportions, 1920 × 515. Short and wide on purpose, so the glass sits under the sightline. A screen that competes with the minis has lost the argument this project is making.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ================= install ================= -->
+  <section class="band" id="install">
+    <div class="wrap">
+      <p class="eyebrow">Install</p>
+      <h2>Put it on the table.</h2>
+      <div class="install">
+        <div class="cmd cmd-lg">
+<div class="lines" id="cmd-install">
+            <div><span class="p" aria-hidden="true">$</span><code>brew install teller-ink/tap/teller</code></div>
+            <div><span class="p" aria-hidden="true">$</span><code>teller host</code><i>prints the address every screen opens</i></div>
+            <div><span class="p" aria-hidden="true">$</span><code>teller key</code><i>the one secret; the GM's device unlocks with it</i></div>
+          </div>
+          <button type="button" class="copy" aria-live="polite" data-copy="brew install teller-ink/tap/teller" data-select="cmd-install">Copy</button>
+        </div>
+        <ul class="install-notes">
+          <li>macOS and Linux, through Homebrew.</li>
+          <li>Your data lives in <code>~/.teller</code>. Give <code>teller host</code> a path and it serves a table off a stick.</li>
+          <li>Prefer the source? <a href="https://github.com/teller-ink/teller#contributing">Run it from a checkout</a> with Node 24 or newer.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-in">
+    <div class="foot-brand">
+      <a class="brand" href="/" aria-label="teller, home"><svg class="mark" aria-hidden="true"><use href="#mark"/></svg>teller</a>
+      <p>The table plays; teller keeps the books.</p>
+    </div>
+    <nav class="foot-nav" aria-label="Elsewhere">
+      <a href="https://github.com/teller-ink/teller">Source</a>
+      <a href="https://github.com/teller-ink/teller/releases">Releases</a>
+      <a href="https://github.com/teller-ink/teller/blob/main/LICENSE">AGPL-3.0</a>
+    </nav>
+    <p class="foot-note">This page is all teller.ink does. No cookies, no trackers, nothing loaded from anyone else. Your table runs on your machine.</p>
+  </div>
+</footer>
+</body>
+</html>
