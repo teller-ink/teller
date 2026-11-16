@@ -218,7 +218,12 @@ export function CarriedScreen({
         ) : boxable(entry) ? (
           <Tally entry={entry} note={note(entry.name)} onWrite={onWrite} />
         ) : (
-          <BigGauge entry={entry} onWrite={onWrite} />
+          <BigGauge
+            entry={entry}
+            onWrite={onWrite}
+            typable={ctx.glass !== 'mounted'}
+            onCeiling={(max) => ctx.write?.({ list, name: entry.name, max })}
+          />
         )}
       </div>
     );

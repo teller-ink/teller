@@ -16,6 +16,7 @@ import type { Entry } from '../../core/entity.ts';
 import { expandPool, type DiceRecord } from '../lib/dice.ts';
 import type { RuleHit } from '../lib/rules.ts';
 import { SheetPanel, Starburst } from './sheet/SheetPanel.tsx';
+import { TypeOver } from './TypeOver.tsx';
 
 // ---- shared primitives (ported from counters/shared.tsx) --------------
 
@@ -40,7 +41,11 @@ function isBlank(entry: Entry): boolean {
   return !isGauge(entry) && numberOf(entry) === 0;
 }
 
-/** Clamped to [0, max]. An entry never goes negative or past its ceiling. */
+/**
+ * Clamped to [0, max] — what a STEP does, so a tap can't walk a counter
+ * past either end. A TYPED number is not a step and never comes through
+ * here: what a human typed is written as typed (`TypeOver`, rule 1).
+ */
 export function stepValue(entry: Entry, delta: number): number {
   let next = numberOf(entry) + delta;
   if (typeof entry.max === 'number') next = Math.min(next, entry.max);
@@ -117,7 +122,25 @@ function Bar({ entry, thick }: { entry: Entry; thick?: boolean }) {
   );
 }
 
-function Value({ entry, className = '', style }: { entry: Entry; className?: string; style?: React.CSSProperties }) {
+/**
+ * The number, and its ceiling — each typable when the caller hands over
+ * a way to write it (`TypeOver`). An unbounded counter's dash stays a
+ * dash: there's no ceiling there to type over, and offering to make one
+ * would be a different control.
+ */
+function Value({
+  entry,
+  className = '',
+  style,
+  onSet,
+  onCeiling,
+}: {
+  entry: Entry;
+  className?: string;
+  style?: React.CSSProperties;
+  onSet?: (value: number) => void;
+  onCeiling?: (max: number) => void;
+}) {
   return (
     <span
       style={style}
@@ -125,11 +148,26 @@ function Value({ entry, className = '', style }: { entry: Entry; className?: str
         isLow(entry) ? 'text-red-400' : isBlank(entry) ? 'text-stone-600' : 'text-stone-100'
       } ${className}`}
     >
-      {numberOf(entry)}
-      <span className="text-stone-600">/{typeof entry.max === 'number' ? entry.max : '—'}</span>
+      <TypeOver value={numberOf(entry)} label={entry.name} onSet={onSet} />
+      <span className="text-stone-600">
+        /
+        {typeof entry.max === 'number' ? (
+          <TypeOver value={entry.max} label={`${entry.name} max`} onSet={onSet && onCeiling} />
+        ) : (
+          '—'
+        )}
+      </span>
     </span>
   );
 }
+
+/** Typing is offered, or not, by whoever knows the glass — see `TypeOver`. */
+type Typing = {
+  /** Offer typing over the number (held glass, the console). Off by default: mounted-safe. */
+  typable?: boolean;
+  /** Write a typed ceiling. Only consulted when `typable`. */
+  onCeiling?: (max: number) => void;
+};
 
 function Name({ entry, className = '' }: { entry: Entry; className?: string }) {
   return <span className={`break-words ${className}`}>{entry.name}</span>;
@@ -140,17 +178,24 @@ function Name({ entry, className = '' }: { entry: Entry; className?: string }) {
 export function BigGauge({
   entry,
   onWrite,
+  typable = false,
+  onCeiling,
 }: {
   entry: Entry;
   onWrite: (value: number) => void;
-}) {
+} & Typing) {
   return (
     <div className="flex min-w-0 flex-1 flex-col justify-center gap-2 rounded-2xl border border-stone-800 bg-stone-900/70 p-4">
       <div className="flex items-baseline gap-2">
         <Name entry={entry} className="min-w-0 flex-1 text-xs font-medium uppercase tracking-widest text-stone-400" />
         <Refill entry={entry} onSet={onWrite} big />
       </div>
-      <Value entry={entry} className="text-[clamp(2.5rem,9cqh,5rem)] leading-none" />
+      <Value
+        entry={entry}
+        className="text-[clamp(2.5rem,9cqh,5rem)] leading-none"
+        onSet={typable ? onWrite : undefined}
+        onCeiling={onCeiling}
+      />
       <Bar entry={entry} thick />
       <div className="flex gap-2">
         <Step
@@ -265,10 +310,12 @@ export function Tally({
 export function LedgerRow({
   entry,
   onWrite,
+  typable = false,
+  onCeiling,
 }: {
   entry: Entry;
   onWrite: (value: number) => void;
-}) {
+} & Typing) {
   return (
     <div className="flex items-center gap-2 border-b border-stone-800/70 px-1 py-1 last:border-0">
       <div className="min-w-0 flex-1">
@@ -282,7 +329,12 @@ export function LedgerRow({
           </div>
         )}
       </div>
-      <Value entry={entry} className="text-sm" />
+      <Value
+        entry={entry}
+        className="text-sm"
+        onSet={typable ? onWrite : undefined}
+        onCeiling={onCeiling}
+      />
       <Refill entry={entry} onSet={onWrite} />
       <Step sign="−" label={`decrease ${entry.name}`} onClick={() => onWrite(stepValue(entry, -1))} />
       <Step sign="+" label={`increase ${entry.name}`} onClick={() => onWrite(stepValue(entry, 1))} />

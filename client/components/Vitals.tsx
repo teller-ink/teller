@@ -9,6 +9,7 @@
 // edit, not a replace.
 
 import type { Entry } from '../../core/entity.ts';
+import { TypeOver } from './TypeOver.tsx';
 
 // The BAR is the glance and the NUMBER is the truth: 34 and 10 aren't
 // comparable at speed, but two bars are. Nothing here derives anything
@@ -55,13 +56,25 @@ export function VitalBar({
   );
 }
 
+/**
+ * `onSet` and `onCeiling` make the number and its ceiling typable
+ * (`TypeOver`) — a typed value is written as typed, never clamped the way
+ * a bump is. Both are optional and default to OFF, because this has no
+ * idea what glass it's on: the caller that knows (a block reading
+ * `ctx.glass`, the console's own stage) passes them, and a mounted strip
+ * keeps its readout and its steppers.
+ */
 export function CounterStepper({
   entry,
   onBump,
+  onSet,
+  onCeiling,
   big = false,
 }: {
   entry: Entry;
   onBump: (delta: number) => void;
+  onSet?: (value: number) => void;
+  onCeiling?: (max: number) => void;
   big?: boolean;
 }) {
   const value = typeof entry.value === 'number' ? entry.value : 0;
@@ -74,9 +87,16 @@ export function CounterStepper({
         <span
           className={`ml-auto font-mono ${big ? 'text-base' : 'text-xs'} text-stone-100`}
         >
-          {value}
+          <TypeOver value={value} label={entry.name} onSet={onSet} />
           {typeof entry.max === 'number' && (
-            <span className="text-stone-600">/{entry.max}</span>
+            <span className="text-stone-600">
+              /
+              <TypeOver
+                value={entry.max}
+                label={`${entry.name} max`}
+                onSet={onSet && onCeiling}
+              />
+            </span>
           )}
         </span>
         <span className="flex shrink-0 items-center gap-0.5">

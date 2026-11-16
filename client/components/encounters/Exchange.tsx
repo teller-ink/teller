@@ -77,6 +77,8 @@ export type EntryWrite = {
   list: string;
   name: string;
   value?: number | string;
+  /** A typed-over ceiling — the entry door takes it as it takes `value`. */
+  max?: number;
   remove?: boolean;
 };
 

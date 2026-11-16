@@ -41,7 +41,30 @@ import { PanelSurface, Refusal, type BlockCtx } from '../../panels/render.tsx';
 import { StatusChip } from '../encounters/TemplateSheet.tsx';
 import { VitalBar } from '../Vitals.tsx';
 
-const RECORD_SLOTS = ['accents', 'dials', 'brand', 'portraits', 'dice', 'marks'];
+// The SAME slots a seat fetches (`SeatChrome.tsx`), not a hand-picked
+// few: this dialog renders the same 'sheet' panel a seat does, and a
+// block reads whichever record it needs. Leaving `pins` out is how the
+// dialog lost Health, Aces, Supplies and Dollars — the sheet's gauges are
+// the entries something is PINNED to (`shaped()` in panels/blocks.tsx),
+// and with no pins record nothing was, so the block drew nothing and
+// said nothing. A missing record isn't an error anywhere; it's a quieter
+// sheet. Kept in step with the seat's list on purpose.
+const RECORD_SLOTS = [
+  'accents',
+  'dials',
+  'brand',
+  'portraits',
+  'pins',
+  'use',
+  'carry',
+  'currency',
+  'icons',
+  'groups',
+  'dice',
+  'marks',
+  'spends',
+  'vocabulary',
+];
 
 /** The identity-layer records every card needs — fetched once, shared. */
 export function usePanelRecords() {

@@ -411,6 +411,10 @@ export function TurnStage({
                 onBump={(delta) =>
                   onWrite({ list: 'resources', name: entry.name, value: bumped(entry, delta) })
                 }
+                // The stage is the console's, so the number is typable:
+                // a hit for nine is "-9", not nine taps (rule 1).
+                onSet={(value) => onWrite({ list: 'resources', name: entry.name, value })}
+                onCeiling={(max) => onWrite({ list: 'resources', name: entry.name, max })}
               />
             ))}
           </div>

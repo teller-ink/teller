@@ -36,6 +36,9 @@ export type { RuleEntry, RuleHit, RuleSection } from '../lib/rules.ts';
 // the plate chrome every block on a printed sheet wears. Nothing here
 // knows a game — which is exactly the test for whether it belongs.
 export { VitalBar, CounterStepper } from '../components/Vitals.tsx';
+// A number a human can type over (rule 1) — what a system's own face
+// wraps its readout in, so its Health takes "-9" the way the floor's does.
+export { TypeOver } from '../components/TypeOver.tsx';
 export { TagSection } from '../components/TagSection.tsx';
 export { BigGauge, LedgerRow, SkillRow } from '../components/Counters.tsx';
 export { ClockFace } from '../components/ClockFace.tsx';

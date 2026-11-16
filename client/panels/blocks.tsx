@@ -154,6 +154,15 @@ function titleCase(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
+/**
+ * Is typing over a number on offer here? Held glass and the console,
+ * yes; a strip screwed to a rail keeps its readout and its steppers
+ * (rule 6 — never ask for a gesture nobody can make at it).
+ */
+function typable(ctx: BlockCtx): boolean {
+  return ctx.glass !== 'mounted';
+}
+
 function subject(ctx: BlockCtx): Entity | undefined {
   return ctx.entity as Entity | undefined;
 }
@@ -330,9 +339,12 @@ registerBlock('brand', (_block, ctx) => <BrandBlock ctx={ctx} />);
 function AutoEntry({
   entry,
   onWrite,
+  typing = false,
 }: {
   entry: Entry;
   onWrite: (edit: Record<string, unknown>) => void;
+  /** Offer typing over the number — the caller read the glass. */
+  typing?: boolean;
 }) {
   if (entry.value === undefined) {
     return (
@@ -360,6 +372,8 @@ function AutoEntry({
     <CounterStepper
       entry={entry}
       onBump={(d) => onWrite({ value: stepValue(entry, d) })}
+      onSet={typing ? (v) => onWrite({ value: v }) : undefined}
+      onCeiling={(m) => onWrite({ max: m })}
     />
   );
 }
@@ -470,6 +484,8 @@ function SheetListBlock({
               key={entry.name}
               entry={entry}
               onBump={(d) => write(entry.name, { value: stepValue(entry, d) })}
+              onSet={typable(ctx) ? (v) => write(entry.name, { value: v }) : undefined}
+              onCeiling={(m) => write(entry.name, { max: m })}
             />
           );
         }
@@ -487,6 +503,8 @@ function SheetListBlock({
             key={entry.name}
             entry={entry}
             onBump={(d) => write(entry.name, { value: stepValue(entry, d) })}
+            onSet={typable(ctx) ? (v) => write(entry.name, { value: v }) : undefined}
+            onCeiling={(m) => write(entry.name, { max: m })}
           />
         );
       })}
@@ -587,6 +605,8 @@ registerBlock('list', (block, ctx) => {
               key={entry.name}
               entry={entry}
               onWrite={(v) => write(entry.name, { value: v })}
+              typable={typable(ctx)}
+              onCeiling={(m) => write(entry.name, { max: m })}
             />
           );
         })}
@@ -603,6 +623,8 @@ registerBlock('list', (block, ctx) => {
             key={entry.name}
             entry={entry}
             onWrite={(v) => write(entry.name, { value: v })}
+            typable={typable(ctx)}
+            onCeiling={(m) => write(entry.name, { max: m })}
           />
         ))}
       </div>
@@ -618,6 +640,8 @@ registerBlock('list', (block, ctx) => {
             key={entry.name}
             entry={entry}
             onBump={(d) => write(entry.name, { value: stepValue(entry, d) })}
+            onSet={typable(ctx) ? (v) => write(entry.name, { value: v }) : undefined}
+            onCeiling={(m) => write(entry.name, { max: m })}
           />
         ))}
       </div>
@@ -634,6 +658,7 @@ registerBlock('list', (block, ctx) => {
           key={entry.name}
           entry={entry}
           onWrite={(edit) => write(entry.name, edit)}
+          typing={typable(ctx)}
         />
       ))}
     </section>
@@ -999,6 +1024,7 @@ registerBlock('rest', (block, ctx) => {
               key={entry.name}
               entry={entry}
               onWrite={(edit) => ctx.write?.({ list: name, name: entry.name, ...edit })}
+              typing={typable(ctx)}
             />
           ))}
         </section>
