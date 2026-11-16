@@ -7,12 +7,12 @@
 
 import { useEffect, useMemo, useState, type ComponentType } from 'react';
 import { carryIn } from '../../core/carry.ts';
-import type { Entity, Entry } from '../../core/entity.ts';
+import { findEntry, refIn, type Entity, type Entry } from '../../core/entity.ts';
 import type { Amendment } from '../../core/effects.ts';
 import type { PanelBlock } from '../../core/panels.ts';
 import { api } from '../lib/api.ts';
 import { useFileUrl } from '../lib/use-session.ts';
-import { card, sectionLabel } from '../lib/ui.ts';
+import { btn, btnPrimary, card, input, sectionLabel } from '../lib/ui.ts';
 import type { DiceRecord } from '../lib/dice.ts';
 import { useRuleLookup, usePanelNote, type RuleHit } from '../lib/rules.ts';
 import { CounterStepper } from '../components/Vitals.tsx';
@@ -22,6 +22,7 @@ import { SheetPanel } from '../components/sheet/SheetPanel.tsx';
 import { cardable, CardsFloor } from '../components/CardsFloor.tsx';
 import { useWornAmendments } from '../lib/amend.ts';
 import { presentationOf, useSystemFaces } from '../lib/presentations.ts';
+import { floorEntries, readDraft, type FloorDraft, type FloorVerdict } from './floor.ts';
 import { IncludeBlock, registerBlock, Refusal, RenderBlock, type BlockCtx } from './render.tsx';
 import { CarriedScreen } from '../components/items/Screen.tsx';
 import { SpendDoor } from '../components/SpendDoor.tsx';
@@ -830,133 +831,304 @@ registerBlock('children', (_block, ctx) => {
   );
 });
 
-// ---- floor (§7 — every stored value, one control each) ----------------
+// ---- floor (§7 — every value it reads as having, one control each) ----
 // The `bare` panel's block, and the port of `server/public/panel.js`'s
 // `renderPanel` (vanilla, view-source-is-the-source) — the complete,
 // ugly, fully-operable sheet a table still has with zero declarations.
 // The control follows the value's SHAPE, not a declaration: this is
 // `AutoEntry`'s own grammar (chip / inline text / stepper), applied to
-// EVERY list rather than the one `rest` was handed, plus the vanilla
-// panel's add-entry and add-list affordances neither `rest` nor `list`
-// ever needed — a declared block places specific lists by name, so it
-// never had to invent one.
+// EVERY list rather than the one `rest` was handed, plus the add form
+// neither `rest` nor `list` ever needed — a declared block places
+// specific lists by name, so it never had to invent one.
 //
 // Name/type edits are old scope, noted in the task: `ctx.write` is the
 // seat's one door (`POST /entities/:id/entry`) and only ever touches an
 // entry inside a list — renaming the entity or its type needs a whole-
 // entity PUT that isn't part of `BlockCtx`. The `header` block already
 // draws name/type read-only, so the floor reuses it rather than doing a
-// half job of its own.
+// half job of its own — unless the block says `header: false`, which is
+// how a surface that already heads the sheet (the roster's dialog) keeps
+// the name from being said twice.
 //
-// `ctx.entity` arrives already resolved (every caller fetches with
-// `?resolved=1` — `App.tsx`, `SeatChrome.tsx`) — fine for the read-only
-// header/notes/children below, but the floor's OWN editable grid has to
-// show what's actually STORED, the same distinction the vanilla panel
-// drew between `renderPanel` (stored, editable) and its "reads as"
-// aside (resolved, read-only) — so this fetches the stored entity
-// itself rather than trusting the ambient one.
+// WHAT IT DRAWS IS THE READING, not the row. It used to fetch the STORED
+// entity and draw that, on the vanilla panel's old split between
+// "stored, editable" and "reads as, read-only" — and a thin stamp stores
+// nothing (`core/stamp.ts`), so a foe deployed from the bestiary opened
+// to a sheet with no counters while the runner moved its Health fine
+// (the stranger's first run, 2026-11-16). `ctx.entity` arrives resolved
+// and live (`App.tsx`, `SeatChrome.tsx`, the roster's dialog), so the
+// floor draws that, and a write needs no translating: the entry door
+// copies a template-only entry down before it changes it
+// (`Session.writeEntry`), so touching one number makes exactly that
+// entry this entity's own and leaves the rest reading through.
+//
+// The stored row is still fetched for a stamped entity, for one
+// question only: which entries are its OWN. Removing an entry the
+// template supplies has nothing to remove — the door strikes stored
+// entries, and the template's would read straight back through — so
+// those carry no ✕ rather than a button that does nothing.
+//
+// teller's own marks in `meta` (side, draft, hidden) are not drawn here
+// at all, ANYWHERE the floor is used (`./floor.ts`). They are teller's
+// bookkeeping about the entity rather than entries in its game, each
+// has its own control on the console (the dialog's side switch and its
+// draft and hidden badges), and the floor is also a seat's sheet — where
+// a player tapping ✕ on `side` would take themselves off the party. The
+// dialog's header is where they're said, once.
 
-function FloorAddEntry({ onAdd }: { onAdd: (name: string, value: number | string | undefined, max: number | undefined) => void }) {
+/** Sentinel for the add form's "a new list…" choice — no list is called this. */
+const NEW_LIST = '\u0000new';
+
+type FloorAddOk = Extract<FloorVerdict, { ok: true }>;
+
+function FloorAdd({
+  lists,
+  list,
+  onAdd,
+  onCancel,
+}: {
+  /** The lists the floor shows, by their stored spelling. */
+  lists: Record<string, Entry[]>;
+  /** The list it was opened from, or '' for a new one. */
+  list: string;
+  onAdd: (entry: FloorAddOk) => void;
+  onCancel: () => void;
+}) {
+  const names = Object.keys(lists);
+  const [pick, setPick] = useState(list && names.includes(list) ? list : NEW_LIST);
+  const [newList, setNewList] = useState('');
+  const [name, setName] = useState('');
+  const [value, setValue] = useState('');
+  const [max, setMax] = useState('');
+  const [said, setSaid] = useState<{ text: string; warn: boolean } | undefined>(undefined);
+  // The draft the "it'll be a mark" warning was shown for. A second add
+  // of the SAME draft is the person meaning it; any edit asks again.
+  const [warned, setWarned] = useState<string | undefined>(undefined);
+
+  const draft: FloorDraft = { list: pick === NEW_LIST ? newList : pick, name, value, max };
+  const key = JSON.stringify(draft);
+  const typed = (set: (v: string) => void) => (ev: { target: { value: string } }) => {
+    set(ev.target.value);
+    setSaid(undefined);
+  };
+
+  const submit = () => {
+    const verdict = readDraft(draft, lists);
+    if (!verdict.ok) return setSaid({ text: verdict.say, warn: false });
+    // A value-less entry is a legitimate thing — a tag, a held condition
+    // — but in a list of counters it is far more often a number someone
+    // forgot to type, and it would land as a chip with no stepper. So
+    // the form asks once, in words, and the same press again keeps it.
+    if (verdict.unlikely && warned !== key) {
+      setWarned(key);
+      return setSaid({
+        text: `${verdict.list} holds numbers — with no value, ${verdict.name} would be a mark there, not a counter. give it a number, or press add again to keep it a mark.`,
+        warn: true,
+      });
+    }
+    onAdd(verdict);
+  };
+
   return (
-    <button
-      className="text-[11px] text-stone-500 hover:text-stone-300"
-      onClick={() => {
-        const name = window.prompt('name?')?.trim();
-        if (!name) return;
-        const raw = window.prompt('value? (blank = held, number = count, words = text)')?.trim() ?? '';
-        if (!raw) return onAdd(name, undefined, undefined);
-        const asNumber = Number(raw);
-        if (!Number.isFinite(asNumber)) return onAdd(name, raw, undefined);
-        const cap = window.prompt('max? (blank = none)')?.trim() ?? '';
-        const max = cap && Number.isFinite(Number(cap)) ? Number(cap) : undefined;
-        onAdd(name, asNumber, max);
+    <form
+      className="space-y-2 rounded-md border border-stone-800 p-3"
+      onSubmit={(ev) => {
+        ev.preventDefault();
+        submit();
+      }}
+      onKeyDown={(ev) => {
+        // Escape is this form's, not the dialog's around it: the roster's
+        // sheet closes on Escape too, and backing out of a half-typed
+        // entry shouldn't take the whole sheet with it.
+        if (ev.key === 'Escape') {
+          ev.stopPropagation();
+          onCancel();
+        }
       }}
     >
-      + add
-    </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          className={input}
+          value={pick}
+          onChange={typed(setPick)}
+          aria-label="which list"
+        >
+          {names.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+          <option value={NEW_LIST}>a new list…</option>
+        </select>
+        {pick === NEW_LIST && (
+          <input
+            className={`${input} w-36`}
+            placeholder="list name"
+            value={newList}
+            autoFocus
+            onChange={typed(setNewList)}
+            aria-label="new list name"
+          />
+        )}
+        <input
+          className={`${input} min-w-0 flex-1`}
+          placeholder="what it’s called"
+          value={name}
+          autoFocus={pick !== NEW_LIST}
+          onChange={typed(setName)}
+          aria-label="entry name"
+        />
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          className={`${input} w-24 font-mono`}
+          placeholder="value"
+          value={value}
+          onChange={typed(setValue)}
+          aria-label="value (blank for a mark)"
+        />
+        <span className="text-stone-600">/</span>
+        <input
+          className={`${input} w-20 font-mono`}
+          placeholder="max"
+          inputMode="numeric"
+          value={max}
+          onChange={typed(setMax)}
+          aria-label="ceiling (optional)"
+        />
+        <span className="flex-1" />
+        <button type="button" className={btn} onClick={onCancel}>
+          cancel
+        </button>
+        <button type="submit" className={btnPrimary}>
+          add
+        </button>
+      </div>
+      {said && (
+        <p className={`text-sm ${said.warn ? 'text-amber-400' : 'text-red-500'}`}>{said.text}</p>
+      )}
+      <p className="text-[11px] text-stone-600">
+        a number is a counter, with a max it’s a bar; words are a plain value; nothing is a mark,
+        like a condition. a max with no value starts full.
+      </p>
+    </form>
   );
 }
 
-function FloorBlock({ ctx }: { ctx: BlockCtx }) {
-  const id = subject(ctx)?.id;
-  const [stored, setStored] = useState<Entity | undefined>(undefined);
-  const [resolved, setResolved] = useState<Entity | undefined>(undefined);
-  const [tick, setTick] = useState(0);
+/** A small text button in the floor's own voice — "+ add", "+ add list". */
+const floorLink = 'w-fit text-[11px] text-stone-500 transition-colors hover:text-stone-300';
 
+function FloorBlock({ block, ctx }: { block: PanelBlock; ctx: BlockCtx }) {
+  const e = subject(ctx);
+  const id = e?.id;
+  const from = refIn(e?.refs, 'from');
+  const [stored, setStored] = useState<Entity | undefined>(undefined);
+  // Where the add form is open: a list's name, '' for a new list, or
+  // nowhere. One at a time — two half-typed entries is one too many.
+  const [adding, setAdding] = useState<string | undefined>(undefined);
+
+  // Refetched whenever the reading changes, keyed on its lists' text
+  // rather than the object, which the optimistic overlay rebuilds.
+  const readingKey = e ? JSON.stringify(e.lists) : '';
   useEffect(() => {
-    if (!id) {
+    if (!id || !from) {
       setStored(undefined);
-      setResolved(undefined);
       return;
     }
     let cancelled = false;
-    Promise.all([
-      api<Entity>(`/api/entities/${id}`),
-      api<Entity>(`/api/entities/${id}?resolved=1`),
-    ]).then(([s, r]) => {
-      if (!cancelled) {
-        setStored(s);
-        setResolved(r);
-      }
-    });
+    api<Entity>(`/api/entities/${id}`)
+      .then((s) => {
+        if (!cancelled) setStored(s);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [id, tick]);
+  }, [id, from?.id, readingKey]);
 
-  if (!id || !stored) return <Refusal>no entity to show</Refusal>;
+  if (!e || !id) return <Refusal>no entity to show</Refusal>;
 
   const write = (list: string, entryName: string, edit: Record<string, unknown>) => {
-    // Refetched either way: a refusal is the stored value winning, and
-    // the floor should show what won. (Handled on both arms, so a press
-    // with the host down is the door's notice, not an uncaught error.)
-    const again = () => setTick((t) => t + 1);
-    ctx.write?.({ list, name: entryName, ...edit })?.then(again, again);
+    // The door's own notice says a refusal; this only keeps a press with
+    // the host down from also being an uncaught rejection.
+    ctx.write?.({ list, name: entryName, ...edit })?.catch(() => {});
   };
+  // Its own, or read through the template? Unknown until the stored row
+  // lands, and unknown reads as the template's: a missing ✕ for a beat
+  // beats a ✕ that does nothing.
+  const own = (list: string, entry: Entry) =>
+    !from || Boolean(stored && findEntry(stored.lists[list] ?? [], entry));
 
-  const addEntry = (list: string, name: string, value: number | string | undefined, max: number | undefined) =>
-    write(list, name, max !== undefined ? { value, max } : { value });
-
-  const addList = () => {
-    const name = window.prompt('list name? (skills, resources, conditions, …)')?.trim();
-    if (!name) return;
-    // A list needs a first entry to exist at all — `writeEntry` vivifies
-    // the list on the entry write, there's no bare "create an empty
-    // list" door without a whole-entity PUT (see the note above).
-    const entryName = window.prompt('its first entry — name?')?.trim();
-    if (!entryName) return;
-    const raw = window.prompt('value? (blank = held, number = count, words = text)')?.trim() ?? '';
-    if (!raw) return addEntry(name, entryName, undefined, undefined);
-    const asNumber = Number(raw);
-    if (!Number.isFinite(asNumber)) return addEntry(name, entryName, raw, undefined);
-    const cap = window.prompt('max? (blank = none)')?.trim() ?? '';
-    const max = cap && Number.isFinite(Number(cap)) ? Number(cap) : undefined;
-    addEntry(name, entryName, asNumber, max);
+  const lists = Object.fromEntries(
+    Object.entries(e.lists)
+      .map(([name, entries]) => [name, floorEntries(name, entries)] as const)
+      .filter(([, entries]) => entries.length > 0),
+  );
+  const canAdd = Boolean(ctx.write) && typable(ctx);
+  const add = (entry: FloorAddOk) => {
+    setAdding(undefined);
+    write(entry.list, entry.name, {
+      ...(entry.value !== undefined ? { value: entry.value } : {}),
+      ...(entry.max !== undefined ? { max: entry.max } : {}),
+    });
   };
+  const form = (at: string) => (
+    <FloorAdd lists={lists} list={at} onAdd={add} onCancel={() => setAdding(undefined)} />
+  );
 
   return (
     <div className="flex flex-col gap-3">
-      <RenderBlock block={{ block: 'header' }} ctx={ctx} />
+      {block.header !== false && <RenderBlock block={{ block: 'header' }} ctx={ctx} />}
 
-      {Object.entries(stored.lists).map(([listName, entries]) => (
+      {from && (
+        <p className="px-1 text-[11px] text-stone-600">
+          reads through {from.name} — change a number and it’s this one’s own; the rest stay{' '}
+          {from.name}’s.
+        </p>
+      )}
+
+      {Object.keys(lists).length === 0 && adding === undefined && (
+        <p className="px-1 text-sm text-stone-600">
+          {canAdd
+            ? 'nothing written down yet — “+ add list” puts the first number on it.'
+            : 'nothing written down yet.'}
+        </p>
+      )}
+
+      {Object.entries(lists).map(([listName, entries]) => (
         <section key={listName} className={`${card} flex flex-col gap-2`}>
           <div className="flex items-center justify-between">
             <p className={sectionLabel}>{listName}</p>
-            <FloorAddEntry onAdd={(name, value, max) => addEntry(listName, name, value, max)} />
+            {canAdd && adding !== listName && (
+              <button className={floorLink} onClick={() => setAdding(listName)}>
+                + add
+              </button>
+            )}
           </div>
-          {entries.length === 0 && <Refusal>nothing here yet</Refusal>}
-          {/* Every entry can go, not just a chip: the floor is the sheet
-              Starter ships, so a counter typed in by mistake has to be
-              removable from the same screen it was added on. */}
-          {entries.map((entry) =>
-            entry.value === undefined ? (
-              <AutoEntry
-                key={entry.name}
-                entry={entry}
-                onWrite={(edit) => write(listName, entry.name, edit)}
-                typing={typable(ctx)}
-              />
-            ) : (
+          {/* Every entry of its own can go, not just a chip: the floor is
+              the sheet Starter ships, so a counter typed in by mistake
+              has to be removable from the same screen it was added on. */}
+          {entries.map((entry) => {
+            const mine = own(listName, entry);
+            if (entry.value === undefined) {
+              return mine ? (
+                <AutoEntry
+                  key={entry.name}
+                  entry={entry}
+                  onWrite={(edit) => write(listName, entry.name, edit)}
+                  typing={typable(ctx)}
+                />
+              ) : (
+                <span
+                  key={entry.name}
+                  className="w-fit rounded-full bg-amber-950/60 px-2.5 py-1 text-xs text-amber-200"
+                  title={`${from?.name ?? 'the template'}’s — not this one’s to remove`}
+                >
+                  {entry.name}
+                </span>
+              );
+            }
+            return (
               <div key={entry.name} className="flex items-center gap-2">
                 <div className="min-w-0 flex-1">
                   <AutoEntry
@@ -965,42 +1137,39 @@ function FloorBlock({ ctx }: { ctx: BlockCtx }) {
                     typing={typable(ctx)}
                   />
                 </div>
-                <button
-                  className="text-[11px] text-stone-600 transition-colors hover:text-red-300"
-                  onClick={() => write(listName, entry.name, { remove: true })}
-                  title={`remove ${entry.name}`}
-                  aria-label={`remove ${entry.name}`}
-                >
-                  ✕
-                </button>
+                {mine && (
+                  <button
+                    className="text-[11px] text-stone-600 transition-colors hover:text-red-300"
+                    onClick={() => write(listName, entry.name, { remove: true })}
+                    title={`remove ${entry.name}`}
+                    aria-label={`remove ${entry.name}`}
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
-            ),
-          )}
+            );
+          })}
+          {adding === listName && form(listName)}
         </section>
       ))}
 
-      <button className="w-fit text-[11px] text-stone-500 hover:text-stone-300" onClick={addList}>
-        + add list
-      </button>
+      {canAdd &&
+        (adding === '' ? (
+          form('')
+        ) : (
+          <button className={floorLink} onClick={() => setAdding('')}>
+            + add list
+          </button>
+        ))}
 
       <RenderBlock block={{ block: 'notes' }} ctx={ctx} />
       <RenderBlock block={{ block: 'children' }} ctx={ctx} />
-
-      {resolved && (
-        <details className={card}>
-          <summary className={`${sectionLabel} cursor-pointer`}>
-            reads as (resolved through templates)
-          </summary>
-          <pre className="mt-2 overflow-x-auto text-xs text-stone-400">
-            {JSON.stringify(resolved, null, 2)}
-          </pre>
-        </details>
-      )}
     </div>
   );
 }
 
-registerBlock('floor', (_block, ctx) => <FloorBlock ctx={ctx} />);
+registerBlock('floor', (block, ctx) => <FloorBlock block={block} ctx={ctx} />);
 
 // ---- rest (strays surface — the degradation contract, arranged) -------
 

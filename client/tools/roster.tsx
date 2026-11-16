@@ -168,7 +168,11 @@ function RosterTool() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         {shown.length === 0 && (
           <p className="text-sm text-stone-600">
-            {query ? 'nobody by that name' : 'nobody here yet'}
+            {query
+              ? 'nobody by that name'
+              : entities.length
+                ? `nobody ${filter === 'foes' ? 'on the foes’ side' : `in the ${filter}`} yet`
+                : 'nobody here yet — add someone below: a name is all it takes.'}
           </p>
         )}
         {shown.map((e) => (

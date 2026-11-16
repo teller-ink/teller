@@ -28,8 +28,8 @@
 // The held arrangement is the phone's single column, which is what a
 // scrolling dialog is.
 
-import { useEffect, useState, type ReactNode } from 'react';
-import { isDraft, type Entity, type Entry } from '../../../core/entity.ts';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { DRAFT_LIST, DRAFT_MARK, hasEntry, isDraft, type Entity, type Entry } from '../../../core/entity.ts';
 import { SIDE_LIST, SIDE_MARK, SIDES, storedSide, type Side } from '../../../core/side.ts';
 import type { PanelDef } from '../../../core/panels.ts';
 import { api } from '../../lib/api.ts';
@@ -39,6 +39,7 @@ import { useOptimistic, writeEntry, type EntryEdit } from '../../lib/entry.ts';
 import { btn, btnGhost, card, sectionLabel } from '../../lib/ui.ts';
 import { PanelSurface, Refusal, RenderBlock, type BlockCtx } from '../../panels/render.tsx';
 import { shaped } from '../../panels/blocks.tsx';
+import { HIDDEN_LIST, HIDDEN_MARK } from '../../panels/floor.ts';
 import { StatusChip } from '../encounters/TemplateSheet.tsx';
 import { VitalBar } from '../Vitals.tsx';
 
@@ -115,6 +116,39 @@ function drawsEverything(panel: PanelDef): boolean {
             has((b as { blocks?: unknown }).blocks)),
     );
   return has(panel.held) || has(panel.mounted);
+}
+
+/**
+ * The panel as the DIALOG draws it — with no head of its own. The
+ * dialog heads the sheet itself (portrait, a name you can type over, the
+ * type, the side switch), so a `header` block in the panel said the
+ * name a second time, and the floor's built-in header a third (the
+ * stranger's first run, 2026-11-16: Starter's sheet showed the name
+ * twice). Dropped here, for this one surface, rather than in the panel:
+ * a seat has no header of its own and still wants the panel's. Walks
+ * `columns` the way `drawsEverything` does; a panel INCLUDED by name is
+ * out of reach and keeps whatever it says.
+ */
+function headless(panel: PanelDef): PanelDef {
+  const strip = (blocks: unknown): unknown =>
+    Array.isArray(blocks)
+      ? blocks
+          .filter((b) => !(b && typeof b === 'object' && (b as { block?: unknown }).block === 'header'))
+          .map((b) => {
+            if (Array.isArray(b)) return strip(b);
+            if (!b || typeof b !== 'object') return b;
+            const out = { ...(b as Record<string, unknown>) };
+            if (out.block === 'floor') out.header = false;
+            if (Array.isArray(out.columns)) out.columns = strip(out.columns);
+            if (Array.isArray(out.blocks)) out.blocks = strip(out.blocks);
+            return out;
+          })
+      : blocks;
+  return {
+    ...panel,
+    ...(panel.held ? { held: strip(panel.held) as PanelDef['held'] } : {}),
+    ...(panel.mounted ? { mounted: strip(panel.mounted) as PanelDef['mounted'] } : {}),
+  };
 }
 
 /** The list a table's counters live in — the same one the tile's bar and
@@ -217,13 +251,44 @@ function SideControl({ e, onPick }: { e: Entity; onPick: (side: Side) => void })
   );
 }
 
-/** The half-made mark, as a caption — the only trace a draft carries. */
-function DraftBadge() {
+/**
+ * One of teller's own marks, as a caption — the half-made draft, the
+ * ambusher still out of sight. On the sheet it carries a ✕: the floor
+ * no longer draws these marks as entries (they'd have said the side
+ * twice, `client/panels/floor.ts`), so the header is the one place a
+ * human strikes one off by hand (rule 1 — `core/entity.ts` promises
+ * exactly that for the draft).
+ */
+function MarkBadge({ label, title, onClear }: { label: string; title?: string; onClear?: () => void }) {
   return (
-    <span className="rounded bg-amber-950 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-amber-400">
-      draft
+    <span
+      className="flex items-center gap-1 rounded bg-amber-950 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-amber-400"
+      title={title}
+    >
+      {label}
+      {onClear && (
+        <button
+          type="button"
+          className="text-amber-500/60 transition-colors hover:text-red-300"
+          onClick={onClear}
+          aria-label={`clear ${label}`}
+          title={`clear ${label}`}
+        >
+          ✕
+        </button>
+      )}
     </span>
   );
+}
+
+/** The half-made mark, as a caption — the only trace a draft carries. */
+function DraftBadge({ onClear }: { onClear?: () => void }) {
+  return <MarkBadge label="draft" title="still being made" onClear={onClear} />;
+}
+
+/** Is this one deployed out of sight, with no token to be hidden by? */
+function isHidden(e: Entity | undefined): boolean {
+  return hasEntry(e?.lists?.[HIDDEN_LIST] ?? [], HIDDEN_MARK);
 }
 
 // ---- the tile ----------------------------------------------------------
@@ -381,6 +446,7 @@ export function EntitySheet({
       }
     : undefined;
   const accent = e ? accentOf(records, e) : undefined;
+  const sheet = useMemo(() => headless(panel), [panel]);
   // The counters the sheet's own plates leave for other screens — asked
   // with the SAME question the sheet asks (`shaped`), so the two can't
   // drift into both drawing Health or neither drawing Aces.
@@ -424,7 +490,22 @@ export function EntitySheet({
                   {e.type}
                 </span>
               )}
-              {isDraft(e) && <DraftBadge />}
+              {isDraft(e) && (
+                <DraftBadge
+                  onClear={() =>
+                    writeEntry(id, { list: DRAFT_LIST, name: DRAFT_MARK, remove: true }).catch(() => {})
+                  }
+                />
+              )}
+              {isHidden(e) && (
+                <MarkBadge
+                  label="out of sight"
+                  title="kept off the table’s screens until its token stands in the open — or until this is cleared"
+                  onClear={() =>
+                    writeEntry(id, { list: HIDDEN_LIST, name: HIDDEN_MARK, remove: true }).catch(() => {})
+                  }
+                />
+              )}
               {e && (
                 <SideControl
                   e={e}
@@ -443,7 +524,7 @@ export function EntitySheet({
         <div className="space-y-4 px-5 py-4">
           {ctx && (
             <PanelSurface
-              panel={panel}
+              panel={sheet}
               ctx={ctx}
               fallback={<Refusal>this sheet failed to render — the floor has it</Refusal>}
             />

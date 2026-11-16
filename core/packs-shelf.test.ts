@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadCampaign } from './boot.ts';
 import { archiveJson, openArchive, writeArchive } from './archive.ts';
 import {
+  mintedNote,
   packArchive,
   packDir,
   packPanelDir,
@@ -145,16 +146,28 @@ describe('sweepPacks — degradation is out loud (the panels posture)', () => {
     // Written down, so the identity survives this process.
     const onDisk = JSON.parse(readFileSync(join(packDir, 'pack.json'), 'utf8'));
     expect(onDisk).toEqual({ id: minted, name: 'No Id', version: 1 });
-    // …and the report SAYS it did so, as a note rather than a failure.
+    // …and the report SAYS it did so, as a note rather than a failure,
+    // naming the file it wrote and the id it wrote into it.
     expect(first.problems).toEqual([
-      { dir: packDir, problem: expect.stringContaining(minted), level: 'note' },
+      { dir: packDir, problem: mintedNote('packs/nameless/pack.json', minted), level: 'note' },
     ]);
+    expect(first.problems[0].problem).toMatch(
+      new RegExp(`^wrote an id into packs/nameless/pack\\.json: .*${minted}`),
+    );
 
-    // A second sweep reads the id back and mints nothing.
+    // A second sweep reads the id back and mints nothing — but it still
+    // SAYS what this host wrote, because the console's Shelf tab sweeps
+    // again to list the shelf, and a note only the minting sweep said
+    // was gone before anyone could read it.
     const second = sweepPacks(dir);
     expect(second.packs.map((p) => p.id)).toEqual([minted]);
-    expect(second.problems).toEqual([]);
+    expect(second.problems).toEqual(first.problems);
     expect(JSON.parse(readFileSync(join(packDir, 'pack.json'), 'utf8')).id).toBe(minted);
+  });
+
+  it('an id a human wrote is never reported as minted', () => {
+    writePack('named', { 'pack.json': { id: 'pak_byhand', name: 'Named', version: 1 } });
+    expect(sweepPacks(dir).problems).toEqual([]);
   });
 
   it('a zipped .pack with no id is still refused, in a sentence — nowhere to write one', () => {

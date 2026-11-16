@@ -27,6 +27,7 @@ export default defineConfig({
       // and the cross-slot stream budget has races no click-through can
       // reliably reproduce. Arithmetic is what a test is for.
       'client/lib/**/*.test.ts',
+      'client/panels/**/*.test.ts',
     ],
     environment: 'node',
   },

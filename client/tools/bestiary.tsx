@@ -369,7 +369,7 @@ function BestiaryTool() {
         {found.length === 0 && (
           <li className="text-sm text-stone-600">
             {!npcs.length
-              ? 'no foes yet — write one down with “+ new foe”, or a pack brings them'
+              ? 'no foes yet — “+ new foe” makes one you can put in a fight.'
               : query
                 ? `nothing by that name${type ? ` in ${type}` : ''}`
                 : `nothing in ${type}`}

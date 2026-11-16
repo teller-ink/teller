@@ -40,10 +40,14 @@ curl -X POST http://localhost:4526/api/campaigns \
 ```
 
 Then, in the console: **Roster** → type a name, add → open the tile.
-The sheet is the floor (below): **+ add list** makes a list with its
-first entry (a number is a counter, a number with a max is a bar, words
-are a plain value, blank is a chip); **+ add** puts another entry in a
-list; **✕** takes one out. A list called `conditions` is the one list
+The sheet is the floor (below): **+ add list** opens a small form for a
+list's first entry, and **+ add** beside a list opens it for another —
+the list, the entry's name, a value and an optional max (a number is a
+counter, a number with a max is a bar, words are a plain value, blank is
+a mark like a condition; a max with no value starts full). Enter adds,
+Escape cancels; **✕** takes an entry out. A foe from the bestiary reads
+its numbers through the bestiary's copy, and changing one makes that one
+number its own. A list called `conditions` is the one list
 Starter gives meaning to (below). **Bestiary → + new foe** writes down a
 monster for this campaign — a name and a few counters — and
 **Encounters** builds fights out of those.
@@ -178,7 +182,8 @@ teller will look at it (a plugin, or your system's own `exports/`, may).
 merged by `id`: `bestiary` (foes), `catalog` (items), `upgrades`.
 
 **Panel blocks** (`mounted` and `held` in a `panel.json`, each
-`{"block": "<name>", …}`): `header` · `brand` · `floor` · `rest`
+`{"block": "<name>", …}`): `header` · `brand` · `floor` (`header:
+false` leaves out its built-in header) · `rest`
 (`except: [list names]`) · `list` (`list`, `as`, `filter`, `names`) ·
 `statuses` · `notes` · `children` · `carried` (`screen`) · `aside`
 (`text`) · `spend-door` · `ladders` · `columns` (`columns: [[blocks],

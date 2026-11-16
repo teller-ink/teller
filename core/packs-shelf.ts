@@ -207,6 +207,22 @@ export type PackSweep = {
   problems: PackProblem[];
 };
 
+/**
+ * Every `pack.json` this process wrote an id into, by path → the id it
+ * wrote. Only consulted to keep saying so (see `sweepPacks`); the file
+ * on disk is the identity, never this map.
+ */
+const mintedHere = new Map<string, string>();
+
+/** What the sweep says when it wrote an id into a pack's own file — the
+ * file, the id, and that it was the sweep that did it. */
+export function mintedNote(file: string, id: string): string {
+  return (
+    `wrote an id into ${file}: it had none, so this host minted ${id} — ` +
+    `that is the pack's identity from now on, and the file keeps it`
+  );
+}
+
 /** `pack.json`'s own keys — never slots. */
 const PACK_KEYS = new Set(['id', 'system', 'name', 'version', 'rights', 'books']);
 /** `system.json`'s reserved keys — everything else in that file is a slot. */
@@ -662,6 +678,7 @@ export function sweepPacks(dataDir: string, shelf?: Shelf): PackSweep {
       continue;
     }
     let id = typeof manifest.id === 'string' ? manifest.id.trim() : '';
+    const file = `packs/${name}/pack.json`;
     if (!id) {
       // `packs/README.md` promises "leave the id out and the host mints
       // one", and identity is the id — so it is minted ONCE and written
@@ -679,11 +696,18 @@ export function sweepPacks(dataDir: string, shelf?: Shelf): PackSweep {
         continue;
       }
       id = minted;
-      problems.push({
-        dir,
-        problem: `pack.json had no id, so this sweep minted ${minted} and wrote it into the file — that is the pack's identity from now on`,
-        level: 'note',
-      });
+      mintedHere.set(manifestPath, minted);
+    }
+    // Said on every sweep for the life of this host, not only the one
+    // that wrote it. The console's Shelf tab SWEEPS AGAIN to list the
+    // shelf (`shelfListing`), so a note said only by the sweep that
+    // minted was gone by the time anyone could read it — pressing "sweep
+    // the folders" wrote an id into somebody's file and the screen said
+    // nothing (the stranger's first run, 2026-11-16). Remembered per
+    // process, so a restart says it no more: the write happened once and
+    // the report is about that write, not a standing condition.
+    if (mintedHere.get(manifestPath) === id) {
+      problems.push({ dir, problem: mintedNote(file, id), level: 'note' });
     }
 
     // Art first: the copy has to land before anything reads a rewritten
