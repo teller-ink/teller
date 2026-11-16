@@ -264,7 +264,7 @@ describe('the doors', () => {
     expect(events.some((e) => e.kind === 'handout.cleared')).toBe(true);
   });
 
-  it('removing one takes the bytes and the frame with it', async () => {
+  it('removing one takes the row and the frame, and keeps the bytes', async () => {
     const id = await addHandout('Wanted Poster');
     const key = (await call('GET', '/api/handouts', { key: true })).body[0].key;
     await call('PUT', '/api/campaign/refs', { key: true, body: { handout: id } });
@@ -275,8 +275,27 @@ describe('the doors', () => {
     expect((await call('DELETE', `/api/handouts/${id}`, { key: true })).status).toBe(200);
     expect((await call('GET', '/api/handouts', { key: true })).body).toEqual([]);
     expect((await call('GET', '/api/public', { key: true })).body.handout).toBe(null);
-    expect(existsSync(join(dir, key))).toBe(false);
+    // The picture stays — an undo must bring back something real.
+    expect(existsSync(join(dir, key))).toBe(true);
     expect((await call('DELETE', `/api/handouts/${id}`, { key: true })).status).toBe(404);
+  });
+
+  it('undoing a removal brings back the row, then the frame, with a picture behind both', async () => {
+    const id = await addHandout('Wanted Poster');
+    const key = (await call('GET', '/api/handouts', { key: true })).body[0].key;
+    await call('PUT', '/api/campaign/refs', { key: true, body: { handout: id } });
+    await call('DELETE', `/api/handouts/${id}`, { key: true });
+
+    // First press: the row, not yet shown — never a frame aimed at nothing.
+    await call('POST', '/api/undo', { key: true, body: {} });
+    expect((await call('GET', '/api/handouts', { key: true })).body.map((h: any) => h.id)).toEqual([id]);
+    expect((await call('GET', '/api/public', { key: true })).body.handout).toBe(null);
+
+    // Second press: shown again, and the bytes it names are on disk.
+    await call('POST', '/api/undo', { key: true, body: {} });
+    const shown = (await call('GET', '/api/public', { key: true })).body.handout;
+    expect(shown?.id ?? shown).toBeTruthy();
+    expect(existsSync(join(dir, key))).toBe(true);
   });
 
   it('keeps the bytes while another row still names them', async () => {

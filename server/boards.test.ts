@@ -187,8 +187,24 @@ describe('taking one off the shelf', () => {
     // …the state went with it…
     const state = await api('GET', `/api/board-state/${board.id}`);
     expect(state.body).toBeNull();
-    // …and so did the bytes, since nothing else named them.
-    expect(existsSync(join(dir, up.key))).toBe(false);
+    // …and the bytes STAY: an undo must never point at a picture this
+    // door erased, and reclaiming unnamed files is a later job.
+    expect(existsSync(join(dir, up.key))).toBe(true);
+  });
+
+  it('undoing a removal leaves the table aimed at a board that exists', async () => {
+    const { body: up } = await upload(PNG);
+    const { body: board } = await api('POST', '/api/boards', { key: up.key, name: 'Clearing' });
+    await api('PUT', '/api/campaign/refs', { board: board.id });
+    await api('DELETE', `/api/boards/${board.id}`);
+
+    const peek = await api('GET', '/api/undo/peek');
+    expect(peek.body.undoable.also.join(' ')).toMatch(/Clearing is no longer on the shelf/);
+    await api('POST', '/api/undo', {});
+
+    expect(host.session!.campaign.root().refs?.board).toBeUndefined();
+    expect((await api('GET', '/api/public')).body.board).toBeNull();
+    expect(existsSync(join(dir, up.key))).toBe(true);
   });
 
   it('leaves the picture alone while another board still names it', async () => {

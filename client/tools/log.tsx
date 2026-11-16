@@ -21,6 +21,10 @@ type EventRow = {
   kind: string;
   payload: unknown;
   createdAt: string;
+  /** Who did it, worded by the host — `server/undo.ts`'s `logWords`. */
+  who?: string;
+  /** What it was, in the undo button's own words; absent for the kinds worded below. */
+  what?: string;
 };
 
 type RosterEntry = { id: string; name: string; type: string | null };
@@ -85,8 +89,15 @@ const VERB: Record<string, string> = {
   'turn.updated': 'the turn order',
 };
 
-/** Kind → a human, mono-friendly summary of what happened (core/store.ts's `append` calls). */
+/**
+ * Kind → a human, mono-friendly summary of what happened (core/store.ts's
+ * `append` calls). The host words most rows itself now, with the same
+ * describers the undo button reads from, so a row and the button say the
+ * same thing in the same words; what's below is for the kinds whose own
+ * payload already reads as a sentence, and for an older host.
+ */
 function describe(e: EventRow, names: Map<string, string>): string {
+  if (e.what) return e.what;
   const who = e.entityId ? (names.get(e.entityId) ?? e.entityId) : null;
   const p = (e.payload ?? {}) as Record<string, unknown>;
   switch (e.kind) {
@@ -225,7 +236,7 @@ const undoWary =
  */
 function UndoButton({ onUndone }: { onUndone: () => void }) {
   const { data, reload } = useLive(
-    () => api<{ undoable: Undoable | null }>('/api/undo/peek'),
+    () => api<{ undoable: Undoable | null; nothing?: string }>('/api/undo/peek'),
     [],
   );
   const [busy, setBusy] = useState(false);
@@ -247,7 +258,7 @@ function UndoButton({ onUndone }: { onUndone: () => void }) {
     setBusy(true);
     setArmed(null);
     try {
-      const res = await api<{ undone: Undoable | null; stale?: boolean }>('/api/undo', {
+      const res = await api<{ undone: Undoable | null; stale?: boolean; nothing?: string }>('/api/undo', {
         method: 'POST',
         body: { expect: undoable.event },
       });
@@ -256,7 +267,7 @@ function UndoButton({ onUndone }: { onUndone: () => void }) {
           ? 'the table changed — read it again'
           : res.undone
             ? `put back: ${res.undone.what}`
-            : 'nothing left to undo',
+            : (res.nothing ?? 'nothing left to undo'),
       );
       window.setTimeout(() => setSaid(''), 6_000);
       reload();
@@ -290,11 +301,13 @@ function UndoButton({ onUndone }: { onUndone: () => void }) {
           // and the button that needed to look different looked the same.
           className={surprising ? undoWary : btnGhost}
           disabled={busy || !undoable}
-          title={undoable ? 'step the table back one mutation' : 'nothing behind this table yet'}
+          title={undoable ? 'step the table back one mutation' : (data?.nothing ?? 'nothing behind this table yet')}
           onClick={step}
         >
+          {/* Nothing to undo says WHY — a floor ("since this campaign
+              was restored") or the window's edge is not an empty past. */}
           {!undoable
-            ? 'nothing to undo'
+            ? (data?.nothing ?? 'nothing to undo')
             : surprising && ready
               ? `press again — undo: ${undoable.what}`
               : `undo: ${undoable.what}`}
@@ -368,7 +381,7 @@ function LogTool() {
                 {describe(e, names)}
               </span>
               <span className="shrink-0 font-mono text-[11px] text-stone-600">
-                {e.actor}
+                {e.who ?? e.actor}
               </span>
               <span className="w-20 shrink-0 text-right font-mono text-[11px] text-stone-600">
                 {when(e.createdAt)}

@@ -66,7 +66,7 @@
 // nobody could undo. Now only the placements and turn rows that the
 // action took come back, merged into the table as it stands.
 
-import type { Entity, Entry, Ref } from '../core/entity.ts';
+import { refIn, type Entity, type Entry, type Ref } from '../core/entity.ts';
 import type { EventRow } from '../core/store.ts';
 import type { Session } from './session.ts';
 import { toTurnState, type TurnState } from './turn.ts';
@@ -77,6 +77,9 @@ import { toTurnState, type TurnState } from './turn.ts';
  * of pressing undo.
  */
 export const UNDO_WINDOW = 500;
+
+/** The kind of the one row undo never walks past — see `markFloor`. */
+export const FLOOR = 'undo.floor';
 
 /**
  * Records: they say what happened, they didn't change anything.
@@ -109,7 +112,51 @@ const RECORDS = new Set([
  * either — the row they describe is the one undo is about to take, or
  * there was never any state to take.
  */
-const NOTES = new Set(['handout.shown', 'handout.cleared', 'note.passed', 'campaign.created']);
+const NOTES = new Set([
+  'handout.shown',
+  'handout.cleared',
+  'note.passed',
+  'campaign.created',
+  // Exporting a story writes the campaign's own identity row (its `sto_`
+  // id and the export count) — bookkeeping about the file, not a change
+  // to the table. It used to log as an ordinary template edit, so the
+  // next thing undo offered to take back was "the export".
+  'story.exported',
+  FLOOR,
+]);
+
+// -- the floor -----------------------------------------------------------
+//
+// Undo walks BACK, and there are two places it must never walk past.
+//
+// A new campaign's own setup: the host writes the system ref into the
+// manifest the moment the campaign is minted, and one press on a
+// pristine table used to take it away — after the next sweep the party
+// read as foes (audit 2026-11-16). That write is the campaign being
+// born, not a thing anybody did at the table.
+//
+// A campaign restored from a `.story`: its history arrives as history,
+// and the rows that put the roster in place arrive after it. Stepping
+// those back deleted the party one press at a time, and stepping into
+// the imported log restored things under a root that doesn't exist on
+// this host until the host fell over. The import is where this table's
+// undo begins; what came before it stays readable in the log, as
+// history, and nothing reaches into it.
+//
+// Both are one row, written once, that the walk stops at.
+
+/**
+ * Write the floor: nothing at or below this row is ever stepped back.
+ * `why` is what the peek says — "since this campaign was restored".
+ */
+export function markFloor(
+  campaign: { append(entityId: string | null, actor: string, kind: string, payload?: unknown): unknown },
+  actor: string,
+  why: 'created' | 'restored',
+  extra: Record<string, unknown> = {},
+): void {
+  campaign.append(null, actor, FLOOR, { why, ...extra });
+}
 
 /** What `/undo` would do, or just did — enough for a console to say it. */
 export type Undoable = {
@@ -254,7 +301,8 @@ function nameOf(session: Session, id: unknown): string | undefined {
 
 /** Who did it, as a Warden reads it — never a raw id. */
 function whoDid(session: Session, actor: string): string {
-  if (actor === 'console') return 'the console';
+  // `dm` is what the story doors file under — the console, by key.
+  if (actor === 'console' || actor === 'dm') return 'the console';
   if (actor === 'host') return 'teller itself';
   if (actor === 'anon') return 'an unpaired screen';
   if (actor.startsWith('seat:')) {
@@ -477,6 +525,18 @@ type Walk = {
   target?: EventRow;
   /** The changes newer than the target that it walks past, newest first. */
   skipped: string[];
+  /**
+   * With no target: WHY there is nothing, in words. An empty history, a
+   * floor, and a window that ran out all looked alike before — a
+   * disabled button — and only the first of them means nothing is there.
+   */
+  nothing?: string;
+};
+
+/** What the button says when the walk found nothing, per floor. */
+const FLOOR_WORDS: Record<string, string> = {
+  created: 'nothing since this campaign was made',
+  restored: 'nothing since this campaign was restored',
 };
 
 /**
@@ -502,6 +562,15 @@ function walk(session: Session): Walk {
   // board row they describe.
   let moves: EventRow[] = [];
   for (const event of events) {
+    // The floor, and the campaign's birth (the floor of a campaign made
+    // before floors were written down). Nothing below either is reached.
+    if (event.kind === FLOOR) {
+      const why = String(payloadOf(event).why ?? '');
+      return { events, skipped, nothing: FLOOR_WORDS[why] ?? FLOOR_WORDS.created };
+    }
+    if (event.kind === 'campaign.created') {
+      return { events, skipped, nothing: FLOOR_WORDS.created };
+    }
     if (event.kind === 'revert' || done.has(event.id)) continue;
     if (event.kind === 'token.moved') {
       moves.push(event);
@@ -513,7 +582,17 @@ function walk(session: Session): Walk {
     }
     moves = [];
   }
-  return { events, skipped };
+  // Ran out of window, not out of history: there are older rows, and
+  // undo deliberately doesn't read that far. Saying "nothing to undo"
+  // here was a lie of omission (audit 2026-11-16).
+  if (events.length >= UNDO_WINDOW) {
+    return {
+      events,
+      skipped,
+      nothing: `nothing undo can reach — it looks back ${UNDO_WINDOW} changes, and none of those can be stepped back`,
+    };
+  }
+  return { events, skipped, nothing: 'nothing behind this table yet' };
 }
 
 export function nextUndoable(session: Session): EventRow | undefined {
@@ -521,13 +600,14 @@ export function nextUndoable(session: Session): EventRow | undefined {
 }
 
 /** How the walk describes a row to whoever is about to press the button. */
-function describe(session: Session, event: EventRow, seen: Walk): Undoable {
+/** The thing a row is about, by name, from wherever the log or the table still holds it. */
+function rowName(session: Session, event: EventRow): string | undefined {
   const p = payloadOf(event);
   const before = entityOf(p.before);
   const after = entityOf(p.after);
   const stored = event.entityId ? session.campaign.get(event.entityId) : undefined;
   const named = (p.before ?? p.after) as { name?: unknown } | undefined;
-  const name =
+  return (
     before?.name ??
     after?.name ??
     stored?.name ??
@@ -537,7 +617,15 @@ function describe(session: Session, event: EventRow, seen: Walk): Undoable {
     // A row about something that isn't an entity at all — a deployed
     // fight names itself, because "undo the deploy" wants the fight's
     // word and there's no stored row to read it off.
-    (typeof p.name === 'string' ? p.name : undefined);
+    (typeof p.name === 'string' ? p.name : undefined)
+  );
+}
+
+function describe(session: Session, event: EventRow, seen: Walk): Undoable {
+  const p = payloadOf(event);
+  const before = entityOf(p.before);
+  const after = entityOf(p.after);
+  const name = rowName(session, event);
   const out: Undoable = {
     event: event.id,
     kind: event.kind,
@@ -558,14 +646,131 @@ function describe(session: Session, event: EventRow, seen: Walk): Undoable {
   }
   const plan = planRestore(session, event, seen.events);
   const also = plan ? alsoOf(session, plan) : [];
+  const gone = event.kind === 'entity.updated' && before ? aimGone(session, before) : undefined;
+  if (gone) {
+    also.push(`${gone.name || 'that board'} is no longer on the shelf — the table stays as it is`);
+  }
   if (also.length) out.also = also;
   return out;
 }
 
+/**
+ * The board an undo would re-aim the table at, when that board is no
+ * longer on the shelf. Only the manifest carries the aim.
+ */
+function aimGone(session: Session, before: Entity): Ref | undefined {
+  if (!session.campaign.isRoot(before.id)) return undefined;
+  const aim = refIn(before.refs, 'board');
+  return aim && !session.shelf.board(aim.id) ? aim : undefined;
+}
+
 /** What `/undo` WOULD undo — the same walk, nothing written. */
 export function peekUndo(session: Session): Undoable | null {
+  return peek(session).undoable;
+}
+
+/**
+ * The peek as the door answers it: what would go, or — when nothing
+ * would — why, in words. A floor and an exhausted window are different
+ * answers from an empty history, and a Warden should be told which.
+ */
+export function peek(session: Session): { undoable: Undoable | null; nothing?: string } {
   const seen = walk(session);
-  return seen.target ? describe(session, seen.target, seen) : null;
+  if (seen.target) return { undoable: describe(session, seen.target, seen) };
+  return { undoable: null, nothing: seen.nothing ?? 'nothing behind this table yet' };
+}
+
+// -- the log, in the same words ------------------------------------------
+//
+// The console's Log tool listed `enc_… — encounter.deployed` and
+// `ent_… was edited` right under an undo button that said "deployed The
+// Lake". Same rows, two vocabularies. So the events door words each row
+// with the describers above — once, on the host, in the one request
+// that fetched the list — and the client shows what it is handed.
+
+/** Kinds the client words better itself (its payloads describe a fight, not a row). */
+const SELF_WORDED = new Set([
+  'dice.rolled',
+  'turn.resolved',
+  'handout.shown',
+  'handout.cleared',
+  'note.passed',
+  'campaign.created',
+]);
+
+/** What an undo's row says it put back, when the row itself is out of sight. */
+const REVERTED: Record<string, string> = {
+  'entity.created': 'a creation',
+  'entity.updated': 'an edit',
+  'entity.deleted': 'a deletion',
+  'entity.moved': 'a hand-over',
+  'template.updated': 'a prep edit',
+  'template.deleted': 'a prep removal',
+  'turn.updated': 'a turn order change',
+  'encounter.deployed': 'a deploy',
+  'table.cleared': 'a cleared table',
+};
+
+/**
+ * Who did one row, and what it was, as the Log tool shows it. `what` is
+ * absent for the kinds whose own payload already reads as a sentence.
+ * `rows` is the list being worded, so an undo's row can name what it
+ * put back without a lookup of its own.
+ */
+export function logWords(
+  session: Session,
+  event: EventRow,
+  rows: Map<number, EventRow>,
+): { who: string; what?: string } {
+  const who = whoDid(session, event.actor);
+  if (SELF_WORDED.has(event.kind)) return { who };
+  const p = payloadOf(event);
+  switch (event.kind) {
+    case 'entity.created':
+    case 'entity.updated':
+    case 'entity.deleted':
+    case 'entity.moved':
+    case 'template.updated':
+    case 'template.deleted':
+    case 'turn.updated':
+    case 'encounter.deployed':
+    case 'table.cleared':
+      return { who, what: whatOf(session, event, rowName(session, event)) };
+    case 'revert': {
+      const was = typeof p.reverted === 'number' ? rows.get(p.reverted) : undefined;
+      if (was) return { who, what: `put back — ${whatOf(session, was, rowName(session, was))}` };
+      // The row it put back is older than this page of the log (or
+      // arrived with a story and couldn't be re-aimed): say what kind.
+      return { who, what: `put back — ${REVERTED[String(p.kind)] ?? 'an earlier change'}` };
+    }
+    case FLOOR:
+      return {
+        who,
+        what:
+          p.why === 'restored'
+            ? 'restored from a story — undo starts here'
+            : 'campaign set up — undo starts here',
+      };
+    case 'story.exported':
+      return { who, what: `exported as a story${typeof p.version === 'number' ? ` (v${p.version})` : ''}` };
+    case 'token.moved':
+      return { who, what: `${String(p.byName ?? 'a token')} moved on ${boardName(session, p.boardId)}` };
+    case 'board.updated':
+    case 'board.cleared':
+    case 'board.added':
+    case 'board.edited':
+    case 'board.removed':
+    case 'notice.posted':
+    case 'notice.cleared':
+    case 'panel.copied':
+      return { who, what: skippedWord(session, event, []) };
+    default: {
+      // A plugin's own kind: what the log calls it, beside the thing it
+      // is about when that has a name — never a bare id.
+      const name = rowName(session, event);
+      return { who, what: name ? `${name} — ${event.kind}` : event.kind };
+    }
+  }
 }
 
 // -- the targeted restore ----------------------------------------------
@@ -756,7 +961,21 @@ function invert(session: Session, event: EventRow, actor: string, plan: Restore 
     }
     case 'entity.updated': {
       const before = entityOf(p.before);
-      if (before) session.save(before, actor);
+      if (!before) return;
+      // Re-aiming the table at a board that has since left the shelf
+      // would point every passive screen at nothing — the board door
+      // clears the aim when it removes one, and undoing that clear
+      // used to bring back a dangling ref. The aim stays as it stands;
+      // the peek said so before the press (`aimGone`).
+      if (aimGone(session, before)) {
+        const refs = { ...(before.refs ?? {}) };
+        const now = session.campaign.root().refs?.board;
+        if (now) refs.board = now;
+        else delete refs.board;
+        session.save({ ...before, refs }, actor);
+        return;
+      }
+      session.save(before, actor);
       return;
     }
     case 'entity.deleted': {

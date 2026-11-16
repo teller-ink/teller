@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createCampaign, openShelf } from '../core/store.ts';
 import { serve } from './index.ts';
 import { Session } from './session.ts';
+import { UNDO_WINDOW, markFloor } from './undo.ts';
 
 const KEY = 'test-key-0123456789abcdef';
 
@@ -68,6 +69,9 @@ beforeEach(async () => {
     { ...campaign.root(), refs: { system: { id: 'sys_wiw', name: 'WiW' } } },
     'host',
   );
+  // What `Host.start` does after the setup write: the campaign's birth
+  // is undo's floor, not a step anybody took at the table.
+  markFloor(campaign, 'host', 'created');
   session = new Session(shelf, campaign);
   server = serve(session, 0, KEY);
   await new Promise((r) => server.on('listening', r));
@@ -241,13 +245,55 @@ describe('the walk', () => {
   });
 
   it('answers plainly when there is nothing left behind the table', async () => {
-    // A minted campaign has exactly one mutation behind it — the
-    // manifest's system ref — and its birth is not a step back.
-    const first = await call('POST', '/api/undo', { key: true, body: {} });
-    expect(first.body.undone.kind).toBe('entity.updated');
+    // A minted campaign has its setup behind it — the manifest's system
+    // ref — and that is its birth, not a step back: pressing used to
+    // take the system away (audit 2026-11-16).
     const done = await call('POST', '/api/undo', { key: true, body: {} });
     expect(done.status).toBe(200);
     expect(done.body.undone).toBeNull();
+    expect(done.body.nothing).toBe('nothing since this campaign was made');
+    expect(session.campaign.root().refs?.system).toMatchObject({ id: 'sys_wiw' });
+  });
+
+  it('says so when it has run out of window rather than out of history', async () => {
+    const hattie = session.create({ name: 'Hattie', lists: {} }, 'console');
+    for (let i = 0; i < UNDO_WINDOW; i++) {
+      session.campaign.append(null, 'console', 'notice.posted', { text: `call ${i}` });
+    }
+    const peek = await call('GET', '/api/undo/peek', { key: true });
+    expect(peek.body.undoable).toBeNull();
+    expect(peek.body.nothing).toMatch(/looks back 500 changes/);
+    // Nothing was taken: Hattie is still there.
+    await call('POST', '/api/undo', { key: true, body: {} });
+    expect(session.campaign.get(hattie.id)).toBeDefined();
+  });
+
+  it('a write that changes nothing logs nothing and is no step', async () => {
+    const hattie = session.create(
+      { name: 'Hattie', lists: { resources: [{ name: 'Health', value: 7 }] } },
+      'console',
+    );
+    const before = (await kinds()).length;
+    const same = await call('POST', `/api/entities/${hattie.id}/entry`, {
+      key: true,
+      body: { list: 'resources', name: 'Health', value: 7 },
+    });
+    expect(same.status).toBe(200);
+    await call('POST', `/api/entities/${hattie.id}/entry`, {
+      key: true,
+      body: { list: 'resources', name: 'Wounds', remove: true },
+    });
+    await call('POST', '/api/turn', { key: true, body: { op: 'prev' } });
+    expect((await kinds()).length).toBe(before);
+    // So the next press takes the create, the last real thing.
+    const peek = await call('GET', '/api/undo/peek', { key: true });
+    expect(peek.body.undoable.kind).toBe('entity.created');
+
+    // And a sweep of a table already swept is no step either.
+    await call('POST', '/api/table/clear', { key: true, body: {} });
+    const swept = (await kinds()).length;
+    await call('POST', '/api/table/clear', { key: true, body: {} });
+    expect((await kinds()).length).toBe(swept);
   });
 
   it('peeks without writing', async () => {

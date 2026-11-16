@@ -59,9 +59,12 @@ import {
   type Campaign,
   type Shelf,
 } from '../core/store.ts';
+import { defaultSystems, systemDir } from '../core/systems-shelf.ts';
+import { packDir } from '../core/packs-shelf.ts';
 import { migrateBoardFog } from './boards.ts';
 import { declaredBooks } from './books.ts';
 import type { Session } from './session.ts';
+import { markFloor } from './undo.ts';
 
 /**
  * Where a campaign keeps its own story identity.
@@ -125,7 +128,30 @@ function keyOf(raw: unknown): string | undefined {
 }
 
 /**
- * The boards this campaign has played on, plus their live state.
+ * Every board an authored row names — an encounter staged on a map
+ * says which one in `boardId`. Read off the rows rather than off a slot
+ * name, so the export stays as ignorant of what an encounter is as the
+ * store is; the name is the row's, for the sentence when one is absent.
+ */
+function boardsNamedBy(templates: { name: string; data: unknown }[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const { name, data } of templates) {
+    const id = data && typeof data === 'object' ? (data as { boardId?: unknown }).boardId : undefined;
+    if (typeof id === 'string' && id && !out.has(id)) out.set(id, name);
+  }
+  return out;
+}
+
+/**
+ * Every board this campaign REFERENCES — the ones it has played on (and
+ * their live state), the one the table is aimed at, and the ones its
+ * prep is staged on — and a sentence for each it names that this host
+ * hasn't got.
+ *
+ * It used to be only the boards with live state, so a board an
+ * encounter was staged on but nobody had fought on yet stayed behind
+ * without a word, and the fight deployed onto nothing at the other end
+ * (audit 2026-11-16). Rule 9: what can't travel is SAID.
  *
  * `board_state` is a SECTION like everything else, on by default
  * (TEL-87, 2026-08-16: for a backup, live state is fine) — and it
@@ -134,15 +160,28 @@ function keyOf(raw: unknown): string | undefined {
  * because that's where a board asset lives; a story restoring a fight
  * onto a board the opener doesn't have is why the two travel together.
  */
-function boardsOf(session: Session): StoryBoard[] {
+function boardsOf(session: Session, skipped: string[]): StoryBoard[] {
   const wanted = new Map<string, unknown>();
+  const why = new Map<string, string>();
   for (const { boardId, data } of session.campaign.boardStates()) wanted.set(boardId, data);
   const active = refIn(session.campaign.root().refs, 'board');
-  if (active && !wanted.has(active.id)) wanted.set(active.id, undefined);
+  if (active && !wanted.has(active.id)) {
+    wanted.set(active.id, undefined);
+    why.set(active.id, 'the table is aimed at it');
+  }
+  for (const [id, by] of boardsNamedBy(session.campaign.allTemplates())) {
+    if (!wanted.has(id)) wanted.set(id, undefined);
+    if (!why.has(id)) why.set(id, `“${by}” is staged on it`);
+  }
   const out: StoryBoard[] = [];
   for (const [id, state] of wanted) {
     const board = session.shelf.board(id);
-    if (!board) continue;
+    if (!board) {
+      skipped.push(
+        `the board ${id} — ${why.get(id) ?? 'this campaign has played on it'}, and it isn't on this host to carry`,
+      );
+      continue;
+    }
     const entry: StoryBoard = { id: board.id, key: board.key, name: board.name };
     if (board.widthInches !== undefined) entry.widthInches = board.widthInches;
     if (board.grid !== undefined) entry.grid = board.grid;
@@ -159,6 +198,9 @@ function eventsOf(campaign: Campaign, keepUndo: boolean): StoryEvent[] {
   const rows = campaign.events({ limit: 1_000_000 }).slice().reverse();
   return rows.map((row) => {
     const event: StoryEvent = {
+      // Only so the rows that point at other rows can be re-aimed when
+      // the log lands in a new file (`renumbered`, below).
+      id: row.id,
       entityId: row.entityId,
       actor: row.actor,
       kind: row.kind,
@@ -257,11 +299,18 @@ export function exportStory(session: Session, opts: ExportOptions = {}): Exporte
   const rights = opts.rights === undefined ? (held?.rights ?? toRights(undefined)) : toRights(opts.rights);
   const id = held?.id ?? newStoryId();
   const version = (held?.version ?? 0) + 1;
-  campaign.putTemplate(STORY_SLOT, { id, name: root.name, version, rights }, actor);
+  // Exporting is READING the campaign. Counting the export is a write
+  // to the identity row, and it is filed as a note (`story.exported`)
+  // rather than as a template edit — or the next thing undo offered to
+  // take back was the export, and taking it back made the next export
+  // reuse the same version number (audit 2026-11-16).
+  campaign.putTemplate(STORY_SLOT, { id, name: root.name, version, rights }, actor, {
+    note: { kind: 'story.exported', payload: { story: id, version } },
+  });
 
   const templates = sections.templates ? templatesOf(campaign) : [];
   const entities = sections.entities ? entitiesOf(campaign, root.id) : [];
-  const boards = sections.boards ? boardsOf(session) : [];
+  const boards = sections.boards ? boardsOf(session, skipped) : [];
   const turn = sections.turn ? campaign.turnState() : undefined;
   const events = sections.events ? eventsOf(campaign, sections.undo) : [];
 
@@ -318,7 +367,7 @@ export function exportStory(session: Session, opts: ExportOptions = {}): Exporte
 // Looking in the box before opening it.
 
 /** A reference the file names and this host doesn't hold. */
-export type MissingRef = { slot: 'system' | 'pack' | 'book'; ref: StoryRef };
+export type MissingRef = { slot: 'system' | 'pack' | 'book' | 'board'; ref: StoryRef };
 
 export type StorySummary = {
   manifest: StoryManifest;
@@ -329,16 +378,47 @@ export type StorySummary = {
   missing: MissingRef[];
 };
 
-/** What this file names that this machine hasn't got. Reported, never dropped. */
+/**
+ * What this file names that this machine hasn't got. Reported, never
+ * dropped.
+ *
+ * "Has it" is asked the way the LOADER asks (`core/boot.ts`), not of the
+ * shelf's rows alone: a system's own folder, a pack's folder, and the
+ * systems teller ships with its install all count. Asking only the rows
+ * reported the starter system and every folder-installed pack as
+ * missing on the very host that exported them (audit 2026-11-16).
+ *
+ * A board an authored row is staged on, that the file doesn't carry and
+ * this host hasn't got, is missing too — it's the fight's ground.
+ */
 export function missingRefs(
   shelf: Shelf,
-  manifest: StoryManifest,
+  file: Pick<StoryFile, 'manifest' | 'templates' | 'boards'>,
+  dataDir?: string,
 ): MissingRef[] {
   const out: MissingRef[] = [];
-  const { system, packs = [], books = [] } = manifest.requires;
-  if (system && !shelf.system(system.id)) out.push({ slot: 'system', ref: system });
-  for (const pack of packs) if (!shelf.pack(pack.id)) out.push({ slot: 'pack', ref: pack });
+  const { system, packs = [], books = [] } = file.manifest.requires;
+  const hasSystem = (id: string) =>
+    Boolean(
+      shelf.system(id) ||
+        defaultSystems().some((s) => s.id === id) ||
+        (dataDir && systemDir(dataDir, id)),
+    );
+  const hasPack = (id: string) => Boolean(shelf.pack(id) || (dataDir && packDir(dataDir, id)));
+  if (system && !hasSystem(system.id)) out.push({ slot: 'system', ref: system });
+  for (const pack of packs) if (!hasPack(pack.id)) out.push({ slot: 'pack', ref: pack });
   for (const book of books) if (!shelf.book(book.id)) out.push({ slot: 'book', ref: book });
+  const carried = new Set(file.boards.map((b) => b.id));
+  const named = boardsNamedBy(
+    file.templates.map(({ entry }) => ({
+      name: String((entry as { name?: unknown }).name ?? 'a fight'),
+      data: entry,
+    })),
+  );
+  for (const [id, by] of named) {
+    if (carried.has(id) || shelf.board(id)) continue;
+    out.push({ slot: 'board', ref: { id, name: `the board “${by}” is staged on` } });
+  }
   return out;
 }
 
@@ -348,7 +428,7 @@ export function missingRefs(
  * something you want while DECIDING whether to import, not after an
  * encounter deploys half-empty at the table.
  */
-export function inspectStory(bytes: Buffer, shelf: Shelf): StorySummary {
+export function inspectStory(bytes: Buffer, shelf: Shelf, dataDir?: string): StorySummary {
   const file = parseStory(bytes);
   const sections: StorySummary['sections'] = [];
   const add = (name: string, n: number, one: string, many = `${one}s`) => {
@@ -364,7 +444,7 @@ export function inspectStory(bytes: Buffer, shelf: Shelf): StorySummary {
     manifest: file.manifest,
     kind: storyKind(file.manifest.contains),
     sections,
-    missing: missingRefs(shelf, file.manifest),
+    missing: missingRefs(shelf, file, dataDir),
   };
 }
 
@@ -441,7 +521,7 @@ export function importFresh(
   const report: ImportReport = {
     applied: [],
     skipped: [],
-    missing: missingRefs(shelf, file.manifest),
+    missing: missingRefs(shelf, file, dataDir),
   };
 
   // What you call your table is yours to decide — a starter story
@@ -476,8 +556,19 @@ export function importFresh(
     // in it, then the rows landing. Only through THIS door — see
     // `importLayer`.
     if (sections.events && file.events.length) {
+      // Every row lands under a new number, so the rows that point at
+      // others are re-aimed as they land. They always point BACK — an
+      // undo at what it undid, a deletion at the cascade it wrote first —
+      // so the map is already complete when a pointer needs it.
+      const moved = new Map<number, number>();
       for (const event of file.events) {
-        campaign.append(event.entityId, event.actor, event.kind, event.payload);
+        const id = campaign.append(
+          event.entityId,
+          event.actor,
+          event.kind,
+          renumbered(event.payload, moved),
+        );
+        if (event.id !== undefined) moved.set(event.id, id);
       }
       report.applied.push(`${file.events.length} events of history`);
     }
@@ -490,11 +581,42 @@ export function importFresh(
       report.applied.push('the fight in progress');
     }
     if (sections.assets && file.assets.size) assetsOnto(dataDir, file, report);
+    // Undo starts HERE. Everything above — the history and the rows that
+    // just put the table in place — is what this campaign was restored
+    // as, and stepping it back deleted the party one press at a time and
+    // then walked into another table's log (`server/undo.ts`).
+    markFloor(campaign, actor, 'restored', { from: file.manifest.story });
   } finally {
     campaign.close();
   }
 
   return { ...report, slug, from: file.manifest.story };
+}
+
+/**
+ * A payload with its pointers at other rows re-aimed into this file's
+ * numbering. A pointer at a row this file never received (a story
+ * written before rows carried their number, or history cut short) is
+ * DROPPED rather than kept: an old number in a new file names some
+ * unrelated row, which is worse than naming none.
+ */
+function renumbered(payload: unknown, moved: Map<number, number>): unknown {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+  const p = { ...(payload as Record<string, unknown>) };
+  const ids = (raw: unknown) =>
+    Array.isArray(raw)
+      ? raw.flatMap((id) => (typeof id === 'number' && moved.has(id) ? [moved.get(id)!] : []))
+      : raw;
+  if ('reverted' in p) {
+    p.reverted = typeof p.reverted === 'number' ? (moved.get(p.reverted) ?? null) : null;
+  }
+  if ('wrote' in p) p.wrote = ids(p.wrote);
+  if (p.cascade && typeof p.cascade === 'object' && !Array.isArray(p.cascade)) {
+    const cascade = { ...(p.cascade as Record<string, unknown>) };
+    if ('events' in cascade) cascade.events = ids(cascade.events);
+    p.cascade = cascade;
+  }
+  return p;
 }
 
 // ---------------------------------------------------------------------
@@ -521,7 +643,7 @@ export function importLayer(
   const report: ImportReport = {
     applied: [],
     skipped: [],
-    missing: missingRefs(session.shelf, file.manifest),
+    missing: missingRefs(session.shelf, file, session.dataDir),
   };
 
   applyTemplates(campaign, file.templates, sections, actor, report, 'layer');

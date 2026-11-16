@@ -7,7 +7,7 @@
 // 503 rather than a 401, and that a file which isn't a story is a 400
 // and not a stack trace.
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openShelf, type Shelf } from '../core/store.ts';
 import { serve } from './index.ts';
 import { Host } from './session.ts';
+import { importFresh, inspectStory } from './story.ts';
 
 let dir: string;
 let shelf: Shelf;
@@ -221,5 +222,139 @@ describe('layering onto a running table', () => {
   it('answers 400 for something that is not a story', async () => {
     await playing();
     expect((await send('/api/story/import', Buffer.from('hello'))).status).toBe(400);
+  });
+});
+
+// -- undo's floor (audit 2026-11-16) --------------------------------------
+//
+// Undo walks back, and there are two places it must never walk past: a
+// new campaign's own setup, and the moment a campaign was restored from a
+// file. Both were reachable; the second deleted the party one press at a
+// time, then walked into the other table's log and took the host down.
+
+describe('undo’s floor', () => {
+  it('stops above a new campaign’s own setup, and keeps its system', async () => {
+    await playing();
+    // The one thing done at this table: Barrett.
+    const first = await api('POST', '/api/undo', {});
+    expect(first.body.undone.what).toMatch(/Barrett/);
+
+    const peek = await api('GET', '/api/undo/peek');
+    expect(peek.body.undoable).toBeNull();
+    expect(peek.body.nothing).toBe('nothing since this campaign was made');
+    const again = await api('POST', '/api/undo', {});
+    expect(again.body.undone).toBeNull();
+    expect(again.body.nothing).toBe('nothing since this campaign was made');
+    expect(host.session!.campaign.root().refs?.system).toMatchObject({ id: 'sys_test' });
+  });
+
+  it('gives a restored campaign nothing to undo, and a press changes nothing', async () => {
+    await playing();
+    const barrett = (await api('GET', '/api/entities')).body[0].id;
+    await api('POST', `/api/entities/${barrett}/entry`, { list: 'resources', name: 'Health', value: 7 });
+    await api('DELETE', `/api/entities/${barrett}`);
+    // An undo in the source's history — the row whose pointer used to
+    // land on the wrong row once renumbered.
+    await api('POST', '/api/undo', {});
+    const file = await exported();
+
+    const made = await send('/api/campaigns/from-story?name=Restored', file.bytes);
+    expect(made.status).toBe(201);
+
+    const peek = await api('GET', '/api/undo/peek');
+    expect(peek.body.undoable).toBeNull();
+    expect(peek.body.nothing).toBe('nothing since this campaign was restored');
+
+    const before = host.session!.campaign.events({ limit: 1 })[0].id;
+    const roster = (await api('GET', '/api/entities')).body.map((e: { id: string }) => e.id);
+    for (let i = 0; i < 5; i++) {
+      const press = await api('POST', '/api/undo', {});
+      expect(press.status).toBe(200);
+      expect(press.body.undone).toBeNull();
+    }
+    expect((await api('GET', '/api/entities')).body.map((e: { id: string }) => e.id)).toEqual(roster);
+    expect(host.session!.campaign.events({ limit: 1 })[0].id).toBe(before);
+
+    // The history is kept, readable, and every undo row in it still
+    // names the row it put back — not whichever row now has its number.
+    const rows = host.session!.campaign.events({ limit: 1000 });
+    const byId = new Map(rows.map((e) => [e.id, e]));
+    const reverts = rows.filter((e) => e.kind === 'revert');
+    expect(reverts.length).toBeGreaterThan(0);
+    for (const r of reverts) {
+      const p = r.payload as { reverted: number; kind: string };
+      expect(byId.get(p.reverted)?.kind).toBe(p.kind);
+    }
+  });
+
+  it('does not count an export as something to undo', async () => {
+    await playing();
+    await api('POST', '/api/undo', {}); // Barrett, the one real step
+    await exported();
+    const peek = await api('GET', '/api/undo/peek');
+    expect(peek.body.undoable).toBeNull();
+    const kinds = host.session!.campaign.events({ limit: 5 }).map((e) => e.kind);
+    expect(kinds).toContain('story.exported');
+    expect(kinds).not.toContain('template.updated');
+  });
+});
+
+describe('what travels, and what is said when it can’t', () => {
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+
+  it('carries a board an encounter is staged on, though nobody has played on it', async () => {
+    await playing();
+    const res = await fetch(`${base}/api/boards/upload`, {
+      method: 'POST',
+      headers: { 'x-teller-key': KEY, 'Content-Type': 'image/png' },
+      body: new Uint8Array(PNG),
+    });
+    const { key } = (await res.json()) as { key: string };
+    const board = (await api('POST', '/api/boards', { key, name: 'Forest Demolition Site' })).body;
+    await api('POST', '/api/templates/encounters', {
+      template: { name: 'The Forest', boardId: board.id, foes: [] },
+    });
+    // And one staged on a board this host hasn't got — said, not dropped.
+    await api('POST', '/api/templates/encounters', {
+      template: { name: 'Copper Canyon', boardId: 'scn_gone00000000', foes: [] },
+    });
+    const file = await exported();
+    expect(file.skipped.join(' ')).toMatch(/scn_gone00000000.*Copper Canyon/);
+
+    // A second host with nothing on its shelf.
+    const away = mkdtempSync(join(tmpdir(), 'teller-story-away-'));
+    try {
+      const awayShelf = openShelf(away);
+      awayShelf.putSystem({ id: 'sys_test', name: 'Test', version: 1, data: {} });
+      const looked = inspectStory(file.bytes, awayShelf, away);
+      expect(looked.missing).toEqual([
+        { slot: 'board', ref: { id: 'scn_gone00000000', name: 'the board “Copper Canyon” is staged on' } },
+      ]);
+      const fresh = importFresh(awayShelf, away, file.bytes);
+      expect(awayShelf.board(board.id)?.name).toBe('Forest Demolition Site');
+      expect(existsSync(join(away, key))).toBe(true);
+      expect(fresh.missing.map((m) => m.slot)).toEqual(['board']);
+      awayShelf.close();
+    } finally {
+      rmSync(away, { recursive: true, force: true });
+    }
+  });
+
+  it('does not call the shipped system or a folder-installed pack missing', async () => {
+    mkdirSync(join(dir, 'packs', 'folder-pack'), { recursive: true });
+    writeFileSync(
+      join(dir, 'packs', 'folder-pack', 'pack.json'),
+      JSON.stringify({ id: 'pak_folder000001', system: 'sys_starter', name: 'Folder Pack', version: 1 }),
+    );
+    const made = await api('POST', '/api/campaigns', { name: 'Starter Table', system: 'sys_starter' });
+    expect(made.status).toBe(201);
+    const file = await exported();
+    const looked = await send('/api/story/inspect', file.bytes);
+    expect(looked.body.manifest.requires.system.id).toBe('sys_starter');
+    expect(looked.body.manifest.requires.packs.map((p: { id: string }) => p.id)).toContain('pak_folder000001');
+    expect(looked.body.missing).toEqual([]);
   });
 });

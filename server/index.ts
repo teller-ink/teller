@@ -16,7 +16,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { createReadStream, readFileSync, existsSync, rmSync } from 'node:fs';
+import { createReadStream, readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, normalize, resolve as resolvePath } from 'node:path';
 import process from 'node:process';
@@ -126,8 +126,11 @@ import { sideOf } from '../core/side.ts';
 import { toAreas } from '../core/fog.ts';
 import { toTerrain } from '../core/terrain.ts';
 import { ACTIVE_CAMPAIGN, Host, Session, type EntryEdit } from './session.ts';
-import { peekUndo, undo } from './undo.ts';
-import type { TurnOp } from './turn.ts';
+import { logWords, peek, peekUndo, undo } from './undo.ts';
+import { turnOpProblem, type TurnOp } from './turn.ts';
+
+/** The most log rows one read may ask for — the console asks for 200. */
+const EVENTS_MAX = 1000;
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), 'public');
 // The bundled client (client/ → vite → here). Preferred over PUBLIC
@@ -1256,7 +1259,7 @@ export async function handleApi(
       const bytes = await rawBody(req, STORY_MAX_BYTES);
       if (!bytes) return reply(413, { error: `a story may be ${STORY_MAX_BYTES} bytes at most` });
       try {
-        return reply(200, inspectStory(bytes, shelf));
+        return reply(200, inspectStory(bytes, shelf, host.dataDir));
       } catch (err) {
         return reply(400, { error: String(err) });
       }
@@ -1509,6 +1512,14 @@ export async function handleApi(
     if (method === 'POST') {
       if (!canDm(auth)) return denied();
       const body = await bodyOf(req);
+      // A parent that isn't there made an orphan no roster lists — 38 of
+      // them in one fuzzing run, from a client on a stale roster adding a
+      // child to something another had just deleted (audit 2026-11-16).
+      if (body.parentId !== undefined) {
+        if (typeof body.parentId !== 'string' || !session.campaign.get(body.parentId)) {
+          return reply(400, { error: `no entity ${String(body.parentId)} to put this under` });
+        }
+      }
       try {
         const entity = session.create(
           (body.draft ?? {}) as EntityDraft,
@@ -1596,6 +1607,24 @@ export async function handleApi(
     if (list === '__proto__' || list === 'constructor' || list === 'prototype') {
       return reply(400, { error: `"${list}" can't be the name of a list` });
     }
+    // A value is a number or words. `null` is what a client's NaN turns
+    // into on the wire, and it used to erase the value in silence; a
+    // number too big for JSON arrives as Infinity and was stored as
+    // null. Taking an entry off is `remove`, said on purpose.
+    if (body.value !== undefined) {
+      const v = body.value;
+      if (v === null) {
+        return reply(400, { error: 'a value can’t be empty — to take the entry off, send remove' });
+      }
+      if (typeof v === 'number' ? !Number.isFinite(v) : typeof v !== 'string') {
+        return reply(400, { error: 'a value is a finite number or words' });
+      }
+    }
+    if (body.max !== undefined && body.max !== null) {
+      if (typeof body.max !== 'number' || !Number.isFinite(body.max)) {
+        return reply(400, { error: 'a ceiling is a finite number, or null to take it off' });
+      }
+    }
     const edit: EntryEdit = { list, name };
     if (typeof body.value === 'number' || typeof body.value === 'string') {
       edit.value = body.value;
@@ -1614,6 +1643,18 @@ export async function handleApi(
     if (!parentId) return reply(400, { error: 'move needs a parentId' });
     if (session.campaign.isRoot(a)) {
       return reply(400, { error: 'that is the campaign itself — it has no parent to move under' });
+    }
+    if (!session.campaign.get(a)) return reply(404, { error: `no entity ${a}` });
+    if (!session.campaign.get(parentId)) {
+      return reply(400, { error: `no entity ${parentId} to move it under` });
+    }
+    // Under itself, or under anything it holds, is a loop: it leaves the
+    // roster entirely, and deleting it once recursed until the host fell
+    // over. Walk up from the new parent; meeting the thing means a loop.
+    for (let at: string | undefined = parentId; at; at = session.campaign.parentOf(at)) {
+      if (at === a) {
+        return reply(400, { error: 'it can’t go under itself or something it holds' });
+      }
     }
     try {
       session.move(a, parentId, actorOf(auth, String(body.actor ?? '')));
@@ -2064,6 +2105,14 @@ export async function handleApi(
             );
         if (!owns) return denied();
       }
+      // Asked after the gate, so a screen that may not write learns
+      // nothing about the order from the sentence.
+      const problem = turnOpProblem(
+        session.turnState(),
+        body,
+        (id) => session.campaign.get(id) !== undefined,
+      );
+      if (problem) return reply(400, { error: problem });
       return reply(200, session.turnOp(op, actorOf(auth, String(body.actor ?? ''))));
     }
   }
@@ -2134,11 +2183,20 @@ export async function handleApi(
       return reply(201, { key: saveHandoutBytes(host.dataDir, bytes, ext) });
     }
 
-    // Take one away for good. Its own door rather than the templates
-    // DELETE because two things have to happen beside the row going:
-    // the frame must stop showing a picture that no longer exists, and
-    // the bytes must go — but only when nothing else names them, since
-    // the key is a content hash and two rows may honestly share one.
+    // Take one away. Its own door rather than the templates DELETE
+    // because the frame must stop showing a picture whose row is gone.
+    //
+    // THE BYTES STAY (audit 2026-11-16). Deleting the row is undoable,
+    // and an undo that brought back a row naming a picture this door had
+    // already erased restored a 404. A row is the thing a Warden deletes;
+    // the picture is content-hashed and costs nothing to keep. Reclaiming
+    // pictures no row names any more is a later job — a sweep that can
+    // see the whole log — not something a delete does on the way past.
+    //
+    // The aim comes off FIRST, then the row: each is its own undo step,
+    // and in this order every press restores something real — the row
+    // comes back, then the frame shows it again. The other way round,
+    // the first press re-aimed the frame at a row that didn't exist yet.
     if (method === 'DELETE' && a && !b) {
       if (!canDm(auth)) return denied();
       const handout = handoutOf(session, a);
@@ -2147,20 +2205,13 @@ export async function handleApi(
       const manifest = session.campaign.root();
       const ref = manifest.refs?.handout;
       const showing = (Array.isArray(ref) ? ref[0]?.id : ref?.id) === handout.id;
-      session.campaign.removeTemplate(handout.id, actor);
       if (showing) {
         const refs = { ...(manifest.refs ?? {}) };
         delete refs.handout;
         session.save({ ...manifest, refs }, actor);
         session.campaign.append(null, actor, 'handout.cleared');
       }
-      const stillUsed = handoutsOf(session).some((h) => h.key === handout.key);
-      if (!stillUsed && host.dataDir) {
-        const path = normalize(join(host.dataDir, handout.key));
-        if (path.startsWith(join(host.dataDir, 'art') + '/') && existsSync(path)) {
-          rmSync(path, { force: true });
-        }
-      }
+      session.campaign.removeTemplate(handout.id, actor);
       session.changed('templates');
       return reply(200, { ok: true });
     }
@@ -2440,15 +2491,11 @@ export async function handleApi(
         id: board.id,
         name: board.name,
       });
-      // The key is a content hash, so two boards may honestly share one
-      // picture; the bytes only go when nothing else names them.
-      const stillUsed = session.shelf.boards().some((b) => b.key === board.key);
-      if (!stillUsed && host.dataDir) {
-        const path = normalize(join(host.dataDir, board.key));
-        if (path.startsWith(join(host.dataDir, 'map') + '/') && existsSync(path)) {
-          rmSync(path, { force: true });
-        }
-      }
+      // The picture STAYS, for the handout door's reason: a delete must
+      // never leave an undo pointing at bytes it erased, and another
+      // campaign on this shelf (or a `.story` re-imported tomorrow) may
+      // still name the same content-hashed file. Reclaiming map files no
+      // board names any more is a later job, not this door's.
       session.changed(showing ? 'board' : 'boards');
       return reply(200, { ok: true });
     }
@@ -2470,7 +2517,16 @@ export async function handleApi(
     if (method === 'PUT') {
       if (!canDm(auth)) return denied();
       const body = await bodyOf(req);
-      session.putBoardState(a, body.data ?? null, actorOf(auth, String(body.actor ?? '')));
+      // A board's state is an object, always — every editor sends one.
+      // A body without it (or a truncated one, which parses as nothing)
+      // used to store null: every token, fog cell and zone gone, and
+      // board writes are not undoable. There is no "clear" through this
+      // door because nothing asks for one; a board left blank is `{}`.
+      const data = body.data;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        return reply(400, { error: 'a board’s state is an object — send { data: { … } }' });
+      }
+      session.putBoardState(a, data, actorOf(auth, String(body.actor ?? '')));
       return reply(200, { ok: true });
     }
   }
@@ -2543,23 +2599,37 @@ export async function handleApi(
           return reply(200, { undone: null, stale: true, undoable: now });
         }
       }
-      return reply(200, { undone: undo(session, actorOf(auth, String(body.actor ?? ''))) });
+      const undone = undo(session, actorOf(auth, String(body.actor ?? '')));
+      // Nothing undone says WHY — a floor or the window's edge is not
+      // the same answer as an empty history.
+      return reply(200, undone ? { undone } : { undone: null, nothing: peek(session).nothing });
     }
   }
 
   if (method === 'GET' && head === 'undo' && a === 'peek' && !b) {
     if (!canDm(auth)) return denied();
-    return reply(200, { undoable: peekUndo(session) });
+    return reply(200, peek(session));
   }
 
   if (method === 'GET' && head === 'events' && !a) {
     if (!canDm(auth)) return denied();
+    // A whole number in a sane range, or a sentence. `1.5` used to reach
+    // SQLite as a datatype mismatch and `1e999` as Infinity.
+    const asked = url.searchParams.get('limit');
+    const limit = asked === null ? 100 : /^\d{1,4}$/.test(asked) ? Number(asked) : NaN;
+    if (!(limit >= 1 && limit <= EVENTS_MAX)) {
+      return reply(400, { error: `limit is a whole number of rows, 1 to ${EVENTS_MAX}` });
+    }
+    const rows = session.campaign.events({
+      entityId: url.searchParams.get('entity') ?? undefined,
+      limit,
+    });
+    // Each row worded on the host, in the same words the undo button
+    // uses — one request for the list, never one per row.
+    const byId = new Map(rows.map((e) => [e.id, e]));
     return reply(
       200,
-      session.campaign.events({
-        entityId: url.searchParams.get('entity') ?? undefined,
-        limit: Number(url.searchParams.get('limit') ?? 100) || 100,
-      }),
+      rows.map((e) => ({ ...e, ...logWords(session, e, byId) })),
     );
   }
 

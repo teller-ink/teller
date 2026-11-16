@@ -317,11 +317,20 @@ export type StoryBoard = {
 };
 
 /**
- * One row of what happened. Ids are deliberately NOT carried: they're
- * an autoincrement in the host's own table and mean nothing in another.
- * Order is what matters and order is the array.
+ * One row of what happened. Order is what matters and order is the
+ * array; a row's number is an autoincrement in the host's own table and
+ * means nothing in another.
+ *
+ * Except that some rows POINT at others by that number — an undo names
+ * the row it reverted, a deletion names the cascade it wrote — and a
+ * log replayed into a new file renumbers every row. So `id` rides along
+ * as the source's own number, for one job only: re-aiming those
+ * pointers on arrival (`server/story.ts`). Without it (a file written
+ * before 2026-11-16) the pointers can't be re-aimed and are dropped
+ * rather than left pointing at the wrong rows.
  */
 export type StoryEvent = {
+  id?: number;
   entityId: string | null;
   actor: string;
   kind: string;
@@ -447,6 +456,7 @@ function toStoryEvent(raw: unknown): StoryEvent | undefined {
   const kind = String(o.kind ?? '').trim();
   if (!kind) return undefined;
   return {
+    ...(Number.isSafeInteger(o.id) && (o.id as number) > 0 ? { id: o.id as number } : {}),
     entityId: typeof o.entityId === 'string' && o.entityId ? o.entityId : null,
     actor: String(o.actor ?? '').trim() || 'dm',
     kind,

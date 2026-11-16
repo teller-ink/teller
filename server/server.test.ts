@@ -401,3 +401,168 @@ describe('the shelf listing', () => {
     }
   });
 });
+
+// -- doors that used to take garbage (audit 2026-11-16) ------------------
+//
+// Each answered 200 and stored what it was handed — a ghost row, a
+// string score, a wiped board, an orphan — or reached SQLite and threw.
+// Every one is a 400 with a sentence now, nothing stored, and the host
+// still serving afterwards.
+
+describe('garbage at the doors', () => {
+  const still = async () => expect((await api('GET', '/api/campaign')).status).toBe(200);
+  const refused = async (method: string, path: string, body?: unknown) => {
+    const res = await api(method, path, body);
+    expect(res.status, `${method} ${path} ${JSON.stringify(body)}`).toBe(400);
+    expect(typeof res.body.error).toBe('string');
+  };
+
+  it('the turn door refuses ops it can’t apply, and stores none of them', async () => {
+    const hattie = (await api('POST', '/api/entities', { draft: { name: 'Hattie' } })).body;
+    await api('POST', '/api/turn', { op: 'add', entityId: hattie.id });
+    const before = await api('GET', '/api/turn');
+    const logged = session.campaign.events({ limit: 1 })[0].id;
+    const row = before.body.order[0].id;
+
+    await refused('POST', '/api/turn', { op: 'explode' });
+    await refused('POST', '/api/turn', { op: 'add', entityId: 'ent_nobody00000' });
+    await refused('POST', '/api/turn', { op: 'add', entityId: hattie.id });
+    await refused('POST', '/api/turn', { op: 'add', label: 5 });
+    await refused('POST', '/api/turn', { op: 'add' });
+    await refused('POST', '/api/turn', { op: 'score', entryId: row, score: '12' });
+    await refused('POST', '/api/turn', { op: 'score', entryId: 'trn_nope', score: 4 });
+    await refused('POST', '/api/turn', { op: 'remove', entryId: 'trn_nope' });
+    await refused('POST', '/api/turn', { op: 'set', order: 'nope' });
+    await refused('POST', '/api/turn', { op: 'set' });
+    await refused('POST', '/api/turn', { op: 'set', order: [{ entityId: 'ent_nobody00000' }] });
+    await refused('POST', '/api/turn', {
+      op: 'set',
+      order: [{ entityId: hattie.id }, { entityId: hattie.id }],
+    });
+    await refused('POST', '/api/turn', { op: 'rolling', on: 'yes' });
+    // A number too big for JSON arrives as Infinity.
+    const huge = await fetch(`${base}/api/turn`, {
+      method: 'POST',
+      headers: { 'x-teller-key': KEY, 'Content-Type': 'application/json' },
+      body: `{"op":"score","entryId":"${row}","score":1e400}`,
+    });
+    expect(huge.status).toBe(400);
+
+    expect((await api('GET', '/api/turn')).body).toEqual(before.body);
+    expect(session.campaign.events({ limit: 1 })[0].id).toBe(logged);
+    // A good score still lands.
+    expect((await api('POST', '/api/turn', { op: 'score', entryId: row, score: 12 })).status).toBe(200);
+    await still();
+  });
+
+  it('the entry door refuses an empty value and a number past finite', async () => {
+    const hattie = (
+      await api('POST', '/api/entities', {
+        draft: { name: 'Hattie', lists: { resources: [{ name: 'Health', value: 7, max: 9 }] } },
+      })
+    ).body;
+    const path = `/api/entities/${hattie.id}/entry`;
+    await refused('POST', path, { list: 'resources', name: 'Health', value: null });
+    const big = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'x-teller-key': KEY, 'Content-Type': 'application/json' },
+      body: '{"list":"resources","name":"Health","value":1e400}',
+    });
+    expect(big.status).toBe(400);
+    await refused('POST', path, { list: 'resources', name: 'Health', value: true });
+    await refused('POST', path, { list: 'resources', name: 'Health', max: 'lots' });
+    expect(session.campaign.get(hattie.id)!.lists.resources[0]).toEqual({
+      name: 'Health',
+      value: 7,
+      max: 9,
+    });
+    await still();
+  });
+
+  it('a board’s state must be an object — no body no longer wipes the board', async () => {
+    await api('PUT', '/api/board-state/brd_canyon', {
+      data: { placements: [{ label: 'a rock', u: 0.5, v: 0.5 }] },
+    });
+    await refused('PUT', '/api/board-state/brd_canyon', {});
+    await refused('PUT', '/api/board-state/brd_canyon', { data: 'garbage' });
+    await refused('PUT', '/api/board-state/brd_canyon', { data: [] });
+    await refused('PUT', '/api/board-state/brd_canyon', { data: null });
+    const held = await api('GET', '/api/board-state/brd_canyon');
+    expect(held.body.placements).toHaveLength(1);
+    await still();
+  });
+
+  it('no orphans and no loops through create and move', async () => {
+    const hattie = (await api('POST', '/api/entities', { draft: { name: 'Hattie' } })).body;
+    const pistol = (
+      await api('POST', '/api/entities', { draft: { name: 'Pistol' }, parentId: hattie.id })
+    ).body;
+    await refused('POST', '/api/entities', { draft: { name: 'Lost' }, parentId: 'ent_nobody00000' });
+    await refused('POST', `/api/entities/${pistol.id}/move`, { parentId: 'ent_nobody00000' });
+    await refused('POST', `/api/entities/${hattie.id}/move`, { parentId: hattie.id });
+    await refused('POST', `/api/entities/${hattie.id}/move`, { parentId: pistol.id });
+    expect(session.campaign.parentOf(pistol.id)).toBe(hattie.id);
+    expect(session.campaign.parentOf(hattie.id)).toBe(session.campaign.root().id);
+    expect(session.campaign.children(session.campaign.root().id).map((e) => e.name)).toEqual([
+      'Hattie',
+    ]);
+    // Deleting the holder still works, and takes what it holds.
+    expect((await api('DELETE', `/api/entities/${hattie.id}`)).status).toBe(200);
+    expect(session.campaign.get(pistol.id)).toBeUndefined();
+    await still();
+  });
+
+  it('the log reads only whole numbers of rows', async () => {
+    for (const limit of ['1.5', '-3', '0', '1e999', 'lots', '100000']) {
+      expect((await api('GET', `/api/events?limit=${limit}`)).status, limit).toBe(400);
+    }
+    expect((await api('GET', '/api/events?limit=5')).status).toBe(200);
+    expect((await api('GET', '/api/events')).status).toBe(200);
+    await still();
+  });
+
+  it('deleting someone leaves no ghost in the order and no ghost token', async () => {
+    const hattie = (await api('POST', '/api/entities', { draft: { name: 'Hattie' } })).body;
+    await api('POST', '/api/turn', { op: 'add', entityId: hattie.id });
+    await api('PUT', '/api/board-state/brd_canyon', {
+      data: { placements: [{ id: 'pl_1', entityId: hattie.id, u: 0.5, v: 0.5 }] },
+    });
+    await api('DELETE', `/api/entities/${hattie.id}`);
+    expect((await api('GET', '/api/turn')).body.order).toEqual([]);
+    expect((await api('GET', '/api/board-state/brd_canyon')).body.placements ?? []).toEqual([]);
+  });
+});
+
+describe('the log, in words', () => {
+  it('names who and what for each row — no raw ids — in one request', async () => {
+    const hattie = (
+      await api('POST', '/api/entities', {
+        draft: { name: 'Hattie', lists: { resources: [{ name: 'Health', value: 7 }] } },
+      })
+    ).body;
+    await api('POST', `/api/entities/${hattie.id}/entry`, {
+      list: 'resources',
+      name: 'Health',
+      value: 5,
+    });
+    const enc = (
+      await api('POST', '/api/templates/encounters', {
+        template: { name: 'The Lake', foes: [{ templateId: 'npc_bark_watcher' }] },
+      })
+    ).body;
+    expect((await api('POST', `/api/encounters/${enc.id}/deploy`, {})).status).toBe(200);
+    await api('POST', '/api/undo', {});
+
+    const rows = (await api('GET', '/api/events?limit=50')).body as {
+      kind: string;
+      who: string;
+      what?: string;
+    }[];
+    const said = rows.map((r) => r.what ?? '').join('\n');
+    expect(said).toMatch(/Hattie — Health 7 → 5/);
+    expect(said).toMatch(/deployed The Lake/);
+    expect(said).toMatch(/put back — deployed The Lake/);
+    expect(said).not.toMatch(/\b(ent|enc|tpl)_[0-9a-f]{6,}/);
+    expect(rows.every((r) => typeof r.who === 'string' && !/_[0-9a-f]{6,}/.test(r.who))).toBe(true);
+  });
+});

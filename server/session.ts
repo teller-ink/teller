@@ -39,7 +39,7 @@ import { applyTurnOp, toTurnState, type TurnOp, type TurnState } from './turn.ts
 import { HIDDEN_LIST, HIDDEN_MARK } from './public.ts';
 // The window an undo walks — the same bound the rows of one deploy are
 // collected under, because they are collected for exactly that walk.
-import { UNDO_WINDOW } from './undo.ts';
+import { UNDO_WINDOW, markFloor } from './undo.ts';
 import {
   countEntities,
   migrateBoardFog,
@@ -426,6 +426,9 @@ export class Session {
       .events({ limit: UNDO_WINDOW })
       .filter((e) => e.id > mark)
       .map((e) => e.id);
+    // A sweep of a table already clear wrote nothing, and a `table.cleared`
+    // claiming nothing would be a step undo takes to no effect.
+    if (!events.length) return { cleared: 0, tokens: 0, order: 0 };
     const boardsBefore = boardsAtStart.filter(({ boardId: id, data }) => {
       const now = this.campaign.boardState(id);
       return JSON.stringify(now ?? null) !== JSON.stringify(data ?? null);
@@ -544,6 +547,10 @@ export class Session {
   turnOp(op: TurnOp, actor: string): TurnState {
     const before = this.turnState();
     const next = applyTurnOp(before, op);
+    // An op that moved nothing — "back" with nobody acting, "next" on an
+    // empty order — is not a step, and logging it made one undo would
+    // later take to no visible effect.
+    if (JSON.stringify(next) === JSON.stringify(before)) return before;
     // The whole state, both sides — an accidental "next turn" mid-fight
     // is the headline thing a DM undoes, and an op name alone can't be
     // inverted (rule 3's payoff: `/undo` reads the log, it doesn't
@@ -929,6 +936,10 @@ export class Host {
       const root = campaign.root();
       campaign.save({ ...root, refs: { ...root.refs, system } }, 'host');
     }
+    // The setup above is the campaign being born, not a step anybody
+    // took at the table — and one undo press used to take the system
+    // ref away, after which the party read as foes (`server/undo.ts`).
+    markFloor(campaign, 'host', 'created');
     return this.#adopt(campaign);
   }
 

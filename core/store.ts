@@ -191,6 +191,30 @@ function blobOf(entity: Entity): string {
   return JSON.stringify(data);
 }
 
+/**
+ * JSON with its keys sorted — so "is this the same thing" is asked of
+ * the VALUE, not of whichever order a spread happened to leave the keys
+ * in. Used only to notice a write that changes nothing.
+ */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+        )
+      : v,
+  );
+}
+
+/** One entity as the row would hold it — what a no-op write is compared by. */
+function stored(entity: Entity): string {
+  return canonical({
+    name: entity.name,
+    type: entity.type ?? null,
+    data: JSON.parse(blobOf(entity)),
+  });
+}
+
 export class Campaign {
   #db: DatabaseSync;
   readonly slug: string;
@@ -265,6 +289,10 @@ export class Campaign {
   save(entity: Entity, actor: string): Entity {
     const before = this.get(entity.id);
     if (!before) throw new Error(`no entity ${entity.id} to save`);
+    // A write that changes nothing is not a thing that happened. Logging
+    // it made a phantom step: a later undo press "put back" a value that
+    // was already there and looked broken (audit 2026-11-16).
+    if (stored(before) === stored(entity)) return before;
     this.#db
       .prepare(
         'UPDATE entities SET name = ?, type = ?, data = ?, updated_at = ? WHERE id = ?',
@@ -345,8 +373,8 @@ export class Campaign {
     actor: string,
     kind: string,
     payload?: unknown,
-  ): void {
-    this.#db
+  ): number {
+    const { lastInsertRowid } = this.#db
       .prepare(
         'INSERT INTO events (entity_id, actor, kind, payload, created_at) VALUES (?, ?, ?, ?, ?)',
       )
@@ -357,6 +385,9 @@ export class Campaign {
         payload === undefined ? null : JSON.stringify(payload),
         now(),
       );
+    // The row's own number — what a story import needs to re-aim the
+    // rows that point at other rows (`server/story.ts`).
+    return Number(lastInsertRowid);
   }
 
   /** Newest first — the shape `/undo` walks. */
@@ -393,7 +424,12 @@ export class Campaign {
    * id is identity (a row restating a pack's id is how the campaign
    * overrides that monster); minted here when the thing is new.
    */
-  putTemplate(slot: string, raw: unknown, actor: string): { id: string } {
+  putTemplate(
+    slot: string,
+    raw: unknown,
+    actor: string,
+    opts: { note?: { kind: string; payload?: unknown } } = {},
+  ): { id: string } {
     if (!raw || typeof raw !== 'object') {
       throw new Error('a template needs at least a name');
     }
@@ -403,6 +439,16 @@ export class Campaign {
     const id = String(o.id ?? '').trim() || newId('tpl');
     const at = now();
     const before = this.templateRaw(id);
+    // Same law as `save`: rewriting a row with what it already holds is
+    // nothing happening, and must not become a step undo can take.
+    const was = this.#db.prepare('SELECT slot FROM templates WHERE id = ?').get(id) as Row | undefined;
+    if (
+      before !== undefined &&
+      was?.slot === slot &&
+      canonical(before) === canonical({ ...o, id, name })
+    ) {
+      return { id };
+    }
     this.#db
       .prepare(
         `INSERT INTO templates (id, slot, name, data, created_at, updated_at)
@@ -412,7 +458,12 @@ export class Campaign {
            data = excluded.data, updated_at = excluded.updated_at`,
       )
       .run(id, slot, name, JSON.stringify({ ...o, id, name }), at, at);
-    this.append(id, actor, 'template.updated', { slot, before, after: o });
+    // A caller whose write is BOOKKEEPING rather than an edit — a story
+    // export counting itself — files a note of its own instead, so the
+    // log still says it happened (rule 3) and undo, which only ever
+    // steps back `template.updated`, never offers to take it back.
+    if (opts.note) this.append(id, actor, opts.note.kind, opts.note.payload);
+    else this.append(id, actor, 'template.updated', { slot, before, after: o });
     return { id };
   }
 

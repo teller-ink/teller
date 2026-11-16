@@ -71,6 +71,83 @@ export function toTurnState(raw: unknown): TurnState {
 
 const scored = (e: TurnEntry) => (typeof e.score === 'number' ? e.score : null);
 
+/** The ops a caller may send — `applyTurnOp`'s switch, as a list a sentence can name. */
+const OPS = ['set', 'add', 'remove', 'next', 'prev', 'end', 'rolling', 'score'];
+
+/**
+ * What is wrong with an op, in a sentence — or nothing, when it can be
+ * applied as sent.
+ *
+ * The door used to take anything (audit 2026-11-16): an op nobody knows
+ * logged a step that changed nothing, a row for an entity that doesn't
+ * exist became a ghost the runner couldn't name, the same foe could be
+ * added twice, and `score: "12"` was stored as a string that sorted as
+ * unrolled and vanished on the next read. None of that is a ruling a
+ * human made, so refusing it overrules nobody (rule 1): the DM can still
+ * put anything in the order that EXISTS, in any order, with any number.
+ */
+export function turnOpProblem(
+  state: TurnState,
+  raw: Record<string, unknown>,
+  exists: (entityId: string) => boolean,
+): string | undefined {
+  const op = raw.op;
+  if (typeof op !== 'string' || !OPS.includes(op)) {
+    return `"${String(op)}" isn't a turn op — one of ${OPS.join(', ')}`;
+  }
+  const row = (id: unknown) =>
+    typeof id === 'string' ? state.order.find((e) => e.id === id) : undefined;
+  const score = (v: unknown) => v === null || (typeof v === 'number' && Number.isFinite(v));
+  switch (op) {
+    case 'add': {
+      const { entityId, label } = raw;
+      if (entityId !== undefined && typeof entityId !== 'string') return 'entityId is an id';
+      if (label !== undefined && typeof label !== 'string') return 'a label is words';
+      if (!entityId && !(label as string | undefined)?.trim()) {
+        return 'add needs an entity or a label';
+      }
+      if (entityId) {
+        if (!exists(entityId)) return `no entity ${entityId} to add`;
+        if (state.order.some((e) => e.entityId === entityId)) {
+          return 'that one is already in the order';
+        }
+      }
+      return undefined;
+    }
+    case 'remove':
+      return row(raw.entryId) ? undefined : `no row ${String(raw.entryId)} in the order`;
+    case 'score':
+      if (!row(raw.entryId)) return `no row ${String(raw.entryId)} in the order`;
+      return score(raw.score) ? undefined : 'a score is a number, or null for "not rolled yet"';
+    case 'rolling':
+      return typeof raw.on === 'boolean' ? undefined : 'rolling is on or off — true or false';
+    case 'set': {
+      if (!Array.isArray(raw.order)) return 'set needs the whole order, as a list';
+      const seen = new Set<string>();
+      for (const item of raw.order) {
+        if (!item || typeof item !== 'object') return 'every row in the order is an object';
+        const e = item as Record<string, unknown>;
+        if (e.entityId !== undefined && typeof e.entityId !== 'string') return 'entityId is an id';
+        if (e.label !== undefined && typeof e.label !== 'string') return 'a label is words';
+        if (!e.entityId && !(e.label as string | undefined)?.trim()) {
+          return 'every row names an entity or carries a label';
+        }
+        if (e.score !== undefined && !score(e.score)) {
+          return 'a score is a number, or null for "not rolled yet"';
+        }
+        if (typeof e.entityId === 'string') {
+          if (!exists(e.entityId)) return `no entity ${e.entityId} for the order`;
+          if (seen.has(e.entityId)) return 'the same one is in that order twice';
+          seen.add(e.entityId);
+        }
+      }
+      return undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
 /** Apply one op. Pure — the caller stores what comes back. */
 export function applyTurnOp(state: TurnState, op: TurnOp): TurnState {
   const s: TurnState = { ...state, order: [...state.order] };
