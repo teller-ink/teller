@@ -271,9 +271,16 @@ function fileReply(bytes: Buffer, filename: string): Reply {
  * the catalogue from the ambush. Slots are asked per slot now
  * (`mayReadDeclarations`, `mayReadTemplates` in `server/auth.ts`).
  */
-const canPrep = (auth: Auth): boolean =>
-  canDm(auth) || (adopted(auth.display) && auth.display.role === 'seat');
+//
+// A seat pointed at NOBODY is not at a seat yet: it draws nothing, so it
+// reads as passive glass does everywhere else, and it does here. The
+// second audit pass found one browsing the rulebook.
+const canPrep = (auth: Auth): boolean => canDm(auth) || seatEntity(auth) !== undefined;
 const notAtTable = () => reply(401, { error: 'not at this table' });
+
+/** A path that exists AND is a file — `existsSync` says yes to a folder,
+ * and reading a folder throws. */
+const isFile = (path: string): boolean => statSync(path, { throwIfNoEntry: false })?.isFile() === true;
 
 /**
  * THE MARKS A SEAT DOESN'T HOLD — teller's own facts about a character,
@@ -304,8 +311,39 @@ function canon(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
 
-/** Why a seat may not save this over that, or undefined when it may. */
-function seatOverreach(stored: Entity, next: Entity): string | undefined {
+/** Every `from` id in an entity's tree — its own, and each carried
+ * thing's, however deep the carrying goes. */
+function fromIds(entity: Entity, into = new Set<string>(), depth = 0): Set<string> {
+  const from = (entity.refs as Record<string, { id?: unknown } | undefined> | undefined)?.from;
+  if (from && typeof from.id === 'string' && from.id) into.add(from.id);
+  if (depth < 32) for (const child of entity.children ?? []) fromIds(child, into, depth + 1);
+  return into;
+}
+
+/**
+ * Why a seat may not save this over that, or undefined when it may.
+ *
+ * `borrowable` answers "may a seat stamp from this template?" — and it
+ * is asked of every NEW `from` in the whole tree, not just the top.
+ * A `from` is a READ: the sheet resolves through it, so a seat that
+ * could hang one on its own character could read whatever it pointed
+ * at. The first cut of this check looked at the top-level refs only and
+ * let a drafting seat set those freely, and the audit's second pass
+ * walked straight through both: carry a child whose `from` is a foe's
+ * template, read your own sheet back, and there are its numbers. A seat
+ * stamps from the catalogue it is allowed to shop. A `from` that was
+ * already there is whoever put it there's business.
+ */
+function seatOverreach(
+  stored: Entity,
+  next: Entity,
+  borrowable: (templateId: string) => boolean,
+): string | undefined {
+  const had = fromIds(stored);
+  for (const id of fromIds(next)) {
+    if (had.has(id) || borrowable(id)) continue;
+    return "a seat can stamp from the catalogue it shops, and that isn't on it";
+  }
   const drafting = isDraft(stored);
   if (!drafting && (stored.type ?? '').trim() !== (next.type ?? '').trim()) {
     return "a character's type is the DM's to change";
@@ -1747,7 +1785,12 @@ export async function handleApi(
         // A whole-row PUT carries the marks back as it read them (the
         // seat's carry does exactly that), so only a CHANGE is refused.
         const stored = session.campaign.get(a);
-        const why = stored ? seatOverreach(stored, entity) : undefined;
+        const slots = readableTemplates(auth);
+        const why = stored
+          ? seatOverreach(stored, entity, (id) =>
+              slots.some((slot) => session.loaded.templateOf(slot)(id) !== undefined),
+            )
+          : undefined;
         if (why) return reply(401, { error: why });
       }
       try {
@@ -1777,12 +1820,15 @@ export async function handleApi(
     const list = String(body.list ?? '').trim();
     const name = String(body.name ?? '').trim();
     if (!list || !name) return reply(400, { error: 'entry needs a list and a name' });
-    // A list is a key on a plain object, and three names are not keys
+    // A list is a key on a plain object, and some names are not keys
     // there at all: `__proto__` reads the object's prototype instead of
-    // a list, which is how a seat's write used to come back a 500. A
-    // refusal with a reason beats a stack trace, and no game has a list
-    // called `constructor`.
-    if (list === '__proto__' || list === 'constructor' || list === 'prototype') {
+    // a list, and `toString`, `valueOf` and the rest read a function
+    // off it — each of which is how a seat's write used to come back a
+    // 500. So the question is "does every object already have this",
+    // not a list of three names (the first cut, which the audit's second
+    // pass walked around with `toString`). A refusal with a reason beats
+    // a stack trace, and no game has a list called `hasOwnProperty`.
+    if (list === '__proto__' || list === 'prototype' || list in Object.prototype) {
       return reply(400, { error: `"${list}" can't be the name of a list` });
     }
     // A value is a number or words. `null` is what a client's NaN turns
@@ -3048,7 +3094,7 @@ export function serve(what: Session | Host, port: number, key: string) {
       const path = buildRoot && fileParts.length
         ? normalize(join(buildRoot, ...fileParts))
         : undefined;
-      if (!path || !buildRoot || !path.startsWith(buildRoot) || !existsSync(path)) {
+      if (!path || !buildRoot || !path.startsWith(buildRoot) || !isFile(path)) {
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         res.end('not here');
         return;
@@ -3074,7 +3120,7 @@ export function serve(what: Session | Host, port: number, key: string) {
       const buildRoot = plugin ? join(plugin.dir, '.build') : undefined;
       const path =
         buildRoot && fileParts.length ? normalize(join(buildRoot, ...fileParts)) : undefined;
-      if (!path || !buildRoot || !path.startsWith(buildRoot) || !existsSync(path)) {
+      if (!path || !buildRoot || !path.startsWith(buildRoot) || !isFile(path)) {
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         res.end('not here');
         return;
@@ -3119,7 +3165,7 @@ export function serve(what: Session | Host, port: number, key: string) {
       const path = buildRoot && fileParts.length
         ? normalize(join(buildRoot, ...fileParts))
         : undefined;
-      if (!path || !buildRoot || !path.startsWith(buildRoot) || !existsSync(path)) {
+      if (!path || !buildRoot || !path.startsWith(buildRoot) || !isFile(path)) {
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         res.end('not here');
         return;
@@ -3149,7 +3195,10 @@ export function serve(what: Session | Host, port: number, key: string) {
         '',
       );
       const loaded = host.session?.loaded;
-      const entry = name ? loaded?.exports()[name] : undefined;
+      // Asked of the exports' OWN names: `__proto__` is on every object
+      // and is nobody's export.
+      const exported = loaded?.exports();
+      const entry = name && exported && Object.hasOwn(exported, name) ? exported[name] : undefined;
       const body = entry
         ? systemExportModule(name, entry)
         : refusalModule(

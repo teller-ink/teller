@@ -423,6 +423,44 @@ describe("a seat doesn't hold its own marks", () => {
     ).toBe(200);
   });
 
+  // The audit's second pass: a `from` is a READ — the sheet resolves
+  // through it — so a seat that could hang one anywhere on its own
+  // character could read whatever it pointed at. The first check looked
+  // at the top-level refs only, and let a drafting seat set those.
+  it("a seat can't borrow a foe's numbers by carrying a reference to it", async () => {
+    const seat = await screen('seat', { entityId: barrett });
+    const stored = (await call('GET', `/api/entities/${barrett}`, { display: seat })).body;
+    const save = (entity: object) =>
+      call('PUT', `/api/entities/${barrett}`, { display: seat, body: { entity } });
+    const carrying = (from: string, depth = 0): object => {
+      let child: Record<string, unknown> = { id: 'itm_x', name: 'x', lists: {}, refs: { from: { id: from, name: from } } };
+      for (let i = 0; i < depth; i++) child = { id: `itm_w${i}`, name: 'wrap', lists: {}, children: [child] };
+      return { ...stored, children: [child] };
+    };
+    // A child pointed at the bestiary, at the top and tucked three deep.
+    expect((await save(carrying('npc_watcher'))).status).toBe(401);
+    expect((await save(carrying('npc_watcher', 3))).status).toBe(401);
+    const read = (await call('GET', `/api/entities/${barrett}?resolved=1`, { display: seat })).body;
+    expect(JSON.stringify(read)).not.toContain('Vigour","value":12');
+    // The catalogue is what a seat shops, and stamping from it is carrying.
+    expect((await save(carrying('cat_rifle'))).status).toBe(200);
+
+    // A drafting seat sets its own refs — but not at a foe.
+    const drafter = await screen('seat', { entityId: dolores });
+    const draft = (await call('GET', `/api/entities/${dolores}`, { display: drafter })).body;
+    const aimed = await call('PUT', `/api/entities/${dolores}`, {
+      display: drafter,
+      body: { entity: { ...draft, refs: { from: { id: 'npc_watcher', name: 'Watcher' } } } },
+    });
+    expect(aimed.status).toBe(401);
+
+    // What the DM hung there stays readable and stays put.
+    const given = { ...session.campaign.get(barrett)!, children: [{ id: 'itm_dm', name: 'trophy', lists: {}, refs: { from: { id: 'npc_watcher', name: 'Watcher' } } }] };
+    expect((await call('PUT', `/api/entities/${barrett}`, { key: true, body: { entity: given } })).status).toBe(200);
+    const kept = (await call('GET', `/api/entities/${barrett}`, { display: seat })).body;
+    expect((await save({ ...kept, notes: 'still mine to write' })).status).toBe(200);
+  });
+
   it('a character still being made may pick its trade and strike the draft mark', async () => {
     const seat = await screen('seat', { entityId: dolores });
     const stored = (await call('GET', `/api/entities/${dolores}`, { display: seat })).body;

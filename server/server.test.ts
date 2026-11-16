@@ -149,6 +149,24 @@ describe('entities over HTTP', () => {
     expect((await api('DELETE', `/api/entities/${child}`)).status).toBe(200);
   });
 
+  // Audit 2026-11-16, second pass: typing over a CEILING sends a write
+  // with a max and no value, and that write used to rebuild the entry
+  // without its value — the number beside the one you typed, gone.
+  it('a ceiling-only write leaves the value where it was', async () => {
+    const id = (await api('POST', '/api/entities', { draft: { name: 'Barrett' } })).body.id;
+    await api('POST', `/api/entities/${id}/entry`, { list: 'resources', name: 'Health', value: 7, max: 10 });
+    const raised = await api('POST', `/api/entities/${id}/entry`, { list: 'resources', name: 'Health', max: 12 });
+    expect(raised.status).toBe(200);
+    expect(raised.body.stored.lists.resources).toEqual([{ name: 'Health', value: 7, max: 12 }]);
+    // Lifting the ceiling off altogether keeps it too.
+    const lifted = await api('POST', `/api/entities/${id}/entry`, { list: 'resources', name: 'Health', max: null });
+    expect(lifted.body.stored.lists.resources).toEqual([{ name: 'Health', value: 7 }]);
+    // A mark is still made with no value at all.
+    const marked = await api('POST', `/api/entities/${id}/entry`, { list: 'conditions', name: 'Afraid' });
+    expect(marked.body.stored.lists.conditions).toEqual([{ name: 'Afraid' }]);
+    await api('DELETE', `/api/entities/${id}`);
+  });
+
   // Audit 2026-11-16: a list named `__proto__` read the object's
   // prototype instead of a list, and the write came back a 500.
   it('a list cannot be named after a key no object has', async () => {

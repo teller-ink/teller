@@ -521,7 +521,16 @@ export class Session {
         .declarations('kinds')
         .map(toKindDef)
         .filter((k): k is KindDef => k !== undefined);
-      stored = setEntry(stored, edit.name, edit.value, kindFor(kinds, edit.list));
+      // A write that names NO value leaves the value alone. `setEntry`
+      // with nothing to set rebuilds the entry without one, which was
+      // harmless while every write carried a value — and then a ceiling
+      // became something a human could type (2026-11-16), a ceiling-only
+      // write became an ordinary press, and it took the number beside it
+      // with it. Found the same day, by the audit's second pass. A new
+      // entry is still made with no value: that is what a mark is.
+      if (edit.value !== undefined || !findEntry(stored, edit.name)) {
+        stored = setEntry(stored, edit.name, edit.value, kindFor(kinds, edit.list));
+      }
       if (edit.max !== undefined) {
         stored = stored.map((e) => {
           if (!sameName(e, edit.name)) return e;
