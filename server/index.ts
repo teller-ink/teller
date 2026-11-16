@@ -69,6 +69,7 @@ import {
   providersOf,
 } from '../core/plugins.ts';
 import { callDoor, whoOf } from './plugin-bridge.ts';
+import { pollStream } from './stream-poll.ts';
 import { grants, isPoint, POINTS, type Need, type Point } from '../core/registry.ts';
 import { bandsIn, fightGeometry, measureMove, type MoveRecord } from './geometry.ts';
 import {
@@ -2843,6 +2844,13 @@ export function serve(what: Session | Host, port: number, key: string) {
         'Cache-Control': 'private, max-age=3600',
       });
       res.end(readFileSync(path));
+      return;
+    }
+
+    // The stream asked for in pieces, by a display slot past the
+    // browser's stream budget (`server/stream-poll.ts`). Same ticket.
+    if (url.pathname === '/api/stream/poll') {
+      pollStream(host, key, url, res);
       return;
     }
 

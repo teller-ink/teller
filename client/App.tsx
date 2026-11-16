@@ -25,6 +25,7 @@ import { PanelCollection, PanelSurface, type BlockCtx, type Glass } from './pane
 import { SeatChrome } from './components/seat/SeatChrome.tsx';
 import { CampaignScreen } from './views/campaigns.tsx';
 import { CalibrationOverlay } from './components/board/CalibrationOverlay.tsx';
+import { ConnectionHint, WriteNotice } from './components/ConnectionHint.tsx';
 import { TableView } from './views/TableView.tsx';
 import { BoardView } from './views/BoardView.tsx';
 import { BadgeView } from './views/BadgeView.tsx';
@@ -251,6 +252,9 @@ function PanelRoute({
               </p>
             }
           />
+          {/* A tool pane is a slice of the console, and wears its pill
+              (the seat chrome above wears its own). */}
+          <ConnectionHint />
         </PanelCollection>
       )}
     </div>
@@ -346,6 +350,12 @@ function Console() {
   };
   return (
     <div className="min-h-dvh p-4">
+      {/* The console wears the same pill passive glass does. It used to
+          wear nothing: with the host gone, every screen in the room said
+          "reconnecting…" except the one the DM was pressing (found live,
+          2026-11-16) — and a DM pressing into a dead wire is the one
+          person who most needs to know. */}
+      <ConnectionHint />
       <nav className="mb-4 flex flex-wrap items-center gap-1.5">
         {tools.map((p) => (
           <button
@@ -459,6 +469,8 @@ function PairScreen() {
 export default function App() {
   const hash = useHash();
   const [unlocked, setUnlocked] = useState(() => Boolean(stored.key));
+  // The pairing screen asks the same question on the same mount; they
+  // share one request (`hello()`), so a fresh screen mints ONE display.
   const me = useLive(() => hello(), [], { on: ['displays', 'assign'] });
 
   // How big this glass is, told once and again when it changes. The
@@ -516,6 +528,11 @@ export default function App() {
           (rule 6). A screen being measured against a physical inch is
           not doing its job at that moment — the ruler covers the lot. */}
       <CalibrationOverlay />
+      {/* A press that didn't land, said once for every tool on every
+          screen that writes (`api()` reports it). Passive glass never
+          sees it: its only writes are its own hello and viewport, which
+          are quiet. */}
+      <WriteNotice />
     </>
   );
 }

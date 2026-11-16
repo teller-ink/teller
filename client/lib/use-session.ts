@@ -36,12 +36,30 @@
 // with different tickets and each keeps its own. Slot is also known
 // synchronously at load, which the handle (fetched with the slips) is
 // not.
+//
+// BUDGET — "each keeps its own" is one socket per slot, and slots are
+// free to open: console + `#tv` + `#board` + `#art` + `#seat` + one
+// more is six sockets and a console whose writes queue forever (found
+// live, 2026-11-16). So a slot's LEADER also takes a place in a
+// browser-wide queue (`stream-budget.ts`), read off every slot's
+// election record on every beat: the first four hold streams, the rest
+// POLL `/api/stream/poll` for exactly the words their stream would have
+// carried, and wear a quiet pill saying the glass is live but slower.
+// When a holder closes, the longest-waiting poller takes its place.
 
 import { useEffect, useRef, useState } from 'react';
-import { displaySlot, getSlips } from './api.ts';
+import { displaySlot, forgetSlips, getSlips, stored } from './api.ts';
+import { streamOrPoll, type Claim } from './stream-budget.ts';
 
 type Listener = (what: string) => void;
-type Status = (connected: boolean) => void;
+/**
+ * The wire's health, as a surface may render it. `polling` is NOT a
+ * failure: the screen is hearing every word, a few seconds late, because
+ * the browser's stream budget is spent — live-but-slower must never look
+ * like stale.
+ */
+export type Wire = 'live' | 'polling' | 'down';
+type Status = (wire: Wire) => void;
 
 const listeners = new Set<Listener>();
 const identifyListeners = new Set<() => void>();
@@ -62,6 +80,11 @@ const CHECK_MS = 2_500;
 const STALE_MS = 35_000;
 const FIRST_MS = 1_000;
 const MAX_MS = 30_000;
+/** How often a slot past the budget asks what it missed. Modest on
+ *  purpose: a poll is a short request on one of the two connections the
+ *  budget keeps free, and a slower glass is the deal being struck. */
+const POLL_MS = 4_000;
+const LEADER_PREFIX = 'teller.stream.leader.';
 
 /** `direct` = this browser can't pool; every tab holds its own socket. */
 type Role = 'direct' | 'leader' | 'follower';
@@ -74,11 +97,23 @@ let wasDown = false;
 /** Optimistic at load, exactly as the old app was: a screen that has
  *  not finished opening its socket yet is not a screen in trouble, and
  *  a pill that flashes on every boot is a pill nobody reads. */
-let up = true;
+let wire: Wire = 'live';
 let role: Role = 'direct';
 let channel: BroadcastChannel | null = null;
 let watch: ReturnType<typeof setInterval> | null = null;
 let pooling = false;
+/**
+ * What this slot's LEADER does about the budget. `idle` until the first
+ * beat after winning decides; a follower and a direct tab never leave
+ * it (a direct tab can't read the other slots, so it simply streams).
+ */
+let mode: 'idle' | 'stream' | 'poll' = 'idle';
+/** This slot's place in the browser-wide queue. Null when not leading. */
+let claimed: number | null = null;
+let polling: ReturnType<typeof setTimeout> | null = null;
+let cursor: string | null = null;
+/** Which polling loop is current; an answer from an older one is dropped. */
+let loops = 0;
 
 /** This tab, for as long as it lives. Never rendered, never stored.
  *  `crypto.randomUUID` is absent on a LAN origin (rule 6). */
@@ -89,9 +124,9 @@ const leaderKey = () => `teller.stream.leader.${scope()}`;
 
 type Relay =
   | { kind: 'nudge'; what: string }
-  /** The leader's wire, up or down. A follower has no socket of its own
-   *  to judge by, and a follower's screen is just as passive. */
-  | { kind: 'status'; connected: boolean }
+  /** The leader's wire. A follower has no socket of its own to judge
+   *  by, and a follower's screen is just as passive. */
+  | { kind: 'status'; wire: Wire }
   /** A tab adopted, so the screen's identity changed under the leader's
    *  feet: whoever holds the socket must go back for fresh slips. */
   | { kind: 'reset' };
@@ -101,13 +136,13 @@ function alive(): boolean {
 }
 
 /** Publish the wire's health to this tab, and — from the leader — to the rest. */
-function tellStatus(connected: boolean, relay = true): void {
+function tellStatus(next: Wire, relay = true): void {
   if (relay && role === 'leader') {
-    channel?.postMessage({ kind: 'status', connected } satisfies Relay);
+    channel?.postMessage({ kind: 'status', wire: next } satisfies Relay);
   }
-  if (up === connected) return;
-  up = connected;
-  for (const fn of statusListeners) fn(connected);
+  if (wire === next) return;
+  wire = next;
+  for (const fn of statusListeners) fn(next);
 }
 
 /** Can this browser pool at all? Old engines get a socket per tab. */
@@ -119,9 +154,23 @@ function canPool(): boolean {
   }
 }
 
+/** The DM's own console, which the budget serves first. A key-holding
+ *  browser's bare address IS the console (App.tsx). */
+const first = () => scope() === 'main' && Boolean(stored.key);
+
 function stamp(): void {
   try {
-    localStorage.setItem(leaderKey(), JSON.stringify({ id: TAB, at: Date.now() }));
+    localStorage.setItem(
+      leaderKey(),
+      JSON.stringify({
+        id: TAB,
+        at: Date.now(),
+        // The budget's half of the record (`stream-budget.ts`).
+        since: claimed ?? Date.now(),
+        open: mode === 'stream',
+        first: first(),
+      }),
+    );
   } catch {
     // Quota or a privacy mode: election degrades to every tab leading,
     // which is just the old one-socket-per-tab arithmetic.
@@ -136,13 +185,41 @@ function abdicate(): void {
   }
 }
 
-function readLeader(): { id: string; at: number } | null {
+type Stamp = { id: string; at: number; since?: number; open?: boolean; first?: boolean };
+
+function readLeader(): Stamp | null {
   try {
     const raw = localStorage.getItem(leaderKey());
-    return raw ? (JSON.parse(raw) as { id: string; at: number }) : null;
+    return raw ? (JSON.parse(raw) as Stamp) : null;
   } catch {
     return null;
   }
+}
+
+/** Every OTHER slot's leader record in this browser, as budget claims. */
+function otherClaims(): Claim[] {
+  const out: Claim[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key?.startsWith(LEADER_PREFIX) || key === leaderKey()) continue;
+      const r = JSON.parse(localStorage.getItem(key) ?? 'null') as Stamp | null;
+      if (!r || typeof r.at !== 'number') continue;
+      out.push({
+        slot: key.slice(LEADER_PREFIX.length),
+        at: r.at,
+        // A record from before the budget existed claims nothing it can
+        // rank by — it goes to the back, and still counts as holding one.
+        since: typeof r.since === 'number' ? r.since : r.at,
+        open: r.open ?? true,
+        first: Boolean(r.first),
+      });
+    }
+  } catch {
+    // Unreadable storage reads as an empty browser: this slot streams,
+    // which is the pre-budget arithmetic and no worse than it was.
+  }
+  return out;
 }
 
 /** Hand one nudge to this tab's subscribers. */
@@ -155,7 +232,7 @@ function deliver(what: string): void {
 }
 
 function schedule(): void {
-  if (!alive() || role === 'follower') return;
+  if (!alive() || role === 'follower' || (role === 'leader' && mode !== 'stream')) return;
   if (retry) clearTimeout(retry);
   retry = setTimeout(() => {
     retry = null;
@@ -166,6 +243,7 @@ function schedule(): void {
 
 function open(): void {
   if (source || opening || role === 'follower') return;
+  if (role === 'leader' && mode !== 'stream') return;
   opening = true;
   // Listening needs a ticket: EventSource can't send headers, so the
   // proof rides in the URL. It expires, and the browser's own retry
@@ -176,8 +254,9 @@ function open(): void {
       // An election can depose this tab while the slips are in flight,
       // and a socket opened after losing would be an orphan holding one
       // of the six until the tab closes — the exact failure this file
-      // exists to prevent.
+      // exists to prevent. Being moved to polling is the same loss.
       if (role === 'follower' || !alive()) return;
+      if (role === 'leader' && mode !== 'stream') return;
       source?.close();
       const es = new EventSource(
         `/api/stream?handle=${encodeURIComponent(slips.handle)}&ticket=${encodeURIComponent(slips.ticket)}`,
@@ -185,7 +264,7 @@ function open(): void {
       source = es;
       es.onopen = () => {
         delay = FIRST_MS;
-        tellStatus(true);
+        tellStatus('live');
         // Coming back from a drop, nobody knows what was missed while
         // the wire was down — so say "everything" once, to this tab and
         // to anyone listening to it.
@@ -208,7 +287,7 @@ function open(): void {
       };
       es.onerror = () => {
         wasDown = true;
-        tellStatus(false);
+        tellStatus('down');
         es.close();
         if (source === es) source = null;
         opening = false;
@@ -218,8 +297,60 @@ function open(): void {
     .catch(() => {
       opening = false;
       wasDown = true;
-      tellStatus(false);
+      tellStatus('down');
       schedule();
+    });
+}
+
+/**
+ * Ask what the stream would have said since the last ask, and say it.
+ * Same slips as the stream (it IS the stream, in pieces), same relay to
+ * this screen's other tabs, same `sync` when nobody can vouch for what
+ * was missed — the first ask, a gap the host admits to, a failure.
+ */
+function poll(): void {
+  polling = null;
+  if (role !== 'leader' || mode !== 'poll' || !alive()) return;
+  const asked = cursor;
+  // Stamped per loop, so `hangUp` (a reset, a promotion) orphans this
+  // ask even when it lands with the same cursor a fresh loop starts on.
+  const loop = ++loops;
+  getSlips()
+    .then((slips) =>
+      fetch(
+        `/api/stream/poll?handle=${encodeURIComponent(slips.handle)}&ticket=${encodeURIComponent(slips.ticket)}${asked ? `&cursor=${encodeURIComponent(asked)}` : ''}`,
+      ),
+    )
+    .then(async (res) => {
+      if (!res.ok) {
+        // A refused ticket is worth fresh slips on the next ask.
+        if (res.status === 401) forgetSlips();
+        throw new Error(String(res.status));
+      }
+      return (await res.json()) as { cursor: string; words: string[]; gap: boolean };
+    })
+    .then((answer) => {
+      // Promoted to a stream, deposed, or reset while asking: the
+      // answer belongs to a loop that no longer exists.
+      if (loop !== loops || role !== 'leader' || mode !== 'poll') return;
+      cursor = answer.cursor;
+      tellStatus('polling');
+      const words = answer.gap || wasDown || !asked ? ['sync', ...answer.words] : answer.words;
+      wasDown = false;
+      stamp();
+      for (const what of words) {
+        channel?.postMessage({ kind: 'nudge', what } satisfies Relay);
+        deliver(what);
+      }
+    })
+    .catch(() => {
+      if (loop !== loops || role !== 'leader' || mode !== 'poll') return;
+      wasDown = true;
+      tellStatus('down');
+    })
+    .finally(() => {
+      if (loop !== loops || role !== 'leader' || mode !== 'poll' || !alive()) return;
+      polling = setTimeout(poll, POLL_MS);
     });
 }
 
@@ -229,22 +360,59 @@ function hangUp(): void {
   source?.close();
   source = null;
   opening = false;
+  if (polling) clearTimeout(polling);
+  polling = null;
+  cursor = null;
+  loops++;
+}
+
+/**
+ * Take this slot's place in the browser's stream budget — run by the
+ * leader on every beat. Moving between modes always costs a `sync`:
+ * the gap between the last word one wire carried and the first the
+ * other does is a gap nobody can vouch for.
+ */
+function balance(): void {
+  if (role !== 'leader' || !alive()) return;
+  const me: Claim = {
+    slot: scope(),
+    at: Date.now(),
+    since: claimed ?? Date.now(),
+    open: mode === 'stream',
+    first: first(),
+  };
+  const want = streamOrPoll(otherClaims(), me, Date.now());
+  if (want === mode) return;
+  const from = mode;
+  hangUp();
+  mode = want;
+  if (from !== 'idle') wasDown = true;
+  // Said before acting, so every other slot reads the move this beat.
+  stamp();
+  if (want === 'stream') open();
+  else poll();
 }
 
 function lead(): void {
   const was = role;
   role = 'leader';
+  if (was !== 'leader') {
+    claimed ??= Date.now();
+    mode = 'idle';
+  }
   stamp();
   // Said on every election beat, not only on a change: a tab that
   // becomes a follower has no socket to judge by and no idea what it
   // missed, so the standing answer converges in one beat rather than
   // waiting for the wire to next do something.
-  channel?.postMessage({ kind: 'status', connected: up } satisfies Relay);
-  if (was !== 'leader') open();
+  channel?.postMessage({ kind: 'status', wire } satisfies Relay);
+  balance();
 }
 
 function follow(): void {
   role = 'follower';
+  mode = 'idle';
+  claimed = null;
   // A deposed leader hands its socket back — one per screen is the deal.
   hangUp();
 }
@@ -265,6 +433,9 @@ function elect(): void {
     follow();
     return;
   }
+  // Taking over a dead leader keeps the SLOT's place in the budget's
+  // queue — it is the same screen, only a different tab of it.
+  claimed ??= current?.since ?? Date.now();
   stamp();
   setTimeout(
     () => {
@@ -297,7 +468,7 @@ function ensureStream(): void {
       return;
     }
     if (relay.kind === 'status') {
-      if (role === 'follower') tellStatus(relay.connected, false);
+      if (role === 'follower') tellStatus(relay.wire, false);
       return;
     }
     if (role === 'follower') deliver(relay.what);
@@ -315,7 +486,9 @@ function teardown(): void {
   channel = null;
   pooling = false;
   role = 'direct';
-  up = true;
+  mode = 'idle';
+  claimed = null;
+  wire = 'live';
   hangUp();
 }
 
@@ -343,7 +516,11 @@ export function resetStream(): void {
     return;
   }
   hangUp();
-  if (alive()) open();
+  if (!alive()) return;
+  // A polling slot asks under the new identity from a fresh cursor;
+  // `hangUp` already dropped the old one, so the first answer is a gap.
+  if (mode === 'poll') poll();
+  else open();
 }
 
 /**
@@ -369,22 +546,27 @@ export function onNudge(fn: Listener, on?: string[]): () => void {
 /**
  * Is the wire up? — the one fact a surface may render about the stream.
  *
- * Optimistic until proven otherwise (see `up`), and a FOLLOWER reports
+ * Optimistic until proven otherwise (see `wire`), and a FOLLOWER reports
  * its leader's answer, because a follower's screen is exactly as stale
  * as the socket it isn't holding.
  */
 export function useConnection(): boolean {
-  const [connected, setConnected] = useState(up);
+  return useWire() !== 'down';
+}
+
+/** The same, with polling told apart from live — what the pill wears. */
+export function useWire(): Wire {
+  const [state, setState] = useState(wire);
   useEffect(() => {
-    setConnected(up);
-    statusListeners.add(setConnected);
+    setState(wire);
+    statusListeners.add(setState);
     ensureStream();
     return () => {
-      statusListeners.delete(setConnected);
+      statusListeners.delete(setState);
       teardown();
     };
   }, []);
-  return connected;
+  return state;
 }
 
 /** Subscribe to the identify flash. */

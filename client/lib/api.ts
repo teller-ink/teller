@@ -60,29 +60,130 @@ export class ApiError extends Error {
   }
 }
 
+// ---- writes the table is told about ----------------------------------
+//
+// Every tool repaints a press before the host answers (`entry.ts`), so a
+// write that never lands looks exactly like one that did: the counter
+// flips, the server keeps the old number, and nothing on the console
+// says so (found live, 2026-11-16, with the host killed mid-fight). The
+// optimistic overlay already rolls back on a rejection; what was
+// missing was anybody being TOLD. So the one door every write goes
+// through reports its own trouble, and the app wears it
+// (`WriteNotice`) — every tool gets it without learning it exists, and
+// no button grows a spinner.
+
+export type WriteTrouble =
+  /** A write is out and the host hasn't answered — the change may yet land. */
+  | { kind: 'waiting' }
+  /** It came back refused or never reached the host. It did not land. */
+  | { kind: 'failed'; message: string; at: number }
+  | { kind: 'clear' };
+
+const troubleListeners = new Set<(t: WriteTrouble) => void>();
+/** Writes out right now, by when they left. */
+const inFlight = new Map<number, number>();
+let writeSeq = 0;
+let waitTimer: ReturnType<typeof setTimeout> | null = null;
+let waiting = false;
+/** Long enough that an ordinary round trip — even a phone over a
+ *  Tailscale link — never trips it. */
+const WAITING_MS = 3_000;
+
+function tellTrouble(t: WriteTrouble): void {
+  for (const fn of troubleListeners) fn(t);
+}
+
+/** Subscribe to the door's own trouble. Returns an unsubscribe. */
+export function onWriteTrouble(fn: (t: WriteTrouble) => void): () => void {
+  troubleListeners.add(fn);
+  if (waiting) fn({ kind: 'waiting' });
+  return () => {
+    troubleListeners.delete(fn);
+  };
+}
+
+function rewatch(): void {
+  if (waitTimer) clearTimeout(waitTimer);
+  waitTimer = null;
+  if (!inFlight.size) {
+    if (waiting) {
+      waiting = false;
+      tellTrouble({ kind: 'clear' });
+    }
+    return;
+  }
+  const oldest = Math.min(...inFlight.values());
+  const due = oldest + WAITING_MS - Date.now();
+  if (due <= 0) {
+    if (!waiting) {
+      waiting = true;
+      tellTrouble({ kind: 'waiting' });
+    }
+    return;
+  }
+  waitTimer = setTimeout(rewatch, due);
+}
+
 export async function api<T = unknown>(
   path: string,
-  init?: { method?: string; body?: unknown },
+  init?: {
+    method?: string;
+    body?: unknown;
+    /**
+     * Not the table's business when it fails — a screen's own hello or
+     * viewport report, which retry on their own and are not a change
+     * anybody pressed for.
+     */
+    quiet?: boolean;
+  },
 ): Promise<T> {
   const headers: Record<string, string> = {};
   if (stored.key) headers['x-teller-key'] = stored.key;
   if (stored.display) headers['x-teller-display'] = stored.display;
   if (init?.body !== undefined) headers['Content-Type'] = 'application/json';
-  const res = await fetch(path, {
-    method: init?.method ?? (init?.body !== undefined ? 'POST' : 'GET'),
-    headers,
-    body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new ApiError(
-      res.status,
-      typeof (body as { error?: string }).error === 'string'
-        ? (body as { error: string }).error
-        : res.statusText,
-    );
+  const method = init?.method ?? (init?.body !== undefined ? 'POST' : 'GET');
+  const told = method !== 'GET' && method !== 'HEAD' && !init?.quiet;
+  const me = ++writeSeq;
+  if (told) {
+    inFlight.set(me, Date.now());
+    rewatch();
   }
-  return body as T;
+  try {
+    let res: Response;
+    try {
+      res = await fetch(path, {
+        method,
+        headers,
+        body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+      });
+    } catch (err) {
+      if (told) {
+        tellTrouble({
+          kind: 'failed',
+          message: "the host didn't answer",
+          at: Date.now(),
+        });
+      }
+      throw err;
+    }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const error = new ApiError(
+        res.status,
+        typeof (body as { error?: string }).error === 'string'
+          ? (body as { error: string }).error
+          : res.statusText,
+      );
+      if (told) tellTrouble({ kind: 'failed', message: error.message, at: Date.now() });
+      throw error;
+    }
+    return body as T;
+  } finally {
+    if (told) {
+      inFlight.delete(me);
+      rewatch();
+    }
+  }
 }
 
 // ---- displays / pairing ------------------------------------------------
@@ -101,13 +202,44 @@ export type DisplayInfo = {
   viewport?: { w: number; h: number };
 };
 
-export async function hello(): Promise<{ display: DisplayInfo; handle: string }> {
-  const out = await api<{ display: DisplayInfo; handle: string }>(
-    '/api/displays/hello',
-    { body: stored.display ? { id: stored.display } : {} },
-  );
+type Hello = { display: DisplayInfo; handle: string };
+
+let helloing: Promise<Hello> | null = null;
+
+async function sayHello(): Promise<Hello> {
+  const sent = stored.display;
+  const out = await api<Hello>('/api/displays/hello', {
+    body: sent ? { id: sent } : {},
+    quiet: true,
+  });
+  // Another TAB of this same screen minted first while this hello was
+  // out (two tabs opened at once on a fresh slot). Its id is the one in
+  // storage, so it is the one every later hello sends — adopt it rather
+  // than overwrite it, or the two tabs show two codes.
+  const now = stored.display;
+  if (!sent && now && now !== out.display.id) {
+    return api<Hello>('/api/displays/hello', { body: { id: now }, quiet: true });
+  }
   stored.display = out.display.id;
   return out;
+}
+
+/**
+ * Say hello — ONE at a time per screen, however many components ask.
+ *
+ * Before a display id is stored, every hello MINTS a display. `App` and
+ * the pairing screen both said hello on mount, so a fresh screen minted
+ * two, painted one's code, and stored the other's id — the code on the
+ * glass died at the first heartbeat three seconds later, and a DM fast
+ * enough to type it adopted a ghost (found live, 6 of 6 loads,
+ * 2026-11-16). Every caller in flight shares the one request, so a
+ * third caller added later can't bring that back.
+ */
+export function hello(): Promise<Hello> {
+  helloing ??= sayHello().finally(() => {
+    helloing = null;
+  });
+  return helloing;
 }
 
 // ---- boards (the battlemap's asset half, §4) ---------------------------
@@ -242,7 +374,7 @@ export function reportViewport(): Promise<unknown> {
   // nothing — so a nonsense measurement is not reported at all, and the
   // last honest one stands.
   if (w < 200 || h < 200) return Promise.resolve(undefined);
-  return api('/api/displays/viewport', { body: { w, h } }).catch(() => undefined);
+  return api('/api/displays/viewport', { body: { w, h }, quiet: true }).catch(() => undefined);
 }
 
 // ---- permission slips (tickets) ---------------------------------------

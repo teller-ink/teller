@@ -24,7 +24,8 @@ export default defineConfig({
       'examples/**/*.test.mjs',
       // …and the client's PURE helpers, never its wiring (§L): reading
       // "-9" as nine less is arithmetic a person trusts with a number,
-      // and arithmetic is what a test is for.
+      // and the cross-slot stream budget has races no click-through can
+      // reliably reproduce. Arithmetic is what a test is for.
       'client/lib/**/*.test.ts',
     ],
     environment: 'node',
