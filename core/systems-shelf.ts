@@ -59,16 +59,20 @@
 // Brian's own shelf is his own files, so the row is minted enabled by
 // the hand that put the folder there (see the §M note in CORE-NEXT).
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compileFolder, readBuildMeta, stamp, NEUTRAL_IMPORTS } from './compile.ts';
 import {
   compilePackCode,
   copyNewer,
+  packDir,
+  KNOWN_SLOTS,
   systemFrom,
+  unknownSlotWarning,
   withInstalledArt,
   type PackProblem,
+  type PackSweep,
   type SystemExport,
   type ShelfSystem,
 } from './packs-shelf.ts';
@@ -176,6 +180,11 @@ export function sweepSystemsIn(
     const { system, problem } = systemFrom(record, id);
     if (problem) problems.push({ dir, problem });
     if (!system) continue;
+    for (const slot of Object.keys(system.data)) {
+      if (!KNOWN_SLOTS.has(slot)) {
+        problems.push({ dir, problem: unknownSlotWarning('system.json', slot), level: 'warning' });
+      }
+    }
 
     // …and every OTHER `*.json` beside it is a slot named by its file,
     // exactly as a pack folder's are. The file split is a serialization,
@@ -195,6 +204,9 @@ export function sweepSystemsIn(
       } catch (err) {
         problems.push({ dir, problem: `${file} did not parse: ${String((err as Error).message ?? err)}` });
         continue;
+      }
+      if (!KNOWN_SLOTS.has(slot)) {
+        problems.push({ dir, problem: unknownSlotWarning(file, slot), level: 'warning' });
       }
       system.data[slot] = withInstalledArt(held, id);
     }
@@ -278,6 +290,70 @@ let cachedDefaults: ShelfSystemFolder[] | undefined;
 export function defaultSystems(): ShelfSystemFolder[] {
   if (!cachedDefaults) cachedDefaults = sweepSystemsIn(defaultSystemsRoot()).systems;
   return cachedDefaults;
+}
+
+/**
+ * The folder the install's own `defaults/` lives in — what `teller
+ * where` prints, so a guide can name a path that exists after `brew
+ * install` as well as in a checkout.
+ */
+export function installDefaultsDir(): string {
+  return dirname(defaultSystemsRoot());
+}
+
+/**
+ * Every pack that names a system nothing on this host answers to.
+ *
+ * A pack applies to a campaign by its `system` field (`loadCampaign`'s
+ * undeclared default), so `"system": "starter"` where the id is
+ * `sys_starter` installed cleanly and then applied to nothing, ever,
+ * with no word said (the 2026-11-16 stranger audit). This is that word:
+ * which pack, what it named, and the systems that DO exist, so the fix
+ * is one edit away. Known means any of the four places a system id
+ * resolves from — its own folder, a pack-embedded `system.json`, a
+ * `shelf.db` row, or the install — the same law the loader uses.
+ */
+export function packSystemProblems(
+  dataDir: string,
+  packs: PackSweep,
+  systems: SystemSweep,
+  shelf?: Shelf,
+): PackProblem[] {
+  const known = new Map<string, string>();
+  for (const s of [
+    ...systems.systems,
+    ...packs.systems,
+    ...(shelf?.systems() ?? []),
+    ...defaultSystems(),
+  ]) {
+    if (!known.has(s.id)) known.set(s.id, s.name);
+  }
+  const listed = [...known].map(([id, name]) => `${id} (${name})`).join(', ') || 'none';
+  const problems: PackProblem[] = [];
+  for (const pack of packs.packs) {
+    if (!pack.system || known.has(pack.system)) continue;
+    problems.push({
+      dir: packDir(dataDir, pack.id) ?? join(dataDir, 'packs'),
+      problem:
+        `pack.json names the system "${pack.system}", which nothing on this host is — ` +
+        `the pack installs but applies to no campaign. "system" takes a system's id; ` +
+        `the systems here are: ${listed}`,
+    });
+  }
+  return problems;
+}
+
+/**
+ * The shelf's folders, made on first boot so "drop a folder in" works
+ * as written — `cp -R … ~/.teller/systems/mine` failed on a fresh host
+ * because nothing had ever made `systems/`. Empty folders, and only
+ * folders: nothing is seeded into them (§M-6 — teller writes no content
+ * into anyone's data dir). Existing ones are left exactly as they are.
+ */
+export const SHELF_FOLDERS = ['systems', 'packs', 'plugins', 'panels', 'books'] as const;
+
+export function makeShelfFolders(dataDir: string): void {
+  for (const name of SHELF_FOLDERS) mkdirSync(join(dataDir, name), { recursive: true });
 }
 
 /**

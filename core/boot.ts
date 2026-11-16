@@ -29,7 +29,7 @@ import { layerBy, mergeBy, refine } from './merge.ts';
 import { byPanelOrder, includeProblems, type PanelDef } from './panels.ts';
 import { defaultPanels, sweepPanels } from './panels-shelf.ts';
 import { sweepPacks, type PackProblem } from './packs-shelf.ts';
-import { defaultSystems, sweepSystems, type SystemExport } from './systems-shelf.ts';
+import { defaultSystems, packSystemProblems, sweepSystems, type SystemExport } from './systems-shelf.ts';
 import { toTemplate, type Template, type TemplateOf } from './stamp.ts';
 import type { Campaign, Shelf } from './store.ts';
 
@@ -604,7 +604,15 @@ export function loadCampaign(shelf: Shelf, campaign: Campaign, dataDir?: string)
     packs,
     defaultPanels(),
     swept?.problems ?? [],
-    [...(sweptSystems?.problems ?? []), ...(sweptPacks?.problems ?? [])],
+    [
+      ...(sweptSystems?.problems ?? []),
+      ...(sweptPacks?.problems ?? []),
+      // A pack naming a system nobody here has loads and applies to
+      // nothing — said here, where every other shelf problem is said.
+      ...(dataDir && sweptPacks && sweptSystems
+        ? packSystemProblems(dataDir, sweptPacks, sweptSystems, shelf)
+        : []),
+    ],
     swept?.panels ?? [],
     disabled,
   );

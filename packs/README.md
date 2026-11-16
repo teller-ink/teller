@@ -6,17 +6,20 @@ excerpts for your own table, or homebrew.
 
 **A pack is an archive — and a folder.** Drop a `.pack` into
 `~/.teller/packs/` and the host sweeps it in; drop an unzipped
-*directory* there and it installs identically. The sweep runs on boot
-and on demand (`POST /api/shelf/sweep`, from the console's shelf), and
-it is VERSION-GATED — bump `version` in `pack.json` or the edit won't
-reinstall. There is deliberately no upload door: a pack arrives on the
-filesystem, the way a book does.
+*directory* there and it installs identically. (`packs/` is made the
+first time a host boots on a data folder; `teller where` prints which
+folder that is.) The sweep runs on boot and on demand — the console's
+Shelf tab has a **sweep the folders** button, which is `POST
+/api/shelf/sweep`. A FOLDER is read fresh on every sweep, so an edit is
+live the moment you sweep; only an ARCHIVE is version-gated (see
+`version` below). There is deliberately no upload door: a pack arrives
+on the filesystem, the way a book does.
 
 The two forms are the same format for different jobs:
 
 - **A folder is what you author in.** Open `bestiary.json`, fix the foe,
-  bump `version` in `pack.json`, sweep — live. No zipping, no copying,
-  no upload.
+  sweep — live. No zipping, no copying, no upload, and no version bump
+  (bump it when you hand the pack on — see `version`).
 - **An archive is what you hand someone.** `GET /api/packs/:id/export`
   builds one on demand, art included. (There is no `.system` export to
   match it — doors 2 and 3 hold that until the kind declaration is
@@ -62,7 +65,11 @@ embedded `system.json` > a `shelf.db` row.**
 
 Only `pack.json` is required. Everything else is optional and a pack
 declares itself by what it contains — a bestiary-only pack and a whole
-core book are the same format.
+core book are the same format. Every other `*.json` is a SLOT named by
+its file; a slot nothing in teller reads still loads (a plugin may want
+it), and the sweep says so as a warning. The slots teller does read are
+listed in the starter system's README (`defaults/systems/starter/` —
+`teller where` prints where `defaults/` is on your machine).
 
 A pack needs **no PDF at all** to be useful — most Wardens own paper.
 A book, when you have one, attaches by hash and adds the page and the
@@ -72,9 +79,11 @@ art. Enrichment, never a prerequisite.
 (rewritten 2026-08-14), and the two halves are worth stating separately
 because they used to be one blurry sentence:
 
-- **The repo carries nobody's book — absolute.** `*.json` here is
-  gitignored on purpose. Keep authoring copies in this folder locally;
-  the host's own shelf is `~/.teller/packs/`; git never sees either.
+- **The repo carries nobody's book — absolute.** Everything under
+  `packs/` in the repo except this README is gitignored on purpose (the
+  rule is `packs/*`, so a pack folder can't walk in any more than a
+  `.json` can). The host's own shelf is `~/.teller/packs/`; git never
+  sees it.
 - **A pack carries whatever its author has the right to put in it.**
   Rules, prose, descriptions, stat blocks — the lot. A pack built from
   a book you own is personal use, exactly like the notebook it replaces.
@@ -95,7 +104,7 @@ anyone, and it's the same deal books have always had.
 ```json
 {
   "id": "pak_4f1c9a2b7e03",
-  "system": "wiw",
+  "system": "sys_4b9e2c71d0aa",
   "name": "My Guidebook Pack",
   "version": 1,
   "rights": { "status": "personal", "holder": "Example Games Ltd" },
@@ -108,7 +117,7 @@ anyone, and it's the same deal books have always had.
 ```json
 [
   {
-    "title": "Statuses",
+    "name": "Statuses",
     "entries": [
       {
         "name": "Example Status",
@@ -186,7 +195,8 @@ keyed by the `sys_` id instead of a `pak_` one.
 **The edit recipe**, which is the point of all of this:
 
 1. edit `~/.teller/packs/<name>/<file>.json`
-2. `POST /api/shelf/sweep`
+2. press **sweep the folders** in the console's Shelf tab (or `POST
+   /api/shelf/sweep`)
 3. it's live
 
 A file that doesn't parse is reported in the sweep's answer and costs
@@ -312,15 +322,22 @@ Every value above is invented. A pack's contents are somebody's rules
 text, and this file is public — so the example teaches the shape and
 nothing else (rule 4).
 
-- `system` matches a template's system id (`wiw`, `dnd5e`, …).
+- `system` is the `id` of a system on the shelf — the `sys_…` string in
+  its `system.json`, never its folder name or its display name. For the
+  starter teller ships it is `sys_starter`. A pack naming a system the
+  host doesn't have still installs but applies to no campaign, and the
+  sweep says so — on the host's terminal at boot and in the console's
+  Shelf tab — listing the systems that do exist.
 - `meta` is an optional short qualifier rendered next to the name
   (associated Skill, Grit cost, tier…).
 
 ### `id` — the pack's permanent name
 
 `pak_` + 12 random hex, **assigned once and never changed**. Leave it out
-and the host mints one on first sweep and writes it back into your file;
-after that it's yours forever.
+of a pack FOLDER and the first sweep mints one and writes it into that
+folder's `pack.json` (the sweep's report says so); after that it's yours
+forever. A zipped `.pack` with no id is refused instead, with a
+sentence: there is nowhere in an archive to write one that survives.
 
 Deliberately *not* a content hash, unlike a book's id. A book never
 changes, so hashing its bytes is a perfect name for it. A pack gets
@@ -331,12 +348,14 @@ renaming a pack is just a rename, and two people's homebrew "Bestiary"
 don't collide.
 
 `version` is yours to bump. It's what makes a campaign's `requires` list
-a real statement, and it's how a file decides whether it supersedes what
-the host already has: a file only overwrites a stored pack when its
-version is strictly **greater**. Equal versions leave the stored one
-alone, because it may have been edited on the host and that edit is a
-person's decision (rule 1) — which is why an unbumped edit doesn't
-reinstall, and why bumping is the whole ritual.
+a real statement, and it's how an ARCHIVE decides whether it supersedes
+the folder already on the host: a `.pack` dropped into `packs/` unpacks
+over an existing folder of the same name only when its version is
+strictly **greater**. Equal or lower leaves the folder alone, because it
+may have been edited on the host and that edit is a person's decision
+(rule 1) — so bump it before you hand a pack to someone who already has
+an older one. Editing your own folder needs no bump: the folder is read
+fresh on every sweep.
 
 ### Which packs a campaign uses
 

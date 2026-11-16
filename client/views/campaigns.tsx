@@ -200,10 +200,17 @@ function Row({
 function StartOne({ onStarted }: { onStarted: () => void }) {
   const shelf = useLive(() => api<ShelfOut>('/api/shelf'), [], { on: ['books'] });
   const [name, setName] = useState('');
-  const [system, setSystem] = useState('');
+  // `undefined` is "nobody has touched the dropdown yet", which reads as
+  // the first system the shelf lists (the shelf's own order: rows, then
+  // folders, then what teller ships). A campaign with no system has no
+  // roster and no runner, and a first-run DM who leaves the default alone
+  // should land on a table they can play — "no system" stays possible,
+  // but it is something you pick, never something you fall into.
+  const [picked, setSystem] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const systems = shelf.data?.systems ?? [];
+  const system = picked ?? systems[0]?.id ?? '';
 
   const start = () => {
     if (!name.trim()) return;
@@ -251,6 +258,12 @@ function StartOne({ onStarted }: { onStarted: () => void }) {
         </button>
       </div>
       {err && <p className="text-sm text-red-500">{err}</p>}
+      {shelf.data && !system && (
+        <p className="text-[11px] text-amber-500">
+          with no system there is no roster, no turn order and no encounters — only the
+          screens and the shelf. pick one here, or later from the shelf tab.
+        </p>
+      )}
       <p className="text-[11px] text-stone-600">
         the file is named after the title. everything here stays editable — a system
         picked now is a starting point, not a commitment.

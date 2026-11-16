@@ -5,8 +5,10 @@
 // What goes in is the new world and nothing else: `bin/`, the server and
 // the core it calls (TypeScript, unbundled — Node strips the types as it
 // loads, so there is no build step at the far end), `defaults/` for the
-// panels teller ships, the built client in `server/dist`, and a
-// package.json that exists so `teller version` has something to read.
+// panels and starter system teller ships, `examples/` for the plugins a
+// person may copy onto their shelf, the built client in `server/dist`,
+// and a package.json that exists so `teller version` has something to
+// read.
 //
 // **node_modules is no longer empty, and that's the honest part.** The
 // old host imported nothing but node builtins, so the formula could
@@ -35,12 +37,18 @@ const run = promisify(execFile);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 // `server` carries its own `dist` (the built client) and `public` (the
-// vanilla fallback) along with it.
-const INCLUDE = ['bin', 'core', 'server', 'defaults'];
+// vanilla fallback) along with it. `examples` rides too: the plugin
+// guide tells a person to copy one onto their shelf, and a guide that
+// points at files the install doesn't have can't be followed by anyone
+// who installed (the 2026-11-16 stranger audit). It is source to copy,
+// never loaded from where it lies — teller ships no plugins, ever.
+const INCLUDE = ['bin', 'core', 'server', 'defaults', 'examples'];
 
 // Tests are source, not product. Nothing in the installed copy runs them
-// and vitest isn't there to try.
-const skipTests = (src) => !src.endsWith('.test.ts');
+// and vitest isn't there to try. Compile output (`.build/`) regenerates
+// on the far end, against its own mtimes.
+const skipTests = (src) =>
+  !/\.test\.(ts|mjs)$/.test(src) && !src.split(/[\\/]/).includes('.build');
 
 // The two packages the server actually reaches for. Everything else in
 // `dependencies` is the client's, and the client arrives built.

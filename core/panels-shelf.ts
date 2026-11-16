@@ -88,8 +88,72 @@ import { newId } from './id.ts';
 import { toPanel, type PanelDef } from './panels.ts';
 import type { Shelf } from './store.ts';
 
-/** A folder that didn't parse, or a source that didn't compile — reported, never a crash. */
-export type PanelProblem = { dir: string; problem: string };
+/**
+ * A folder that didn't parse, or a source that didn't compile — reported,
+ * never a crash. A `warning` loaded anyway (`PackProblem`'s levels).
+ */
+export type PanelProblem = { dir: string; problem: string; level?: 'warning' | 'note' };
+
+/**
+ * The block names the client can draw (`registerBlock` in
+ * `client/panels/blocks.tsx` and `client/tools/runner.tsx`) and the tool
+ * names a `tool` block may summon (`registerTool` in `client/tools/`).
+ * Mirrored here because the sweep runs on the host, which never imports
+ * the client; `panels-shelf.test.ts` reads the client's own source and
+ * fails the day the two lists disagree.
+ */
+export const KNOWN_BLOCKS: ReadonlySet<string> = new Set([
+  'aside', 'brand', 'carried', 'children', 'columns', 'floor', 'header', 'ladders', 'list',
+  'notes', 'panel', 'rest', 'spend-door', 'statuses', 'tool', 'turn',
+]);
+export const KNOWN_TOOLS: ReadonlySet<string> = new Set([
+  'bestiary', 'boards', 'books', 'encounters', 'handouts', 'log', 'plugins', 'roster', 'rules',
+  'runner', 'screens', 'shelf',
+]);
+
+/**
+ * Every block (and every `tool`) a panel names that this build can't
+ * draw — as sentences, for the sweep to print as WARNINGS. The panel
+ * still loads (rule 1): the client draws a refusal in that spot, and the
+ * point of saying it here is that an author finds out at the sweep
+ * instead of by squinting at a refusal on glass. A panel's OWN code
+ * blocks (`blocks/<name>.tsx` beside its `panel.json`) are its to name.
+ */
+export function unknownBlocks(panel: PanelDef, dir?: string): string[] {
+  const said: string[] = [];
+  const seen = new Set<string>();
+  const own = (name: string) =>
+    dir !== undefined &&
+    (existsSync(join(dir, 'blocks', `${name}.tsx`)) || existsSync(join(dir, 'blocks', `${name}.ts`)));
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const v of value) walk(v);
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    const block = value as Record<string, unknown>;
+    if (typeof block.block === 'string') {
+      const name = block.block;
+      if (!KNOWN_BLOCKS.has(name) && !own(name) && !seen.has(`b:${name}`)) {
+        seen.add(`b:${name}`);
+        said.push(`panel '${panel.name}' names a block "${name}" this build doesn't draw — it shows as a refusal`);
+      }
+      const tool = block.tool;
+      if (name === 'tool' && typeof tool === 'string' && !KNOWN_TOOLS.has(tool) && !seen.has(`t:${tool}`)) {
+        seen.add(`t:${tool}`);
+        said.push(`panel '${panel.name}' summons a tool "${tool}" this build doesn't have — it shows as a refusal`);
+      }
+    }
+    // Nested arrangements: `columns` holds arrays of blocks, and any
+    // other key may hold more — walk them all rather than learn each.
+    for (const [key, held] of Object.entries(block)) {
+      if (key !== 'block' && typeof held === 'object') walk(held);
+    }
+  };
+  walk(panel.mounted);
+  walk(panel.held);
+  return said;
+}
 
 // The rung-4 public API (§E UN-DEFERRED): a custom block or a takeover
 // imports the bare specifiers in `PANEL_IMPORTS` and nothing else
@@ -370,6 +434,9 @@ export function sweepPanelsIn(
     if (!panel) {
       problems.push({ dir, problem: 'panel.json is not a panel (needs a name)' });
       continue;
+    }
+    for (const problem of unknownBlocks(panel, dir)) {
+      problems.push({ dir, problem, level: 'warning' });
     }
     const { code, problems: compileProblems } = compilePanelCode(dir, panel.id);
     for (const problem of compileProblems) problems.push({ dir, problem });

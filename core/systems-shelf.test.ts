@@ -3,10 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadCampaign } from './boot.ts';
+import { sweepPacks } from './packs-shelf.ts';
 import {
   defaultSystems,
   defaultSystemsRoot,
+  packSystemProblems,
   sweepSystems,
+  sweepSystemsIn,
   systemDir,
   systemPanelDir,
 } from './systems-shelf.ts';
@@ -508,5 +511,78 @@ describe('the install floor — a virgin host still has a system to offer', () =
     );
     expect((loaded.declarations('kinds') as { name: string }[]).length).toBe(0);
     campaign.close();
+  });
+});
+
+// The stranger audit's F6: a pack whose `system` is spelled the way a
+// person would guess (`starter`, not `sys_starter`) installed and then
+// applied to nothing, in silence. Now the load report says so, naming
+// the systems that DO exist.
+describe('a pack naming a system nobody has', () => {
+  function writePack(name: string, manifest: Record<string, unknown>): string {
+    const packDir = join(dir, 'packs', name);
+    mkdirSync(packDir, { recursive: true });
+    writeFileSync(join(packDir, 'pack.json'), JSON.stringify(manifest));
+    writeFileSync(join(packDir, 'bestiary.json'), JSON.stringify([{ id: 'foe_a', name: 'A' }]));
+    return packDir;
+  }
+
+  it('is a problem in words, naming the systems that exist', () => {
+    const packDir = writePack('critters', {
+      id: 'pak_critters01',
+      system: 'starter',
+      name: 'Critters',
+      version: 1,
+    });
+    const campaign = createCampaign(dir, 'table', 'The Table');
+    campaign.save(
+      { ...campaign.root(), refs: { system: { id: 'sys_starter', name: 'Starter' } } },
+      'test',
+    );
+    const loaded = loadCampaign(shelf, campaign, dir);
+    const said = loaded.packProblems.filter((p) => p.dir === packDir);
+    expect(said).toHaveLength(1);
+    expect(said[0].level).toBeUndefined();
+    expect(said[0].problem).toMatch(/names the system "starter"/);
+    expect(said[0].problem).toMatch(/applies to no campaign/);
+    expect(said[0].problem).toContain('sys_starter (Starter)');
+    campaign.close();
+  });
+
+  it('says nothing when the system resolves — shipped, shelf folder or pack-embedded', () => {
+    writePack('fine', { id: 'pak_fine01', system: 'sys_starter', name: 'Fine', version: 1 });
+    writeSystem('mine', { 'system.json': { id: 'sys_mine', name: 'Mine' } });
+    writePack('mine-too', { id: 'pak_mine01', system: 'sys_mine', name: 'Mine Too', version: 1 });
+    const swept = { packs: sweepPacks(dir, shelf), systems: sweepSystems(dir, shelf) };
+    expect(packSystemProblems(dir, swept.packs, swept.systems, shelf)).toEqual([]);
+  });
+});
+
+describe('a system slot nothing reads is a warning, never a refusal', () => {
+  it('system.json keys and sibling files alike', () => {
+    const sysDir = writeSystem('odd', {
+      'system.json': { id: 'sys_odd', name: 'Odd', sheets: [{ name: 'Health' }], dice: {} },
+      'nonsense_slot.json': { a: 1 },
+      'trades.json': [],
+    });
+    const { systems, problems } = sweepSystems(dir);
+    expect(systems[0].data.sheets).toEqual([{ name: 'Health' }]);
+    expect(systems[0].data.nonsense_slot).toEqual({ a: 1 });
+    expect(problems).toEqual([
+      {
+        dir: sysDir,
+        problem: expect.stringMatching(/^system\.json: teller reads no slot called "sheets"/),
+        level: 'warning',
+      },
+      {
+        dir: sysDir,
+        problem: expect.stringMatching(/^nonsense_slot\.json: teller reads no slot called "nonsense_slot"/),
+        level: 'warning',
+      },
+    ]);
+  });
+
+  it('the starter teller ships draws no warnings of its own', () => {
+    expect(sweepSystemsIn(defaultSystemsRoot()).problems).toEqual([]);
   });
 });

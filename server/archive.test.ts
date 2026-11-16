@@ -88,7 +88,7 @@ beforeEach(async () => {
     id: 'pan_house00000001',
     name: 'house-log',
     label: 'House Log',
-    mounted: [{ block: 'log' }],
+    mounted: [{ block: 'tool', tool: 'log' }],
   });
   write(join(dir, 'panels', 'house-log', 'style.css'), '.log { color: red }\n');
 

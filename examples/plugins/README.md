@@ -4,11 +4,25 @@ teller ships with **zero** plugins, on purpose — none required, none
 given by default. These folders are examples you install yourself:
 
 ```
-cp -r examples/plugins/assistant ~/.teller-next/plugins/assistant
-node server/index.ts --data ~/.teller-next --plugins            # see it discovered
-node server/index.ts --data ~/.teller-next --enable <plg_id>    # trust it — a human act
-node server/index.ts --data ~/.teller-next --configure <plg_id> --config '{"key":"…"}'
+mkdir -p ~/.teller/plugins
+cp -R "$(teller where --defaults)/../examples/plugins/assistant" ~/.teller/plugins/
+teller plugins                                   # see it discovered, and what it needs
+teller plugins --enable plg_7ec543dd0e9a         # trust it — a human act
+teller plugins --configure plg_7ec543dd0e9a --config '{"key":"…"}'
 ```
+
+These folders ship with teller (`examples/` sits beside the
+`defaults/` folder that `teller where` prints), so the commands work the
+same after `brew install` as in a checkout — from a checkout, run
+`./bin/teller` wherever it says `teller`. `~/.teller` is the default
+data folder; if you host with `--data <path>` (or `teller host <path>`),
+put the plugin in `<path>/plugins/` and pass the same `--data <path>` to
+`teller plugins`.
+
+**Enabling from the command line takes effect when the host next
+starts** — a running host loaded its plugins at boot, so stop it
+(ctrl-c) and `teller host` again. The console's **Plugins** tab is the
+other door to the same switch, and it takes effect at once.
 
 The assistant can also ride a Claude subscription instead of a metered
 key: `--config '{"use":"cli","model":"sonnet"}'` shells out to a

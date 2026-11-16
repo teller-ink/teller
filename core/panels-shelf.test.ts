@@ -2,6 +2,7 @@ import {
   cpSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   statSync,
   rmSync,
@@ -11,6 +12,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openShelf, type Shelf } from './store.ts';
 import { writeArchive } from './archive.ts';
@@ -18,9 +20,12 @@ import {
   defaultPanelDir,
   defaultPanels,
   defaultsRoot,
+  KNOWN_BLOCKS,
+  KNOWN_TOOLS,
   panelArchive,
   panelDir,
   sweepPanels,
+  unknownBlocks,
 } from './panels-shelf.ts';
 
 let dir: string;
@@ -424,5 +429,65 @@ describe('panels on the shelf as ARCHIVES', () => {
     } finally {
       rmSync(other, { recursive: true, force: true });
     }
+  });
+});
+
+// The stranger audit's F10: a panel naming a block (or a tool) that no
+// build draws loaded in silence, and the author found out by squinting
+// at a refusal on glass. Now the sweep says it, as a warning — the panel
+// still loads, because a refusal in one spot is still a panel (rule 1).
+describe('a block nobody draws is a warning in words', () => {
+  function writePanelJson(name: string, body: Record<string, unknown>): string {
+    const at = join(dir, 'panels', name);
+    mkdirSync(at, { recursive: true });
+    writeFileSync(join(at, 'panel.json'), JSON.stringify(body));
+    return at;
+  }
+
+  it('names the block and the tool, nested ones too, and loads the panel anyway', () => {
+    const at = writePanelJson('odd', {
+      name: 'odd',
+      held: [
+        { block: 'no-such-block' },
+        { block: 'tool', tool: 'no-such-tool' },
+        { block: 'columns', columns: [[{ block: 'also-not' }, { block: 'rest' }]] },
+      ],
+      mounted: [{ block: 'no-such-block' }],
+    });
+    const { panels, problems } = sweepPanels(dir);
+    expect(panels.map((p) => p.name)).toEqual(['odd']);
+    expect(problems.every((p) => p.dir === at && p.level === 'warning')).toBe(true);
+    const said = problems.map((p) => p.problem).join('\n');
+    expect(problems).toHaveLength(3);
+    expect(said).toMatch(/block "no-such-block"/);
+    expect(said).toMatch(/tool "no-such-tool"/);
+    expect(said).toMatch(/block "also-not"/);
+  });
+
+  it("a panel's own code block is its to name", () => {
+    const at = writePanelJson('mine', { name: 'mine', held: [{ block: 'Gauge' }] });
+    mkdirSync(join(at, 'blocks'));
+    writeFileSync(join(at, 'blocks', 'Gauge.tsx'), 'export default function Gauge() { return null; }\n');
+    expect(unknownBlocks({ name: 'mine', held: [{ block: 'Gauge' }] }, at)).toEqual([]);
+  });
+
+  it('the lists match what the client actually registers', () => {
+    const root = fileURLToPath(new URL('../client', import.meta.url));
+    const blocks = new Set<string>();
+    const tools = new Set<string>();
+    const walk = (at: string) => {
+      for (const name of readdirSync(at)) {
+        const path = join(at, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (/\.tsx?$/.test(name)) {
+          const src = readFileSync(path, 'utf8');
+          for (const m of src.matchAll(/registerBlock\(\s*'([^']+)'/g)) blocks.add(m[1]);
+          for (const m of src.matchAll(/registerTool\(\s*'([^']+)'/g)) tools.add(m[1]);
+        }
+      }
+    };
+    walk(root);
+    expect([...KNOWN_BLOCKS].sort()).toEqual([...blocks].sort());
+    expect([...KNOWN_TOOLS].sort()).toEqual([...tools].sort());
   });
 });

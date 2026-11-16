@@ -11,10 +11,12 @@
 // server/index.ts` runs — a CLI that reimplements the boot is a CLI
 // that drifts from it.
 
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';
 import { join, resolve } from 'node:path';
 import process from 'node:process';
+import { HOST_LOCK } from '../core/store.ts';
+import { installDefaultsDir } from '../core/systems-shelf.ts';
 import { loadDmKey } from './auth.ts';
 import { boot, tellerVersion } from './index.ts';
 
@@ -37,20 +39,26 @@ const HELP = `
 
   usage
     teller host [path]        serve this table; everything runs here
-    teller key                show the warden key
-    teller where              print where campaigns are kept
-    teller plugins            list what's on the shelf (§15)
+    teller key                print the DM key — the one the console asks for
+    teller where              print the data folder, and where this install's
+                              own defaults live (copy a starter system from there)
+    teller plugins            list the plugins in the data folder's plugins/,
+                              each with what it needs and whether it's on
     teller version
 
   options
     --port <n>                default ${DEFAULT_PORT}
-    --data <path>             where campaigns live (default ${DEFAULT_DATA})
+    --data <path>             the data folder (default ${DEFAULT_DATA})
     --campaign <slug>         open this one instead of the remembered one
     --reset                   with 'key': mint a new one
-    --enable/--disable <id>   with 'plugins': a human turns one on
+    --defaults                with 'where': print only the defaults folder
+    --enable/--disable <id>   with 'plugins': a human turns one on or off;
+                              a running host picks it up when it restarts
+    --configure <id> --config <json>
+                              with 'plugins': store that plugin's settings
 
-  a path given to 'host' is the same as --data, so a campaign can live
-  on a stick you carry:
+  a path given to any command is the same as --data, so a campaign can
+  live on a stick you carry:
 
     teller host /Volumes/CARD
 
@@ -67,6 +75,7 @@ function parse(argv: string[]) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--reset') opts.reset = true;
+    else if (arg === '--defaults') opts.defaults = true;
     else if (arg === '--help' || arg === '-h') opts.help = true;
     else if (arg === '--version' || arg === '-v') opts.version = true;
     else if (arg.startsWith('--')) {
@@ -86,6 +95,50 @@ function flag(opts: Record<string, string | true>, name: string): string | undef
 // read it in the same place (`tellerVersion`, server/index.ts) — two
 // readings of one package.json is two readings that can disagree.
 const version = tellerVersion;
+
+/**
+ * The pre-fold guard, one check for every command that touches the data
+ * folder. A `teller.db` with no `shelf.db` beside it is the OLD app's
+ * data dir — a different database shape. Opening it reads as an empty
+ * shelf over a folder full of somebody's campaigns, and worse, opening
+ * it WRITES a `shelf.db` — after which the guard can no longer tell, and
+ * `teller host` boots empty over the old data instead of refusing. So
+ * `plugins` and `key` (which create shelf state) and `where` (which is
+ * where a confused person looks next) all refuse exactly as `host` does,
+ * before anything is written.
+ */
+function refuseOldShape(data: string): void {
+  if (existsSync(join(data, 'teller.db')) && !existsSync(join(data, 'shelf.db'))) {
+    throw new Error(
+      `${data} holds a pre-fold teller database (teller.db). ` +
+        `This version keeps a different shape (shelf.db + campaigns/). ` +
+        `Move the old folder aside (e.g. ${data}-legacy), or point --data somewhere else.`,
+    );
+  }
+}
+
+/**
+ * A host serving this folder right now, if there is one — read off the
+ * claim `teller host` keeps in it (`claimDataDir`, core/store.ts). A
+ * claim whose process has gone is no host at all.
+ */
+function runningHost(data: string): { pid: number; port: number } | undefined {
+  try {
+    const held = JSON.parse(readFileSync(join(data, HOST_LOCK), 'utf8')) as {
+      pid?: unknown;
+      port?: unknown;
+    };
+    if (!Number.isInteger(held.pid)) return undefined;
+    try {
+      process.kill(held.pid as number, 0);
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'EPERM') return undefined;
+    }
+    return { pid: held.pid as number, port: Number(held.port) };
+  } catch {
+    return undefined;
+  }
+}
 
 /** Every address a screen in this room could reach us on. */
 function addresses() {
@@ -118,18 +171,8 @@ export async function main(argv: string[]) {
       if (!Number.isInteger(port) || port < 1 || port > 65535) {
         throw new Error(`${flag(opts, 'port')} is not a port`);
       }
-      // The pre-fold guard the comment on DEFAULT_DATA promises: a
-      // `teller.db` with no `shelf.db` beside it is the OLD app's data
-      // dir — a different database shape. Opening it would read as an
-      // empty shelf over a folder full of somebody's campaigns, so
-      // refuse out loud with the way through instead of guessing.
-      if (existsSync(join(data, 'teller.db')) && !existsSync(join(data, 'shelf.db'))) {
-        throw new Error(
-          `${data} holds a pre-fold teller database (teller.db). ` +
-            `This version keeps a different shape (shelf.db + campaigns/). ` +
-            `Move the old folder aside (e.g. ${data}-legacy), or point --data somewhere else.`,
-        );
-      }
+      // The pre-fold guard the comment on DEFAULT_DATA promises.
+      refuseOldShape(data);
       mkdirSync(data, { recursive: true });
       const campaign = flag(opts, 'campaign');
       // The heading waits until the port is really ours: a host that
@@ -164,9 +207,24 @@ export async function main(argv: string[]) {
     case 'key': {
       // Reset is destructive in a quiet way: every screen already paired
       // stays paired, but the DM's own device has to be told the new key.
-      mkdirSync(data, { recursive: true });
+      refuseOldShape(data);
       const file = join(data, 'dm.key');
-      if (opts.reset && existsSync(file)) rmSync(file);
+      if (opts.reset && existsSync(file)) {
+        // A running host read its key once, at boot, and keeps it: the
+        // new one is refused there until a restart, and the GM is locked
+        // out with nothing on screen saying why. Said first, to stderr,
+        // so stdout stays the key and nothing else. Then done anyway —
+        // it's what was asked.
+        const live = runningHost(data);
+        if (live) {
+          console.error(
+            `a host is serving this folder right now (pid ${live.pid}, port ${live.port}) — ` +
+              `it keeps the old key until it is restarted, so restart it to use this one.`,
+          );
+        }
+        rmSync(file);
+      }
+      mkdirSync(data, { recursive: true });
       console.log(loadDmKey(data));
       return;
     }
@@ -174,10 +232,21 @@ export async function main(argv: string[]) {
     case 'plugins': {
       // §15: the CLI is where a HUMAN enables. `boot` already knows how
       // — these are commands that act on the shelf and exit.
+      refuseOldShape(data);
       mkdirSync(data, { recursive: true });
       const enable = flag(opts, 'enable');
       const disable = flag(opts, 'disable');
       const configure = flag(opts, 'configure');
+      // A host already running loaded its plugins at boot; the grant
+      // recorded here reaches it on restart. Said BEFORE the boot call,
+      // because managing exits from inside it.
+      const live = enable || disable || configure ? runningHost(data) : undefined;
+      if (live) {
+        console.log(
+          `the host serving this folder (pid ${live.pid}, port ${live.port}) picks this up when it restarts — ` +
+            `or use the console's Plugins tab, which takes effect at once.`,
+        );
+      }
       await boot({
         data,
         ...(enable ? { enable } : {}),
@@ -189,7 +258,18 @@ export async function main(argv: string[]) {
     }
 
     case 'where':
-      console.log(data);
+      // Two answers, labelled: where YOUR things live, and where teller's
+      // own shipped defaults live — the second exists after `brew
+      // install` as well as in a checkout, which is what lets a guide
+      // say `cp -R "$(teller where --defaults)/systems/starter" …` and
+      // mean it everywhere.
+      refuseOldShape(data);
+      if (opts.defaults) {
+        console.log(installDefaultsDir());
+        return;
+      }
+      console.log(`data      ${data}`);
+      console.log(`defaults  ${installDefaultsDir()}`);
       return;
 
     case 'version':

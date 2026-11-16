@@ -197,14 +197,18 @@ function move(order: TurnEntry[], from: number, to: number): TurnEntry[] {
  * `resources` first because that's where the system files them; any
  * other list is the floor under a sheet that doesn't (rule 2 — teller
  * never learns a counter's name).
+ *
+ * It answers WHICH LIST too, because the stepper writes back to it: a
+ * foe authored with its Health in `counters` used to grow a phantom
+ * `resources` entry on every press while its real number never moved.
  */
 function vitalOf(entity: Entity | undefined) {
   if (!entity) return undefined;
   const ordered = [
-    ...(entity.lists.resources ?? []),
+    ...(entity.lists.resources ?? []).map((e) => ({ ...e, list: 'resources' })),
     ...Object.entries(entity.lists)
       .filter(([key]) => key !== 'resources')
-      .flatMap(([, entries]) => entries),
+      .flatMap(([list, entries]) => entries.map((e) => ({ ...e, list }))),
   ];
   return ordered.find((e) => typeof e.max === 'number' && e.max > 0);
 }
@@ -763,7 +767,7 @@ function RunnerTool() {
                 title={`${vital.name} down`}
                 onClick={() =>
                   writeEntry(entry.entityId!, {
-                    list: 'resources',
+                    list: vital.list,
                     name: vital.name,
                     value: Math.max(0, (typeof vital.value === 'number' ? vital.value : 0) - 1),
                   })
@@ -779,7 +783,7 @@ function RunnerTool() {
                   value={typeof vital.value === 'number' ? vital.value : 0}
                   label={`${label} — ${vital.name}`}
                   onSet={(next) =>
-                    writeEntry(entry.entityId!, { list: 'resources', name: vital.name, value: next })
+                    writeEntry(entry.entityId!, { list: vital.list, name: vital.name, value: next })
                   }
                 />
                 {typeof vital.max === 'number' && (
@@ -792,7 +796,7 @@ function RunnerTool() {
                 title={`${vital.name} up`}
                 onClick={() =>
                   writeEntry(entry.entityId!, {
-                    list: 'resources',
+                    list: vital.list,
                     name: vital.name,
                     value: Math.min(
                       typeof vital.max === 'number' ? vital.max : Number.MAX_SAFE_INTEGER,

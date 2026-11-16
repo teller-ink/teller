@@ -243,6 +243,12 @@ function RosterTool() {
             add
           </button>
         </div>
+        {/* A name is all this makes. Where the numbers go is the sheet,
+            and a first-time GM can't be expected to guess that a tile
+            opens — the audit's stranger never did. */}
+        <p className="text-[11px] text-stone-600">
+          open anyone’s tile for their sheet — that’s where their numbers live.
+        </p>
       </div>
 
       {Builder && building && (

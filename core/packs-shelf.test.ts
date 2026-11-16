@@ -136,11 +136,56 @@ describe('sweepPacks — degradation is out loud (the panels posture)', () => {
     expect(problems[0].problem).toMatch(/pack\.json is not a pack/);
   });
 
-  it('a pack.json with no id is reported — identity is the id, never the name', () => {
-    writePack('nameless', { 'pack.json': { name: 'No Id', version: 1 } });
+  it('a pack FOLDER with no id gets one minted, written into its own pack.json — once', () => {
+    const packDir = writePack('nameless', { 'pack.json': { name: 'No Id', version: 1 } });
+    const first = sweepPacks(dir);
+    expect(first.packs).toHaveLength(1);
+    const minted = first.packs[0].id;
+    expect(minted).toMatch(/^pak_[0-9a-f]{12}$/);
+    // Written down, so the identity survives this process.
+    const onDisk = JSON.parse(readFileSync(join(packDir, 'pack.json'), 'utf8'));
+    expect(onDisk).toEqual({ id: minted, name: 'No Id', version: 1 });
+    // …and the report SAYS it did so, as a note rather than a failure.
+    expect(first.problems).toEqual([
+      { dir: packDir, problem: expect.stringContaining(minted), level: 'note' },
+    ]);
+
+    // A second sweep reads the id back and mints nothing.
+    const second = sweepPacks(dir);
+    expect(second.packs.map((p) => p.id)).toEqual([minted]);
+    expect(second.problems).toEqual([]);
+    expect(JSON.parse(readFileSync(join(packDir, 'pack.json'), 'utf8')).id).toBe(minted);
+  });
+
+  it('a zipped .pack with no id is still refused, in a sentence — nowhere to write one', () => {
+    mkdirSync(join(dir, 'packs'), { recursive: true });
+    writeFileSync(
+      join(dir, 'packs', 'loose.pack'),
+      writeArchive([{ name: 'pack.json', data: Buffer.from(JSON.stringify({ name: 'Loose' })) }]),
+    );
     const { packs, problems } = sweepPacks(dir);
     expect(packs).toEqual([]);
-    expect(problems[0].problem).toMatch(/no id/);
+    expect(existsSync(join(dir, 'packs', 'loose'))).toBe(false);
+    expect(problems).toHaveLength(1);
+    expect(problems[0].problem).toMatch(/no id.*unzip it into packs\//);
+  });
+
+  it('a slot nothing in teller reads is a WARNING in words, and still loads', () => {
+    const packDir = writePack('odd', {
+      'pack.json': { id: 'pak_odd', system: 'sys_test', name: 'Odd', version: 1, flavour: 'x' },
+      'sheets.json': [{ name: 'Health' }],
+      'bestiary.json': [],
+      'system.json': { id: 'sys_odd', name: 'Odd System', nonsense_slot: 1, dials: {} },
+    });
+    const { packs, systems, problems } = sweepPacks(dir);
+    expect(packs[0].data.sheets).toEqual([{ name: 'Health' }]);
+    expect(systems[0].data.nonsense_slot).toBe(1);
+    expect(problems.every((p) => p.level === 'warning' && p.dir === packDir)).toBe(true);
+    const said = problems.map((p) => p.problem).join('\n');
+    expect(said).toMatch(/sheets\.json: teller reads no slot called "sheets"/);
+    expect(said).toMatch(/pack\.json: teller reads no slot called "flavour"/);
+    expect(said).toMatch(/system\.json: teller reads no slot called "nonsense_slot"/);
+    expect(said).not.toMatch(/"bestiary"|"dials"/);
   });
 
   it('a system.json that is not an object is reported and the pack still loads', () => {
@@ -714,7 +759,7 @@ describe('packs on the shelf as ARCHIVES', () => {
   it('an archive with no pack.json is reported and installs nothing', () => {
     dropArchive('nameless', { 'bestiary.json': [] });
     const swept = sweepPacks(dir, shelf);
-    expect(swept.problems[0].problem).toMatch(/no pack.json with an id/);
+    expect(swept.problems[0].problem).toMatch(/carries no pack\.json/);
     expect(existsSync(join(dir, 'packs', 'nameless'))).toBe(false);
   });
 });

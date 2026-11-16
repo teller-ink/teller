@@ -9,7 +9,8 @@
 // live.
 //
 // It mirrors `panels-shelf.ts` deliberately, because that file is the
-// house example of a sweep: READ ONLY (bar the art copy below), a
+// house example of a sweep: READ ONLY (bar the art copy below, and the
+// one-time id a folder with none is given — see `sweepPacks`), a
 // folder that fails to parse is a problem in the report and never a
 // crash, and a missing `packs/` directory is simply an empty shelf.
 //
@@ -110,7 +111,9 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
+import { newId } from './id.ts';
 import { dirname, join } from 'node:path';
 import {
   archiveFolder,
@@ -124,8 +127,45 @@ import { panelDirIn, stamp, sweepPanelsIn, usableFolderName } from './panels-she
 import type { PanelDef } from './panels.ts';
 import type { Shelf } from './store.ts';
 
-/** A folder, or one file inside it, that didn't parse — reported, never a crash. */
-export type PackProblem = { dir: string; problem: string };
+/**
+ * A folder, or one file inside it, that didn't parse — reported, never a
+ * crash. `level` is absent for a real problem (something didn't load);
+ * a `warning` loaded anyway but is probably not what its author meant —
+ * a slot nothing reads, a system nobody has — and a `note` is the sweep
+ * saying what it did on the author's behalf. None of them refuse
+ * anything (rule 1): the words are the whole response.
+ */
+export type PackProblem = { dir: string; problem: string; level?: 'warning' | 'note' };
+
+/**
+ * Every top-level slot teller's own code reads, by how it reads it —
+ * derived from the readers (`/api/stack/record|declarations|templates`
+ * and their client callers), not from any document. A slot outside this
+ * list still LOADS — a plugin or a system's own `exports/` may read it,
+ * and that's their business — but nothing in teller will, so the sweep
+ * says so as a warning: the audit's `sheets` record sat in a system for
+ * a week being read by nobody, and the only way to find out was grep.
+ * Keep it in step with the readers; `defaults/systems/starter/README.md`
+ * prints the same list for authors.
+ */
+export const KNOWN_SLOTS: ReadonlySet<string> = new Set([
+  // records — one object, merged per key
+  'accents', 'brand', 'carry', 'currency', 'defenses', 'dials', 'dice', 'groups', 'icons',
+  'initiative', 'marks', 'notes', 'pins', 'portraits', 'space', 'spends', 'use', 'vocabulary',
+  // declarations — lists merged by name
+  'bands', 'kinds', 'ladders', 'notices', 'panels', 'screens', 'sections', 'statuses',
+  'trades', 'creation',
+  // templates — lists merged by id
+  'bestiary', 'catalog', 'upgrades',
+]);
+
+/** The warning for a slot nobody in teller reads — one sentence, the same everywhere. */
+export function unknownSlotWarning(file: string, slot: string): string {
+  return (
+    `${file}: teller reads no slot called "${slot}" — it loads, but only a plugin or ` +
+    `your system's own code would ever see it`
+  );
+}
 
 /** A pack as the shelf holds one — the same shape `Shelf#pack` returns. */
 export type ShelfPack = {
@@ -334,8 +374,20 @@ export function installPackArchives(dataDir: string): PackProblem[] {
       continue;
     }
     const manifest = asRecord(archiveJson(files, 'pack.json'));
-    if (!manifest || typeof manifest.id !== 'string' || !manifest.id.trim()) {
-      problems.push({ dir: archive, problem: 'carries no pack.json with an id — not a pack' });
+    if (!manifest) {
+      problems.push({ dir: archive, problem: 'carries no pack.json — not a pack' });
+      continue;
+    }
+    // A FOLDER with no id gets one minted (below, in the sweep). An
+    // archive can't: there is nowhere to write it that survives, and an
+    // id minted fresh on every unpack would be a different pack each time.
+    if (typeof manifest.id !== 'string' || !manifest.id.trim()) {
+      problems.push({
+        dir: archive,
+        problem:
+          'its pack.json has no id, and an archive is not somewhere teller can write one — ' +
+          'unzip it into packs/ as a folder and the sweep will mint one, or add an id before zipping',
+      });
       continue;
     }
 
@@ -577,8 +629,9 @@ export function refusalModule(message: string): string {
  * A folder with no `pack.json` is not a pack and is skipped in silence
  * (a `.pack` archive sitting beside the folders, a stray directory) —
  * `sweepPanels`'s posture for a folder with no `panel.json`. A
- * `pack.json` that doesn't parse, or carries no id, is a PROBLEM and
- * the folder contributes nothing. A single SLOT file that doesn't parse
+ * `pack.json` that doesn't parse is a PROBLEM and the folder contributes
+ * nothing; one that parses but carries no id is given one, once, written
+ * into the file. A single SLOT file that doesn't parse
  * is a problem too, and only that slot is lost: the pack loads what
  * parses.
  */
@@ -608,10 +661,29 @@ export function sweepPacks(dataDir: string, shelf?: Shelf): PackSweep {
       problems.push({ dir, problem: `pack.json is not a pack (${read.problem ?? 'not an object'})` });
       continue;
     }
-    const id = typeof manifest.id === 'string' ? manifest.id.trim() : '';
+    let id = typeof manifest.id === 'string' ? manifest.id.trim() : '';
     if (!id) {
-      problems.push({ dir, problem: 'pack.json has no id — identity is the id, never the name' });
-      continue;
+      // `packs/README.md` promises "leave the id out and the host mints
+      // one", and identity is the id — so it is minted ONCE and written
+      // into the folder's own `pack.json`, where every later sweep reads
+      // it back like any other. The second write this module makes (art
+      // is the first), and it happens at most once per folder.
+      const minted = newId('pak');
+      try {
+        writeFileSync(manifestPath, `${JSON.stringify({ id: minted, ...manifest }, null, 2)}\n`);
+      } catch (err) {
+        problems.push({
+          dir,
+          problem: `pack.json has no id, and minting one failed (${String(err)}) — add an id by hand`,
+        });
+        continue;
+      }
+      id = minted;
+      problems.push({
+        dir,
+        problem: `pack.json had no id, so this sweep minted ${minted} and wrote it into the file — that is the pack's identity from now on`,
+        level: 'note',
+      });
     }
 
     // Art first: the copy has to land before anything reads a rewritten
@@ -645,20 +717,34 @@ export function sweepPacks(dataDir: string, shelf?: Shelf): PackSweep {
         systemFile = record;
         continue;
       }
+      if (!KNOWN_SLOTS.has(slot)) {
+        problems.push({ dir, problem: unknownSlotWarning(file, slot), level: 'warning' });
+      }
       data[slot] = withInstalledArt(held.value, id);
     }
 
     if (systemFile) {
       const { system, problem } = systemFrom(systemFile, id);
       if (problem) problems.push({ dir, problem });
-      if (system) systems.push(system);
+      if (system) {
+        for (const slot of Object.keys(system.data)) {
+          if (!KNOWN_SLOTS.has(slot)) {
+            problems.push({ dir, problem: unknownSlotWarning('system.json', slot), level: 'warning' });
+          }
+        }
+        systems.push(system);
+      }
     }
 
     // Anything unrecognised in `pack.json` rides along as a slot rather
     // than being dropped — the same "what has no consumer yet stays
     // where it was" posture the converter takes.
     for (const [key, held] of Object.entries(manifest)) {
-      if (!PACK_KEYS.has(key)) data[key] = withInstalledArt(held, id);
+      if (PACK_KEYS.has(key)) continue;
+      if (!KNOWN_SLOTS.has(key)) {
+        problems.push({ dir, problem: unknownSlotWarning('pack.json', key), level: 'warning' });
+      }
+      data[key] = withInstalledArt(held, id);
     }
 
     // The pack's own panels ride in its data blob, as the `panels` slot

@@ -945,14 +945,37 @@ function FloorBlock({ ctx }: { ctx: BlockCtx }) {
             <FloorAddEntry onAdd={(name, value, max) => addEntry(listName, name, value, max)} />
           </div>
           {entries.length === 0 && <Refusal>nothing here yet</Refusal>}
-          {entries.map((entry) => (
-            <AutoEntry
-              key={entry.name}
-              entry={entry}
-              onWrite={(edit) => write(listName, entry.name, edit)}
-              typing={typable(ctx)}
-            />
-          ))}
+          {/* Every entry can go, not just a chip: the floor is the sheet
+              Starter ships, so a counter typed in by mistake has to be
+              removable from the same screen it was added on. */}
+          {entries.map((entry) =>
+            entry.value === undefined ? (
+              <AutoEntry
+                key={entry.name}
+                entry={entry}
+                onWrite={(edit) => write(listName, entry.name, edit)}
+                typing={typable(ctx)}
+              />
+            ) : (
+              <div key={entry.name} className="flex items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <AutoEntry
+                    entry={entry}
+                    onWrite={(edit) => write(listName, entry.name, edit)}
+                    typing={typable(ctx)}
+                  />
+                </div>
+                <button
+                  className="text-[11px] text-stone-600 transition-colors hover:text-red-300"
+                  onClick={() => write(listName, entry.name, { remove: true })}
+                  title={`remove ${entry.name}`}
+                  aria-label={`remove ${entry.name}`}
+                >
+                  ✕
+                </button>
+              </div>
+            ),
+          )}
         </section>
       ))}
 

@@ -101,11 +101,14 @@ import {
   packPanelDir,
   refusalModule,
   sweepPacks,
+  type PackProblem,
   systemExportModule,
   systemIndexModule,
 } from '../core/packs-shelf.ts';
 import {
   defaultSystems,
+  makeShelfFolders,
+  packSystemProblems,
   sweepSystems,
   systemDir,
   systemPanelDir,
@@ -697,13 +700,25 @@ function unresolvedTrusts(session: Session, containers: Container[]): { id: stri
 function shelfListing(host: Host): {
   systems: { id: string; name: string; version: number }[];
   packs: { id: string; system?: string; name: string; version: number }[];
+  /**
+   * What the folder sweeps had to say — problems, warnings and notes —
+   * with or without a campaign running. The console's shelf tool shows
+   * them; before this, a pack that named a system nobody had installed
+   * and applied to nothing, and only the API knew.
+   */
+  problems: PackProblem[];
 } {
-  const rows = { systems: host.shelf.systems(), packs: host.shelf.packs() };
+  const rows = { systems: host.shelf.systems(), packs: host.shelf.packs(), problems: [] };
   const dataDir = host.dataDir;
   if (!dataDir) return rows;
 
   const sweptPacks = sweepPacks(dataDir, host.shelf);
   const sweptSystems = sweepSystems(dataDir, host.shelf);
+  const problems = [
+    ...sweptSystems.problems,
+    ...sweptPacks.problems,
+    ...packSystemProblems(dataDir, sweptPacks, sweptSystems, host.shelf),
+  ];
   const systemFolders = new Map(
     [...sweptPacks.systems, ...sweptSystems.systems].map((s) => [s.id, s]),
   );
@@ -752,7 +767,7 @@ function shelfListing(host: Host): {
     if (!rows.packs.some((row) => row.id === folder.id)) packs.push(asPack(folder));
   }
 
-  return { systems, packs };
+  return { systems, packs, problems };
 }
 
 /**
@@ -3542,6 +3557,10 @@ export async function boot(args: Record<string, string>, ready?: () => void) {
   }
 
   stayUp();
+  // The shelf's folders exist from the first boot on, so every guide's
+  // "drop a folder into systems/" works as written. Only when SERVING:
+  // `teller plugins` reads beside a host and makes nothing.
+  makeShelfFolders(dataDir);
   const key = loadDmKey(dataDir);
   const host = new Host(shelf, dataDir);
 
@@ -3657,7 +3676,17 @@ export async function boot(args: Record<string, string>, ready?: () => void) {
   for (const miss of missing) {
     console.log(`  MISSING ${miss.slot}: ${miss.ref.name} (${miss.ref.id})`);
   }
-  for (const p of panelProblems) console.log(`  PANEL PROBLEM ${p.dir}: ${p.problem}`);
+  // What the systems/ and packs/ sweeps said — a pack naming a system
+  // nobody has, a slot nothing reads, an id minted on the author's
+  // behalf. Said with or without a campaign: a host booted to the
+  // picker has a shelf too, and that is exactly when someone is setting
+  // one up.
+  const shelfSaid = session ? session.loaded.packProblems : shelfListing(host).problems;
+  const word = (level?: string) => (level === 'warning' ? 'WARNING' : level === 'note' ? 'NOTE' : 'PROBLEM');
+  for (const p of shelfSaid) console.log(`  SHELF ${word(p.level)} ${p.dir}: ${p.problem}`);
+  for (const p of panelProblems) {
+    console.log(`  PANEL ${word((p as { level?: string }).level)} ${p.dir}: ${p.problem}`);
+  }
   if (plugins.loaded.length) {
     console.log(
       `  plugins: ${plugins.loaded.map((p) => p.manifest.name).join(', ')}`,

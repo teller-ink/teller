@@ -77,10 +77,168 @@ function CountStepper({ count, onChange }: { count: number; onChange: (n: number
   );
 }
 
+// ---- writing one down --------------------------------------------------
+// A pack is where a book's foes live, but a table with no pack still
+// meets things in the dark, and "author a folder first" is not an answer
+// at the table. This writes a CAMPAIGN-level template through the same
+// door any prep goes through (`POST /api/templates/bestiary`), and the
+// campaign's bestiary merges over the packs', so what's written here is
+// in the list — and in the encounter picker — the moment it lands.
+//
+// It is made only of generic lists (rule 2): a name, a word for what it
+// is, and a few counters, each a name with a value and an optional
+// ceiling. The counters go in `resources`, the list the runner's stepper
+// and the roster's ledger read first; nothing here names a stat.
+
+type DraftCounter = { name: string; value: string; max: string };
+
+const blankCounter = (): DraftCounter => ({ name: '', value: '', max: '' });
+
+function NewFoe({ onDone }: { onDone: (said?: string) => void }) {
+  const [name, setName] = useState('');
+  const [type, setType] = useState('foe');
+  const [counters, setCounters] = useState<DraftCounter[]>([blankCounter()]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const edit = (i: number, patch: Partial<DraftCounter>) =>
+    setCounters((cs) => cs.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+
+  const save = () => {
+    const title = name.trim();
+    if (!title) return;
+    const resources = [];
+    for (const c of counters) {
+      const label = c.name.trim();
+      if (!label) continue;
+      const value = Number(c.value);
+      if (c.value.trim() === '' || !Number.isFinite(value)) {
+        setErr(`${label} needs a number`);
+        return;
+      }
+      const max = c.max.trim() === '' ? undefined : Number(c.max);
+      if (max !== undefined && !Number.isFinite(max)) {
+        setErr(`${label}'s ceiling isn't a number`);
+        return;
+      }
+      resources.push(max === undefined ? { name: label, value } : { name: label, value, max });
+    }
+    const lists: Template['lists'] = {
+      // Stored, so the side is a fact a human set rather than a guess
+      // from the word (core/side.ts) — the word is free text.
+      meta: [{ name: 'side', value: 'foe' }],
+    };
+    if (resources.length) lists.resources = resources;
+    setBusy(true);
+    setErr('');
+    api('/api/templates/bestiary', {
+      body: { template: { name: title, ...(type.trim() ? { type: type.trim() } : {}), lists } },
+    })
+      .then(() => onDone(`${title} is in the bestiary`))
+      .catch((e: unknown) => setErr(String(e instanceof Error ? e.message : e)))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <form
+      className="space-y-2 rounded-md border border-stone-800 p-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        save();
+      }}
+    >
+      <div className="flex flex-wrap gap-2">
+        <input
+          className={`${input} min-w-0 flex-1`}
+          placeholder="what is it called?"
+          value={name}
+          autoFocus
+          onChange={(e) => setName(e.target.value)}
+          aria-label="name"
+        />
+        <input
+          className={`${input} w-28`}
+          placeholder="foe"
+          value={type}
+          onChange={(e) => setType(e.target.value)}
+          aria-label="what it is"
+          title="a word for what it is — filing, not a rule"
+        />
+      </div>
+      <span className={sectionLabel}>counters</span>
+      {counters.map((c, i) => (
+        <div key={i} className="flex flex-wrap items-center gap-2">
+          <input
+            className={`${input} min-w-0 flex-1`}
+            placeholder="name — whatever your game counts"
+            value={c.name}
+            onChange={(e) => edit(i, { name: e.target.value })}
+            aria-label="counter name"
+          />
+          <input
+            className={`${input} w-20 font-mono`}
+            placeholder="value"
+            inputMode="numeric"
+            value={c.value}
+            onChange={(e) => edit(i, { value: e.target.value })}
+            aria-label="value"
+          />
+          <span className="text-stone-600">/</span>
+          <input
+            className={`${input} w-20 font-mono`}
+            placeholder="max"
+            inputMode="numeric"
+            value={c.max}
+            onChange={(e) => edit(i, { max: e.target.value })}
+            aria-label="ceiling (optional)"
+          />
+          <button
+            type="button"
+            className={btnGhost}
+            onClick={() => setCounters((cs) => cs.filter((_, j) => j !== i))}
+            aria-label="drop this counter"
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          className={btnGhost}
+          onClick={() => setCounters((cs) => [...cs, blankCounter()])}
+        >
+          + another counter
+        </button>
+        <span className="flex-1" />
+        <button type="button" className={btn} onClick={() => onDone()}>
+          cancel
+        </button>
+        <button className={btnPrimary} type="submit" disabled={busy || !name.trim()}>
+          write it down
+        </button>
+      </div>
+      {err && <p className="text-sm text-red-500">{err}</p>}
+      <p className="text-[11px] text-stone-600">
+        it belongs to this campaign. a counter with a max is the one the runner's − and +
+        move; leave max blank for a plain number.
+      </p>
+    </form>
+  );
+}
+
 function BestiaryTool() {
   const bestiary = useLive(() => api<Template[]>('/api/stack/templates/bestiary'), [], {
     on: ['templates'],
   });
+  // The campaign's OWN foes — the ones this table wrote down, as opposed
+  // to what a pack brought. Only these can be taken back out from here;
+  // a pack's foe is the pack's, and its folder is where it changes.
+  const own = useLive(() => api<Template[]>('/api/templates/bestiary'), [], {
+    on: ['templates'],
+  });
+  const ownIds = useMemo(() => new Set((own.data ?? []).map((t) => t.id)), [own.data]);
+  const [writing, setWriting] = useState(false);
   const use = useLive(() => api<{ costCounter?: string }>('/api/stack/record/use'), [], {
     on: ['plugins'],
   });
@@ -129,10 +287,26 @@ function BestiaryTool() {
     <section className={`${card} @container space-y-3`}>
       <div className="flex items-center justify-between">
         <span className={sectionLabel}>Bestiary</span>
-        <span className="font-mono text-[11px] text-stone-600">
-          {query || type ? `${found.length} of ${npcs.length}` : `${npcs.length} foes`}
+        <span className="flex items-center gap-2">
+          <span className="font-mono text-[11px] text-stone-600">
+            {query || type ? `${found.length} of ${npcs.length}` : `${npcs.length} foes`}
+          </span>
+          {!writing && (
+            <button className={btn} onClick={() => setWriting(true)}>
+              + new foe
+            </button>
+          )}
         </span>
       </div>
+
+      {writing && (
+        <NewFoe
+          onDone={(said) => {
+            setWriting(false);
+            if (said) setStatus(said);
+          }}
+        />
+      )}
 
       <div className="flex gap-2">
         <input
@@ -195,7 +369,7 @@ function BestiaryTool() {
         {found.length === 0 && (
           <li className="text-sm text-stone-600">
             {!npcs.length
-              ? 'no foes yet — a pack brings them'
+              ? 'no foes yet — write one down with “+ new foe”, or a pack brings them'
               : query
                 ? `nothing by that name${type ? ` in ${type}` : ''}`
                 : `nothing in ${type}`}
@@ -214,9 +388,28 @@ function BestiaryTool() {
           costCounter={use.data?.costCounter}
           onClose={() => setOpen(null)}
           actions={
-            <button className={btnPrimary} disabled={busy} onClick={() => doSpawn(shown)}>
-              spawn {count > 1 ? `${count} ` : ''}to the table
-            </button>
+            <>
+              {ownIds.has(shown.id) && (
+                <button
+                  className={btnGhost}
+                  disabled={busy}
+                  onClick={() => {
+                    if (!window.confirm(`take ${shown.name} out of this campaign's bestiary?`)) return;
+                    api(`/api/templates/bestiary/${shown.id}`, { method: 'DELETE' })
+                      .then(() => {
+                        setOpen(null);
+                        setStatus(`${shown.name} is out of the bestiary`);
+                      })
+                      .catch((e: unknown) => setStatus(String(e instanceof Error ? e.message : e)));
+                  }}
+                >
+                  remove
+                </button>
+              )}
+              <button className={btnPrimary} disabled={busy} onClick={() => doSpawn(shown)}>
+                spawn {count > 1 ? `${count} ` : ''}to the table
+              </button>
+            </>
           }
         />
       )}

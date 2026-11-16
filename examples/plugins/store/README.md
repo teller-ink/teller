@@ -6,9 +6,14 @@ for a day and a half; it is a plugin now, and teller ships with no store
 again (docs/CORE-NEXT.md §15, 2026-08-20).
 
 ```
-cp -r examples/plugins/store ~/.teller-next/plugins/store
-node server/index.ts --data ~/.teller-next --enable plg_57012c4ab8e3
+mkdir -p ~/.teller/plugins
+cp -R "$(teller where --defaults)/../examples/plugins/store" ~/.teller/plugins/
+teller plugins --enable plg_57012c4ab8e3
 ```
+
+(Then restart the host — or enable it from the console's Plugins tab,
+which takes effect at once. See `../README.md` for `--data` and running
+from a checkout.)
 
 Enable it and a **Store** tab appears on the console and a **Shop** tab
 appears at every seat while a shop is open. Disable it and both are

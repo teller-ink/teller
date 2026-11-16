@@ -21,7 +21,14 @@ import { btn, btnGhost, card, input, sectionLabel } from '../lib/ui.ts';
 type ShelfSystem = { id: string; name: string; version: number };
 type ShelfPack = { id: string; system?: string; name: string; version: number };
 type ShelfBoard = { id: string; name: string };
-type ShelfOut = { systems: ShelfSystem[]; packs: ShelfPack[]; boards: ShelfBoard[] };
+type ShelfProblem = { dir: string; problem: string; level?: 'warning' | 'note' };
+type ShelfOut = {
+  systems: ShelfSystem[];
+  packs: ShelfPack[];
+  boards: ShelfBoard[];
+  /** What the folder sweeps said — absent from an older host. */
+  problems?: ShelfProblem[];
+};
 
 type CampaignOut = {
   slug: string;
@@ -243,6 +250,54 @@ function ThisCampaign({
   );
 }
 
+function SweepReport({ problems, onSwept }: { problems: ShelfProblem[]; onSwept: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const sweep = () => {
+    setBusy(true);
+    setErr('');
+    api('/api/shelf/sweep', { method: 'POST' })
+      .then(onSwept)
+      .catch((e: unknown) => setErr(String(e instanceof Error ? e.message : e)))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <section className={`${card} space-y-2`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className={sectionLabel}>What the sweep said</span>
+        <button className={btn} disabled={busy} onClick={sweep}>
+          sweep the folders
+        </button>
+      </div>
+      {problems.length === 0 ? (
+        <p className="text-sm text-stone-600">nothing to report — every folder read cleanly.</p>
+      ) : (
+        <ul className="space-y-1.5">
+          {problems.map((p, i) => (
+            <li key={i} className="space-y-0.5">
+              <p
+                className={`text-sm ${
+                  p.level === 'note'
+                    ? 'text-stone-300'
+                    : p.level === 'warning'
+                      ? 'text-amber-400'
+                      : 'text-red-400'
+                }`}
+              >
+                {p.problem}
+              </p>
+              <p className="truncate font-mono text-[11px] text-stone-600" title={p.dir}>
+                {p.dir}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+      {err && <p className="text-sm text-red-500">{err}</p>}
+    </section>
+  );
+}
+
 function ShelfTool() {
   const { data, reload } = useLive(
     () => Promise.all([api<ShelfOut>('/api/shelf'), api<CampaignOut>('/api/campaign')]),
@@ -328,6 +383,15 @@ function ShelfTool() {
           )}
         </ul>
       </section>
+
+      {/* What the sweep said about the folders, in its own words, and
+          the button that runs it. "Edit the folder, sweep, live" is the
+          authoring loop every guide describes, and until this button it
+          needed curl. A pack that named a system nobody here has used to
+          install and then apply to nothing in silence; this is where it
+          stops being silent. Nothing here is refused — a warning loaded
+          anyway. */}
+      <SweepReport problems={shelf.problems ?? []} onSwept={reload} />
 
       <ThisCampaign shelf={shelf} campaign={campaign} onChanged={reload} />
     </div>
