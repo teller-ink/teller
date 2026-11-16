@@ -149,6 +149,21 @@ describe('entities over HTTP', () => {
     expect((await api('DELETE', `/api/entities/${child}`)).status).toBe(200);
   });
 
+  // Audit 2026-11-16: a list named `__proto__` read the object's
+  // prototype instead of a list, and the write came back a 500.
+  it('a list cannot be named after a key no object has', async () => {
+    const id = (await api('POST', '/api/entities', { draft: { name: 'Barrett' } })).body.id;
+    for (const list of ['__proto__', 'constructor', 'prototype']) {
+      const res = await api('POST', `/api/entities/${id}/entry`, { list, name: 'x', value: 1 });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/name of a list/);
+    }
+    // …and an ordinary list still takes the write.
+    const ok = await api('POST', `/api/entities/${id}/entry`, { list: 'resources', name: 'Health', value: 7 });
+    expect(ok.status).toBe(200);
+    await api('DELETE', `/api/entities/${id}`);
+  });
+
   it('a nameless draft is a 400, not a row', async () => {
     const { status } = await api('POST', '/api/entities', { draft: {} });
     expect(status).toBe(400);

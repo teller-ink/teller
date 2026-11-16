@@ -1588,6 +1588,14 @@ export async function handleApi(
     const list = String(body.list ?? '').trim();
     const name = String(body.name ?? '').trim();
     if (!list || !name) return reply(400, { error: 'entry needs a list and a name' });
+    // A list is a key on a plain object, and three names are not keys
+    // there at all: `__proto__` reads the object's prototype instead of
+    // a list, which is how a seat's write used to come back a 500. A
+    // refusal with a reason beats a stack trace, and no game has a list
+    // called `constructor`.
+    if (list === '__proto__' || list === 'constructor' || list === 'prototype') {
+      return reply(400, { error: `"${list}" can't be the name of a list` });
+    }
     const edit: EntryEdit = { list, name };
     if (typeof body.value === 'number' || typeof body.value === 'string') {
       edit.value = body.value;
