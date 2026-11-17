@@ -83,6 +83,12 @@ personal namespace — with a Homebrew tap at `teller-ink/homebrew-tap`.
 "Open-sourcing someday" happened; keep the repo clean of personal-infra
 references because strangers can now read it.
 
+**The copyright notice names Best Coast Software LLC** (2026-11-17),
+wherever the repo happens to live — ownership and hosting are separate
+questions, and `teller-ink` is only the second. The notice sits in
+`README.md` and `package.json`'s `author`; a new one names the company,
+never a person.
+
 ## Stack
 
 Single package (no workspace), one app, two halves:

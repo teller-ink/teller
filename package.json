@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.2.1",
   "license": "AGPL-3.0-only",
+  "author": "Best Coast Software LLC",
   "type": "module",
   "scripts": {
     "client:dev": "vite --config vite.client.config.ts",

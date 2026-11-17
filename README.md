@@ -142,5 +142,8 @@ content lives on shelves, not in git.
 
 ## License
 
-[AGPL-3.0](LICENSE) © Brian Corbin. Fork it, run it, mod it — but if you
-serve a modified teller to others, share your changes the same way.
+Copyright © 2026 Best Coast Software LLC.
+
+teller is free software under the [GNU Affero General Public License,
+version 3](LICENSE). Fork it, run it, mod it — but if you serve a
+modified teller to others, share your changes the same way.
