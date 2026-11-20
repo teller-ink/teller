@@ -87,6 +87,9 @@ svg { display: block; }
 .lede { flex: 1 1 24rem; max-width: 36rem; min-width: 0; font-size: 1.14rem; color: var(--mute); }
 .hero-get { display: flex; flex-direction: column; gap: 0.7rem; min-width: 0; max-width: 100%; }
 .fine { font-size: 0.88rem; color: var(--mute); }
+.fine.status b { color: var(--brass-hi); font-weight: 500; }
+.fine.status a { color: var(--fg); }
+.badge { display: inline-block; font-family: var(--f-mono); font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--brass-hi); border: 1px solid var(--brass-lo); border-radius: 999px; padding: 0.18rem 0.65rem 0.14rem; margin-right: 0.8rem; vertical-align: middle; }
 
 .cmd { display: flex; align-items: stretch; max-width: 100%; background: var(--ink-2); border: 1px solid var(--ink-3); border-radius: 8px; overflow: hidden; }
 .cmd > code { flex: 1 1 auto; min-width: 0; padding: 0.8rem 1.1rem; overflow-x: auto; white-space: nowrap; font-size: 0.92rem; color: var(--hi); }

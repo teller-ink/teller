@@ -51,7 +51,7 @@
     <nav class="nav" aria-label="Sections">
       <a href="#how">How it works</a>
       <a href="#screens">Screens</a>
-      <a href="#empty">Bring your game</a>
+      <a href="#bring">Bring your game</a>
       <a href="#install">Install</a>
       <a href="https://github.com/teller-ink/teller">GitHub</a>
     </nav>
@@ -63,17 +63,18 @@
   <!-- ================= hero ================= -->
   <section class="hero">
     <div class="wrap">
-      <p class="eyebrow">For D&amp;D, Pathfinder, and whatever else you play at a real table</p>
+      <p class="eyebrow"><span class="badge">Early access</span>For D&amp;D, Pathfinder, and whatever else you play at a real table</p>
       <h1 class="hero-h plain"><span class="ln">Your laptop does the bookkeeping.</span><em class="ln">Everything else stays on the table.</em></h1>
       <p class="tagline">The table plays. <b>teller</b> keeps the books.</p>
       <div class="hero-side">
-        <p class="lede"><b>teller</b> is a companion for in-person tabletop RPGs. One laptop hosts it. The TV under the minis shows the map at true scale. Each player's phone is their character sheet. You run initiative, hit points and conditions from your seat, and the dice, the minis and the rulings never leave the table.</p>
+        <p class="lede"><b>teller</b> is a companion for in-person tabletop RPGs. Not a virtual tabletop, closer to the opposite of one. One laptop hosts it. If there's a TV under the minis, it shows the map at true scale. Each player's phone is their character sheet. You run initiative, hit points and conditions from your seat, and the dice, the minis and the rulings never leave the table.</p>
         <div class="hero-get">
           <div class="cmd">
             <code id="cmd-hero"><span class="p" aria-hidden="true">$</span>brew install teller-ink/tap/teller</code>
             <button type="button" class="copy" aria-live="polite" data-copy="brew install teller-ink/tap/teller" data-select="cmd-hero">Copy</button>
           </div>
           <p class="fine">Free and open source. No accounts, nothing installed on anyone's phone, works with no internet.</p>
+          <p class="fine status"><b>Early access.</b> The core is ready to build on. The three starter systems, D&amp;D 2024, Pathfinder and Wild Imaginary West, are still being written. If you'd rather build than wait, <a href="https://github.com/teller-ink/teller#contributing">come help</a>.</p>
         </div>
       </div>
 
@@ -341,11 +342,12 @@
   </section>
 
   <!-- ================= ships empty ================= -->
-  <section class="band" id="empty">
+  <section class="band" id="bring">
     <div class="wrap">
       <p class="eyebrow">Bring your game</p>
       <h2>No rules of its own, on purpose.</h2>
-      <p class="sub">A system is a folder that says how your game works: its dice, its distance bands, its conditions, what a character sheet has on it. Anyone can write one for anything. The first three are in progress, D&amp;D 2024, Pathfinder and Wild Imaginary West, and none is finished yet. There's a starter to copy from, and the format is small.</p>
+      <p class="sub">A system is a folder that says how your game works: its dice, its distance bands, its conditions, what a character sheet has on it. Anyone can write one for anything. The first three, D&amp;D 2024, Pathfinder and Wild Imaginary West, are still being written, which is why this is early access: the core is done enough to build on, and the systems are what's left.</p>
+      <p class="sub">If you want to help finish one, write your own, or build a plugin, <a href="https://github.com/teller-ink/teller#contributing">the repo is open</a>. There's a starter to copy from, and the format is small.</p>
       <p class="sub">Under the hood a character is named lists of named entries, and what a list means is a declaration the system ships. Content is files on your shelf, installed by dropping a folder in.</p>
       <div class="empty">
         <dl class="kinds">
@@ -415,7 +417,7 @@
         <ul class="install-notes">
           <li>Homebrew installs on Apple silicon Macs today.</li>
           <li>Your data lives in <code>~/.teller</code>. Give <code>teller host</code> a path and it serves a table off a stick.</li>
-          <li>On anything else that runs Node 24 or newer, <a href="https://github.com/teller-ink/teller#contributing">run it from a checkout</a>.</li>
+          <li>Windows and Linux: <a href="https://github.com/teller-ink/teller#contributing">run it from a checkout</a> for now. You'll need Node 24 or newer.</li>
         </ul>
       </div>
     </div>
