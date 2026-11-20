@@ -16,8 +16,10 @@
     <path d="M306 92 h44 v128 l-22 -20 l-22 20 Z" fill="#fde68a"/>
   </g>
   <text x="140" y="103" font-family="Newsreader 72pt, Newsreader, Georgia, serif" font-weight="500" font-size="40" fill="#f5f5f4" letter-spacing="-0.4">teller</text>
-  <text x="64" y="232" font-family="Newsreader 72pt, Newsreader, Georgia, serif" font-size="92" fill="#f5f5f4" letter-spacing="-2.4">The table plays.</text>
-  <text x="64" y="328" font-family="Newsreader 72pt, Newsreader, Georgia, serif" font-style="italic" font-size="92" fill="#e7e5e4" letter-spacing="-2.4"><tspan fill="#fbbf24" font-weight="500">teller</tspan> keeps the books.</text>
+  <text x="66" y="156" font-family="IBM Plex Mono, Menlo, monospace" font-size="17" fill="#fbbf24" letter-spacing="2.4">FOR D&amp;D, PATHFINDER, AND WHATEVER ELSE YOU PLAY AT A REAL TABLE</text>
+  <text x="64" y="226" font-family="Newsreader 72pt, Newsreader, Georgia, serif" font-size="64" fill="#f5f5f4" letter-spacing="-1.6">Your laptop does the bookkeeping.</text>
+  <text x="64" y="298" font-family="Newsreader 72pt, Newsreader, Georgia, serif" font-style="italic" font-size="64" fill="#e7e5e4" letter-spacing="-1.6">Everything else stays on the table.</text>
+  <text x="66" y="350" font-family="Newsreader 72pt, Newsreader, Georgia, serif" font-style="italic" font-size="32" fill="#a8a29e" letter-spacing="-0.6">The table plays. <tspan fill="#fbbf24" font-style="normal" font-weight="500">teller</tspan> keeps the books.</text>
   <text x="66" y="568" font-family="IBM Plex Mono, Menlo, monospace" font-size="24" fill="#a8a29e" letter-spacing="1">teller.ink</text>
   <g transform="translate(404 304) scale(0.74)">
 <defs>

@@ -55,7 +55,11 @@ rsvg-convert site/og.svg -o site/public/og.png
 ```
 
 with Newsreader (72pt) and IBM Plex Mono installed as desktop fonts —
-librsvg reads system fonts, not the web files in `public/fonts`.
+librsvg reads system fonts, not the web files in `public/fonts`. Without
+them installed, unpack the site's own woff2 files to TTF (`fontTools`,
+`TTFont(w).flavor = None`), point a `fonts.conf` at that folder, alias
+`Newsreader 72pt` to the TTF's family name `Newsreader 16pt 72pt`, and run
+rsvg-convert with `FONTCONFIG_FILE` set. Same result, nothing installed.
 
 ## What it must stay true to
 
