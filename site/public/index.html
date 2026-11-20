@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>teller — the table plays; teller keeps the books</title>
-<meta name="description" content="A companion for in-person tabletop RPGs. Dice, minis and rulings stay on the table. Initiative, hit points, conditions and fog go on the screens around it. Runs on your own machine.">
+<meta name="description" content="A companion for in-person tabletop RPGs like D&amp;D and Pathfinder. One laptop hosts it, the TV under the minis shows the map, players\' phones are their character sheets, and the GM runs initiative and hit points from their seat. Dice, minis and rulings stay on the table. Free, open source, runs on your own machine.">
 <link rel="canonical" href="https://teller.ink/">
 <meta name="theme-color" content="#0c0a09">
 <meta name="color-scheme" content="dark">
@@ -51,7 +51,7 @@
     <nav class="nav" aria-label="Sections">
       <a href="#how">How it works</a>
       <a href="#screens">Screens</a>
-      <a href="#empty">Ships empty</a>
+      <a href="#empty">Bring your game</a>
       <a href="#install">Install</a>
       <a href="https://github.com/teller-ink/teller">GitHub</a>
     </nav>
@@ -63,15 +63,17 @@
   <!-- ================= hero ================= -->
   <section class="hero">
     <div class="wrap">
-      <h1 class="hero-h"><span class="ln">The table plays.</span><em class="ln"><b>teller</b> keeps the books.</em></h1>
+      <p class="eyebrow">For D&amp;D, Pathfinder, and whatever else you play at a real table</p>
+      <h1 class="hero-h plain"><span class="ln">Your laptop does the bookkeeping.</span><em class="ln">Everything else stays on the table.</em></h1>
+      <p class="tagline">The table plays. <b>teller</b> keeps the books.</p>
       <div class="hero-side">
-        <p class="lede">A companion for in-person tabletop RPGs. Not a virtual tabletop — the opposite of one. Dice, minis and rulings stay on the table. Initiative, hit points, conditions and fog go on the screens around it.</p>
+        <p class="lede"><b>teller</b> is a companion for in-person tabletop RPGs. One laptop hosts it. The TV under the minis shows the map at true scale. Each player's phone is their character sheet. You run initiative, hit points and conditions from your seat, and the dice, the minis and the rulings never leave the table.</p>
         <div class="hero-get">
           <div class="cmd">
             <code id="cmd-hero"><span class="p" aria-hidden="true">$</span>brew install teller-ink/tap/teller</code>
             <button type="button" class="copy" aria-live="polite" data-copy="brew install teller-ink/tap/teller" data-select="cmd-hero">Copy</button>
           </div>
-          <p class="fine">Free and open source. Runs on your own machine.</p>
+          <p class="fine">Free and open source. No accounts, nothing installed on anyone's phone, works with no internet.</p>
         </div>
       </div>
 
@@ -181,10 +183,58 @@
         </svg>
         </div>
         <figcaption class="key">
-          <span><i class="k-real"></i>Pale line is real: dice, minis, terrain.</span>
-          <span><i class="k-glass"></i>Brass is glass: every screen, one address.</span>
+          <span class="key-lead">What's on the table, and what's on the screens around it.</span>
+          <span><i class="k-real"></i>Pale line is the physical stuff: dice, minis, terrain.</span>
+          <span><i class="k-glass"></i>Brass is every phone, tablet and TV in the room, opened to one address.</span>
         </figcaption>
       </figure>
+    </div>
+  </section>
+
+  <!-- ================= how a table works ================= -->
+  <section class="band" id="how">
+    <div class="wrap">
+      <p class="eyebrow">How a table works</p>
+      <h2>One address. Every screen in the room opens it.</h2>
+      <div class="how">
+        <ol class="steps">
+          <li>
+            <h3>One machine hosts</h3>
+            <p>A laptop, a Pi, anything that runs Node. Type <code>teller host</code> and it prints an address.</p>
+          </li>
+          <li>
+            <h3>Every screen opens that address</h3>
+            <p>Phones, tablets, the TV under the minis: any screen in the room. Each one shows a short pairing code. Nothing is installed on any of them.</p>
+          </li>
+          <li>
+            <h3>The GM adopts them</h3>
+            <p>Type a screen's code into the console and say what that screen is: the map under the minis, one player's seat, the turn-order board. Change your mind whenever you like.</p>
+          </li>
+        </ol>
+        <div class="panel" role="img" aria-label="What teller host prints: the address to open on this machine, and the address every other screen in the room opens.">
+          <div class="panel-bar"><i class="led"></i><span>teller host</span></div>
+<pre class="panel-out" aria-hidden="true">  teller
+
+  data      ~/.teller
+  key file  ~/.teller/dm.key
+
+  DM key: ••••••••  (open /#console and paste it)
+
+  open on this machine:
+    http://localhost:4526
+
+  other screens in the room:
+    <b>http://192.168.1.20:4526</b>
+
+  ctrl-c to stop</pre>
+        </div>
+      </div>
+      <ul class="nos">
+        <li>No accounts.</li>
+        <li>No installs on anyone's device.</li>
+        <li>No cloud in the play path.</li>
+        <li>A table with no internet works completely.</li>
+      </ul>
     </div>
   </section>
 
@@ -219,53 +269,6 @@
         <p>The humans at the table are the rules engine.</p>
         <footer>teller may roll dice, measure a range or work out a default. Every result lands somewhere a human can type over, and the stored value always wins.</footer>
       </blockquote>
-    </div>
-  </section>
-
-  <!-- ================= how a table works ================= -->
-  <section class="band" id="how">
-    <div class="wrap">
-      <p class="eyebrow">How a table works</p>
-      <h2>One address. Every screen in the room opens it.</h2>
-      <div class="how">
-        <ol class="steps">
-          <li>
-            <h3>One machine hosts</h3>
-            <p>A laptop, a Pi, anything that runs Node. Type <code>teller host</code> and it prints an address.</p>
-          </li>
-          <li>
-            <h3>Every screen opens that address</h3>
-            <p>Phones, tablets, the TV under the minis. Each one shows a short pairing code. Nothing is installed on any of them.</p>
-          </li>
-          <li>
-            <h3>The GM adopts them</h3>
-            <p>Type a screen's code into the console and say what that screen is. Change your mind whenever you like.</p>
-          </li>
-        </ol>
-        <div class="panel" role="img" aria-label="What teller host prints: the address to open on this machine, and the address every other screen in the room opens.">
-          <div class="panel-bar"><i class="led"></i><span>teller host</span></div>
-<pre class="panel-out" aria-hidden="true">  teller
-
-  data      ~/.teller
-  key file  ~/.teller/dm.key
-
-  DM key: ••••••••  (open /#console and paste it)
-
-  open on this machine:
-    http://localhost:4526
-
-  other screens in the room:
-    <b>http://192.168.1.20:4526</b>
-
-  ctrl-c to stop</pre>
-        </div>
-      </div>
-      <ul class="nos">
-        <li>No accounts.</li>
-        <li>No installs on anyone's device.</li>
-        <li>No cloud in the play path.</li>
-        <li>A table with no internet works completely.</li>
-      </ul>
     </div>
   </section>
 
@@ -340,9 +343,10 @@
   <!-- ================= ships empty ================= -->
   <section class="band" id="empty">
     <div class="wrap">
-      <p class="eyebrow">Ships empty</p>
-      <h2>No game, no vocabulary, nobody's book.</h2>
-      <p class="sub">A character is named lists of named entries. What a list means is a declaration a system ships. Content is files on your shelf, installed by dropping a folder in.</p>
+      <p class="eyebrow">Bring your game</p>
+      <h2>No rules of its own, on purpose.</h2>
+      <p class="sub">A system is a folder that says how your game works: its dice, its distance bands, its conditions, what a character sheet has on it. Anyone can write one for anything. The first three are in progress, D&amp;D 2024, Pathfinder and Wild Imaginary West, and none is finished yet. There's a starter to copy from, and the format is small.</p>
+      <p class="sub">Under the hood a character is named lists of named entries, and what a list means is a declaration the system ships. Content is files on your shelf, installed by dropping a folder in.</p>
       <div class="empty">
         <dl class="kinds">
           <div><dt>A system</dt><dd>How one game works: its dice, its distance bands, its conditions, its screens. Pure mechanics, freely shareable.</dd></div>

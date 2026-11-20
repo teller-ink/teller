@@ -76,6 +76,13 @@ svg { display: block; }
 .ln { display: block; text-wrap: balance; }
 .hero-h em { font-style: italic; color: var(--fg); }
 .hero-h em b { font-weight: 500; color: var(--brass-hi); }
+.hero .eyebrow { margin-bottom: 1.2rem; }
+.hero-h.plain { font-size: clamp(2.2rem, 5.6vw, 4.6rem); line-height: 1.02; }
+.hero-h.plain em { font-style: italic; }
+.tagline { font-family: var(--f-display); font-style: italic; font-size: clamp(1.2rem, 2.2vw, 1.6rem); color: var(--mute); margin-top: 1.1rem; }
+.tagline b { font-style: normal; font-weight: 500; color: var(--brass-hi); }
+.lede b { font-weight: 500; color: var(--brass-hi); }
+.key-lead { flex-basis: 100%; justify-content: center; color: var(--fg); }
 .hero-side { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1.5rem 3.5rem; padding-top: clamp(1.5rem, 3.5vw, 2.5rem); }
 .lede { flex: 1 1 24rem; max-width: 36rem; min-width: 0; font-size: 1.14rem; color: var(--mute); }
 .hero-get { display: flex; flex-direction: column; gap: 0.7rem; min-width: 0; max-width: 100%; }
